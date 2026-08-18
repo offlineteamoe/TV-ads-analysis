@@ -25,11 +25,12 @@ function videoLinkHTML(link, labeled){
 /* ============================ metricas de exito ============================ */
 var METRIC_DEFS = {
   leads_per_1k: { en:'Leads per $1,000', es:'Leads x $1,000', pt:'Leads por US$1.000', short:'Leads/$1k', higherIsBetter:true, isMargin:false, icon:'🎯', fmt:function(v){ return v==null?'—':fmtNum(v,1); } },
+  avg_leads_dia: { en:'Avg. Leads/day', es:'Prom. Leads/día', pt:'Méd. Leads/dia', short:'Leads/día', higherIsBetter:true, isMargin:false, icon:'📆', fmt:function(v){ return v==null?'—':fmtNum(v,1); } },
   cpl: { en:'CPL (cost per lead)', es:'CPL (costo por lead)', pt:'CPL (custo por lead)', short:'CPL', higherIsBetter:false, isMargin:false, icon:'💵', fmt:function(v){ return fmt$(v,2); } },
   cvr: { en:'Conversion (sales / leads)', es:'Conversión (ventas / leads)', pt:'Conversão (vendas / leads)', short:'CVR', higherIsBetter:true, isMargin:false, icon:'📈', fmt:function(v){ return fmtPct(v,1); } },
   mncc_core_pct: { en:'Margin', es:'Margen', pt:'Margem', short:'Margin', higherIsBetter:true, isMargin:true, icon:'💰', fmt:function(v){ return fmtPct(v,1); } },
 };
-var METRIC_ORDER = ['leads_per_1k','cpl','cvr','mncc_core_pct'];
+var METRIC_ORDER = ['leads_per_1k','avg_leads_dia','cpl','cvr','mncc_core_pct'];
 function metricLabel(key){ return METRIC_DEFS[key][LANG]; }
 function metricShort(key){ return METRIC_DEFS[key].short; }
 function metricFmt(key,v){ return METRIC_DEFS[key].fmt(v); }
@@ -37,22 +38,16 @@ function metricsFromSums(sums){
   var adcost=sums.adcost||0, leads=sums.leads||0, core=sums.core_enrollments||0, newCash=sums.new_cash_core||0;
   return { leads_per_1k: adcost?leads/adcost*1000:null, cpl: leads?adcost/leads:null, cvr: leads?core/leads:null, mncc_core_pct: newCash?(newCash-adcost)/newCash:null };
 }
-/* Caso de gasto=$0 con leads/New Cash Core reales (ej. una vista cruzada
-   Organization/MarketingOrganization, o un hueco de datos puntual): CPL y
+/* Caso de gasto=$0 (ej. una fila de cruce de marca -- Organization distinto a
+   la marca propia del creativo -- o un hueco de datos puntual): CPL y
    %Margen calculan un numero MATEMATICAMENTE valido pero enganoso ($0.00 de
    CPL, o 100% de margen) porque el gasto no esta atribuido a esta vista, no
    porque sea gratis o perfecto. Se detecta y se reemplaza la lectura en vez
-   de mostrar el numero confuso. CVR y Leads/$1k no necesitan este trato:
-   Leads/$1k ya da null limpio cuando adcost=0 (division por cero evitada),
-   y CVR no depende del gasto en absoluto. */
+   de mostrar el numero confuso. Leads/$1k no necesita reemplazo -- ya existe
+   "Prom. Leads/día" (avg_leads_dia) como metrica propia, seleccionable, para
+   exactamente este caso. CVR tampoco necesita nada especial: no depende del
+   gasto en absoluto. */
 function isZeroSpendCase(item){ return !!item && (item.adcost||0) === 0; }
-function leadsPer1kDisplayHTML(item){
-  if(isZeroSpendCase(item) && (item.leads||0) > 0){
-    var days = item.num_dias_activos || item.num_dias || 1;
-    return esc(fmtNum(item.leads/days, 1)) + ' <span class="chip" title="'+escAttr(T('leads_dia_nota'))+'">'+esc(T('avg_leads_dia'))+'</span>';
-  }
-  return esc(metricFmt('leads_per_1k', item.leads_per_1k));
-}
 function cplDisplayHTML(item){
   if(isZeroSpendCase(item) && (item.leads||0) > 0) return '<span title="'+escAttr(T('sin_gasto_nota'))+'">'+esc(T('sin_gasto_corto'))+'</span>';
   return esc(metricFmt('cpl', item.cpl));
@@ -65,7 +60,6 @@ function marginDisplayHTML(item){
   return esc(metricFmt('mncc_core_pct', item.mncc_core_pct));
 }
 function metricDisplayHTML(key, item){
-  if(key==='leads_per_1k') return leadsPer1kDisplayHTML(item);
   if(key==='cpl') return cplDisplayHTML(item);
   if(key==='mncc_core_pct') return marginDisplayHTML(item);
   return esc(metricFmt(key, item[key]));
@@ -128,16 +122,13 @@ var STR = {
   rotacion_mixta:{en:'Mixed rotation split by country this period',es:'Rotación mixta por país en este período',pt:'Rotação mista por país neste período'},
   resto_latam:{en:'Rest of LATAM',es:'Resto de LATAM',pt:'Resto da LATAM'},
   paises:{en:'countries',es:'países',pt:'países'},
-  avg_leads_dia:{en:'Avg. Leads/day',es:'Prom. Leads/día',pt:'Méd. Leads/dia'},
-  leads_dia_nota:{en:'$0 spend attributed here, so Leads per $1,000 can\'t be computed. Showing average daily leads generated instead.',es:'$0 de gasto atribuido aquí, así que Leads x $1,000 no se puede calcular. Se muestra en su lugar el promedio diario de leads generados.',pt:'$0 de gasto atribuído aqui, então Leads por $1.000 não pode ser calculado. Mostrando em vez disso a média diária de leads gerados.'},
   sin_gasto_corto:{en:'No spend attributed',es:'Sin gasto atribuido',pt:'Sem gasto atribuído'},
   sin_gasto_nota:{en:'This view has leads but $0 spend attributed here, so CPL is not meaningful.',es:'Esta vista tiene leads pero $0 de gasto atribuido, así que el CPL no tiene sentido aquí.',pt:'Esta visão tem leads mas $0 de gasto atribuído aqui, então o CPL não faz sentido.'},
   avg_ncc_dia:{en:'Avg. New Cash Core/day',es:'Prom. New Cash Core/día',pt:'Méd. New Cash Core/dia'},
   margen_sin_gasto_nota:{en:'$0 spend attributed here, so % Margin would show a meaningless 100%. Showing average daily New Cash Core generated instead.',es:'$0 de gasto atribuido aquí, así que %Margen mostraría un 100% sin sentido. Se muestra en su lugar el promedio diario de New Cash Core generado.',pt:'$0 de gasto atribuído aqui, então %Margem mostraria um 100% sem sentido. Mostrando em vez disso a média diária de New Cash Core gerado.'},
   dia:{en:'day',es:'día',pt:'dia'},
-  cross_sell:{en:'Cross-sell',es:'Venta cruzada',pt:'Venda cruzada'},
-  cross_sell_hacia:{en:'Cross-sell → ',es:'Venta cruzada → ',pt:'Venda cruzada → '},
-  cross_sell_nota:{en:'This ad was bought by another brand’s budget; showing only what it generated for the Organization you selected ($0 spend attributed here).',es:'Este anuncio lo compró el presupuesto de otra marca; se muestra solo lo que generó para la Organization que elegiste (gasto $0 atribuido aquí).',pt:'Este anúncio foi comprado pelo orçamento de outra marca; mostrando apenas o que gerou para a Organization que você escolheu (gasto $0 atribuído aqui).'},
+  pooled_chip:{en:'Pooling leads/sales/NCC',es:'Sumando leads/ventas/NCC',pt:'Somando leads/vendas/NCC'},
+  pooled_nota:{en:'Spend is still counted only for',es:'El gasto se sigue contando solo para',pt:'O gasto continua sendo contado apenas para'},
   buscar:{en:'Search by name or dimension…',es:'Buscar por nombre o dimensión…',pt:'Buscar por nome ou dimensão…'},
   de:{en:'of',es:'de',pt:'de'}, creativos:{en:'creatives',es:'creativos',pt:'criativos'},
   click_ordenar:{en:'Click a header to sort',es:'Click en un encabezado para ordenar',pt:'Clique num cabeçalho para ordenar'},
@@ -199,36 +190,45 @@ function dayPassesSemana1(fecha, fechaLanzamiento){
   return diff>=0 && diff<=6;
 }
 function dayPassesPais(topcountry){ if(topcountry==null) return true; return STATE.paisSel.indexOf(topcountry)!==-1; }
-/* Si el creativo es de OTRA marca que la de Organization (llego a la lista
-   porque su marca SI esta marcada en MarketingOrganization), sus metricas no
-   deben ser las propias (adcost/leads planos, que son del cliente de SU
-   marca) -- deben ser SOLO la porcion de cross-sell hacia Organization
-   (by_org[STATE.organization], gasto=$0 porque el dinero lo puso la otra
-   marca). Esto es lo que le da efecto real a MarketingOrganization: marcar
-   una marca ademas de la de Organization trae esos creativos a la lista,
-   mostrando cuanto le generaron a la Organization elegida. */
+/* La LISTA de creativos siempre es la de Organization (single-select) -- eso
+   nunca cambia, sin importar que este marcado en MarketingOrganization. Lo
+   que SI cambia con MarketingOrganization es como se suman las metricas de
+   ESOS MISMOS creativos de Organization: el gasto (adcost) es SIEMPRE el
+   propio de Organization (by_org[STATE.organization].adcost -- es lo que
+   Organization realmente puso, nunca cambia); leads/ventas/New Cash Core en
+   cambio se SUMAN entre TODAS las marcas marcadas en MarketingOrganization
+   (por defecto, solo Organization -> identico a antes; si se marca otra
+   marca ademas, se le da credito a este mismo creativo de Organization por
+   lo que TAMBIEN genero para esa otra marca, sin que eso cambie cuanto costo).
+   Esto es lo que le da efecto real y coherente a MarketingOrganization en
+   TODAS las metricas (leads/$1k, CPL, CVR, Margen, Prom. Leads/dia), sin
+   alterar jamas la lista de creativos mostrada. */
+function pooledDayFields(d){
+  var home = (d.by_org && d.by_org[STATE.organization]) || {adcost:0};
+  var leads=0, core=0, newCash=0;
+  STATE.marketingOrg.forEach(function(org){
+    var b = (d.by_org && d.by_org[org]) || {leads:0,core_enrollments:0,new_cash_core:0};
+    leads += b.leads||0; core += b.core_enrollments||0; newCash += b.new_cash_core||0;
+  });
+  return Object.assign({}, d, { adcost: home.adcost||0, leads: leads, core_enrollments: core, new_cash_core: newCash });
+}
+function isPooledView(){ return !(STATE.marketingOrg.length===1 && STATE.marketingOrg[0]===STATE.organization); }
 function recomputeCreative(row){
-  var isCrossSell = row.marca !== STATE.organization;
   var days = (row.detalle_diario||[]).filter(function(d){ return dayPassesQuarter(d.fecha) && dayPassesSemana1(d.fecha,row.fecha_lanzamiento) && dayPassesPais(d.topcountry); });
-  var fieldSource = isCrossSell
-    ? days.map(function(d){ return (d.by_org && d.by_org[STATE.organization]) || {adcost:0,leads:0,core_enrollments:0,new_cash_core:0}; })
-    : days;
-  var sums = { adcost:sumField(fieldSource,'adcost'), leads:sumField(fieldSource,'leads'), core_enrollments:sumField(fieldSource,'core_enrollments'), new_cash_core:sumField(fieldSource,'new_cash_core') };
+  var effDays = days.map(pooledDayFields);
+  var sums = { adcost:sumField(effDays,'adcost'), leads:sumField(effDays,'leads'), core_enrollments:sumField(effDays,'core_enrollments'), new_cash_core:sumField(effDays,'new_cash_core') };
   var out = Object.assign({}, row, sums, metricsFromSums(sums));
   var activeDates = new Set();
-  days.forEach(function(d, i){ if((fieldSource[i].leads||0) > 0) activeDates.add(d.fecha); });
+  effDays.forEach(function(d){ if((d.leads||0) > 0) activeDates.add(d.fecha); });
   out.num_dias_activos = activeDates.size;
+  out.avg_leads_dia = out.num_dias_activos ? out.leads/out.num_dias_activos : null;
   out.detalle_diario = days;
-  out.is_cross_sell = isCrossSell;
   return out;
 }
 function getWorkingCreatives(){
   var yearData = currentYearData();
-  var all = [], seen = new Set();
-  STATE.marketingOrg.forEach(function(marca){
-    var slice = yearData.slices[marca+'|'+STATE.region+'|Total'];
-    if(slice) (slice.ranking_creativos||[]).forEach(function(r){ if(!seen.has(r.nombre)){ all.push(r); seen.add(r.nombre); } });
-  });
+  var slice = yearData.slices[STATE.organization+'|'+STATE.region+'|Total'];
+  var all = (slice && slice.ranking_creativos) || [];
   if(STATE.adType !== 'Todos') all = all.filter(function(r){ return r.ad_type === STATE.adType; });
   return all.map(recomputeCreative).filter(function(r){ return r.num_dias_activos>0; });
 }
@@ -262,6 +262,7 @@ function groupCreativesByAdName(creatives){
     out.is_grouped = versions.length > 1;
     out.versions = versions.map(function(v){ return {video_name:v.nombre, link_video:v.link_video, fecha_lanzamiento:v.fecha_lanzamiento, num_dias_activos:v.num_dias_activos}; });
     out.num_dias_activos = allDates.size;
+    out.avg_leads_dia = out.num_dias_activos ? sums.leads/out.num_dias_activos : null;
     out.detalle_diario = mergedDetalle;
     out.fecha_lanzamiento = versions.reduce(function(m,v){ return (v.fecha_lanzamiento && (!m || v.fecha_lanzamiento<m)) ? v.fecha_lanzamiento : m; }, null);
     return out;
@@ -279,6 +280,8 @@ function computeRollup(creatives, dim){
     var mem = groups[key];
     var sums = { adcost:sumField(mem,'adcost'), leads:sumField(mem,'leads'), core_enrollments:sumField(mem,'core_enrollments'), new_cash_core:sumField(mem,'new_cash_core') };
     var agg = Object.assign({}, sums, metricsFromSums(sums));
+    var sumDays = mem.reduce(function(s,r){ return s+(r.num_dias_activos||0); },0);
+    agg.avg_leads_dia = sumDays ? sums.leads/sumDays : null;
     agg.num_creativos = mem.length; agg._members = mem;
     out[key] = agg;
   });
@@ -307,7 +310,9 @@ function availableDimTabs(creatives){
 /* ============================ metrics grid (usado en modales) ============================ */
 function formulaText(key,item){
   var leads=fmtNum(item.leads,0), adcost=fmt$(item.adcost,0), core=fmtNum(item.core_enrollments,0), newCash=fmt$(item.new_cash_core,0);
+  var days=fmtNum(item.num_dias_activos||item.num_dias||0,0);
   if(key==='leads_per_1k') return leads+' leads ÷ '+adcost+' × 1,000';
+  if(key==='avg_leads_dia') return leads+' leads ÷ '+days+' '+T('dias_activos');
   if(key==='cpl') return adcost+' ÷ '+leads+' leads';
   if(key==='cvr') return core+' '+T('ventas_total')+' ÷ '+leads+' leads';
   if(key==='mncc_core_pct') return '('+newCash+' − '+adcost+') ÷ '+newCash;
@@ -426,6 +431,7 @@ function groupContinuousDays(daysRaw){
     var sums = { adcost:sumField(ds,'adcost'), leads:sumField(ds,'leads'), core_enrollments:sumField(ds,'core_enrollments'), new_cash_core:sumField(ds,'new_cash_core') };
     var g = { fecha_inicio:ds[0].fecha, fecha_fin:ds[n-1].fecha, num_dias:n, mixed:splits.length>1, splits:splits };
     Object.assign(g, sums, metricsFromSums(sums));
+    g.avg_leads_dia = n ? sums.leads/n : null;
     return g;
   }).sort(function(a,b){ return a.fecha_fin<b.fecha_fin?1:-1; });
 }
@@ -461,8 +467,8 @@ function openDailyDetailModal(row){
   document.getElementById('modal-eyebrow').textContent = (row.ad_type || '') + (row.marca ? ' · '+row.marca : '');
   document.getElementById('modal-title').innerHTML = esc(row.nombre) + (row.is_grouped ? '' : videoLinkHTML(row.link_video, true));
   var html = '';
-  if(row.is_cross_sell){
-    html += '<div class="foot-note" style="margin-bottom:10px;"><span class="chip cross-sell" title="'+escAttr(T('cross_sell_nota'))+'">'+esc(T('cross_sell_hacia'))+esc(STATE.organization)+'</span> '+esc(T('cross_sell_nota'))+'</div>';
+  if(isPooledView()){
+    html += '<div class="foot-note" style="margin-bottom:10px;"><span class="chip cross-sell">'+esc(T('pooled_chip'))+': '+esc(STATE.marketingOrg.join(' + '))+'</span> '+esc(T('pooled_nota'))+' '+esc(STATE.organization)+'.</div>';
   }
   html += metricsGridHTML(row);
   if(row.is_grouped && row.versions && row.versions.length>1){
@@ -473,12 +479,7 @@ function openDailyDetailModal(row){
   }
   html += taxonomyFullHTML(row);
   if(row.fecha_lanzamiento) html += '<p class="foot-note">'+T('lanzamiento')+': <b>'+esc(row.fecha_lanzamiento)+'</b></p>';
-  var effectiveDays = row.is_cross_sell
-    ? row.detalle_diario.map(function(d){
-        var f = (d.by_org && d.by_org[STATE.organization]) || {adcost:0,leads:0,core_enrollments:0,new_cash_core:0};
-        return Object.assign({}, d, {adcost:f.adcost, leads:f.leads, core_enrollments:f.core_enrollments, new_cash_core:f.new_cash_core});
-      })
-    : row.detalle_diario;
+  var effectiveDays = row.detalle_diario.map(pooledDayFields);
   var ranges = groupContinuousDays(effectiveDays);
   if(!ranges.length){ html += '<p class="foot-note" style="margin-top:14px;">'+T('sin_datos_filtro')+'</p>'; document.getElementById('modal-body').innerHTML=html; document.getElementById('modal-backdrop').classList.add('open'); return; }
   html += '<div class="foot-note" style="margin-top:14px; font-weight:700; text-transform:uppercase; font-size:10.5px;">'+T('trazabilidad')+' ('+STATE.year+' · '+row.num_dias_activos+' '+T('dias_activos')+')</div>';
@@ -509,6 +510,7 @@ function openMethodologyModal(){
   document.getElementById('modal-title').textContent = LANG==='en'?'How each metric is calculated':LANG==='pt'?'Como cada métrica é calculada':'Cómo se calcula cada métrica';
   var body = '<div class="step"><b>'+T('footer_note')+'</b></div><ul style="margin-top:10px; padding-left:18px;">'+
     '<li>'+METRIC_DEFS.leads_per_1k.icon+' '+metricLabel('leads_per_1k')+' = SUM(leads) ÷ SUM(spend) × 1,000</li>'+
+    '<li>'+METRIC_DEFS.avg_leads_dia.icon+' '+metricLabel('avg_leads_dia')+' = SUM(leads) ÷ '+T('dias_activos')+'</li>'+
     '<li>'+METRIC_DEFS.cpl.icon+' '+metricLabel('cpl')+' = SUM(spend) ÷ SUM(leads)</li>'+
     '<li>'+METRIC_DEFS.cvr.icon+' '+metricLabel('cvr')+' = SUM(sales) ÷ SUM(leads)</li>'+
     '<li>'+METRIC_DEFS.mncc_core_pct.icon+' '+metricLabel('mncc_core_pct')+' = (SUM(new cash) − SUM(spend)) ÷ SUM(new cash)</li>'+
@@ -665,7 +667,7 @@ function contextTitleHTML(creatives){
   if(STATE.quarter !== 'Todos') sub.push(T('trimestre')+': '+STATE.quarter);
   if(STATE.semana1) sub.push(T('primera_semana'));
   if(STATE.adType !== 'Todos') sub.push(T('ad_type')+': '+STATE.adType);
-  if(STATE.marketingOrg.length>1 || STATE.marketingOrg[0]!==STATE.organization) sub.push(T('mktorg')+': '+STATE.marketingOrg.join(' + '));
+  if(isPooledView()) sub.push(T('pooled_chip')+': '+STATE.marketingOrg.join(' + ')+' · '+T('pooled_nota')+' '+STATE.organization);
   sub.push(creatives.length+' '+T('creativos_activos_en')+' '+STATE.year);
 
   return '<h1>'+parts.map(esc).join(' · ')+'</h1><div class="context-sub">'+sub.map(esc).join(' · ')+'</div>';
@@ -691,13 +693,12 @@ function rankListHTML(rows, opts){
     var subLabel = opts.isCreative
       ? (r.num_dias_activos+' '+T('dias_activos')+(r.marca?(' · '+r.marca):'')+(r.is_grouped?(' · '+r.versions.length+' '+T('versiones')):''))
       : ((r.num_creativos||0)+' '+T('creativos'));
-    var crossSellChip = (opts.isCreative && r.is_cross_sell) ? ' <span class="chip cross-sell" title="'+escAttr(T('cross_sell_nota'))+'">'+esc(T('cross_sell_hacia'))+esc(STATE.organization)+'</span>' : '';
     return '<div class="rank-item"><div class="rank-row">'+
       '<div class="rank-pos">'+(i+1)+'</div>'+
       '<div class="rank-name-wrap">'+nameHtml+'</div>'+
       '<div class="rank-val"><span class="rank-val-label">'+METRIC_DEFS[activeMetric].icon+' '+metricShort(activeMetric)+'</span><span class="rank-val-num">'+metricDisplayHTML(activeMetric,r)+'</span></div>'+
       '</div><div class="rank-track"><div class="rank-fill" style="width:'+widthPct+'%; background:'+color+';"></div></div>'+
-      '<div class="rank-sub">'+esc(subLabel)+crossSellChip+'</div>'+
+      '<div class="rank-sub">'+esc(subLabel)+'</div>'+
     '</div>';
   }).join('') + '</div>';
 }
@@ -772,7 +773,22 @@ function renderFooter(){
 }
 
 /* ============================ orquestacion ============================ */
+/* Si MarketingOrganization queda en UNA sola marca (no varias) y esa marca
+   es DISTINTA a Organization, el pool de leads/ventas/New Cash Core de TODOS
+   los creativos de la vista pasa a ser solo lo que le "salpico" a esa otra
+   marca (se excluye el propio de Organization) mientras el gasto se mantiene
+   siendo el real y completo de Organization -- comparar ese gasto completo
+   contra leads de salpicadura da numeros validos pero poco utiles en
+   Leads/$1k, CPL o Margen. En ese caso, cambiar la metrica activa
+   automaticamente a "Prom. Leads/dia" al ENTRAR a ese estado (no la vuelve a
+   forzar si el usuario elige otra a mano despues, ni la revierte al salir). */
+var PREV_CROSS_BRAND_ONLY = false;
 function renderAll(){
+  var crossBrandOnly = STATE.marketingOrg.length===1 && STATE.marketingOrg[0]!==STATE.organization;
+  if(crossBrandOnly && !PREV_CROSS_BRAND_ONLY && (STATE.metric==='leads_per_1k' || STATE.metric==='cpl' || STATE.metric==='mncc_core_pct')){
+    STATE.metric = 'avg_leads_dia';
+  }
+  PREV_CROSS_BRAND_ONLY = crossBrandOnly;
   updateAccent();
   document.documentElement.lang = LANG;
   var creatives = getWorkingCreatives();
