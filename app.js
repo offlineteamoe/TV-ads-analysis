@@ -37,6 +37,31 @@ function metricsFromSums(sums){
   var adcost=sums.adcost||0, leads=sums.leads||0, core=sums.core_enrollments||0, newCash=sums.new_cash_core||0;
   return { leads_per_1k: adcost?leads/adcost*1000:null, cpl: leads?adcost/leads:null, cvr: leads?core/leads:null, mncc_core_pct: newCash?(newCash-adcost)/newCash:null };
 }
+/* Caso de gasto=$0 con leads/New Cash Core reales (ej. una vista cruzada
+   Organization/MarketingOrganization, o un hueco de datos puntual): CPL y
+   %Margen calculan un numero MATEMATICAMENTE valido pero enganoso ($0.00 de
+   CPL, o 100% de margen) porque el gasto no esta atribuido a esta vista, no
+   porque sea gratis o perfecto. Se detecta y se reemplaza la lectura en vez
+   de mostrar el numero confuso. CVR y Leads/$1k no necesitan este trato:
+   Leads/$1k ya da null limpio cuando adcost=0 (division por cero evitada),
+   y CVR no depende del gasto en absoluto. */
+function isZeroSpendCase(item){ return !!item && (item.adcost||0) === 0; }
+function cplDisplayHTML(item){
+  if(isZeroSpendCase(item) && (item.leads||0) > 0) return '<span title="'+escAttr(T('sin_gasto_nota'))+'">'+esc(T('sin_gasto_corto'))+'</span>';
+  return esc(metricFmt('cpl', item.cpl));
+}
+function marginDisplayHTML(item){
+  if(isZeroSpendCase(item) && (item.new_cash_core||0) > 0){
+    var days = item.num_dias_activos || item.num_dias || 1;
+    return esc(fmt$(item.new_cash_core/days, 0) + '/' + T('dia')) + ' <span class="chip" title="'+escAttr(T('margen_sin_gasto_nota'))+'">'+esc(T('avg_ncc_dia'))+'</span>';
+  }
+  return esc(metricFmt('mncc_core_pct', item.mncc_core_pct));
+}
+function metricDisplayHTML(key, item){
+  if(key==='cpl') return cplDisplayHTML(item);
+  if(key==='mncc_core_pct') return marginDisplayHTML(item);
+  return esc(metricFmt(key, item[key]));
+}
 
 /* ============================ color por ranking ============================ */
 function cv(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
@@ -95,6 +120,11 @@ var STR = {
   rotacion_mixta:{en:'Mixed rotation split by country this period',es:'Rotación mixta por país en este período',pt:'Rotação mista por país neste período'},
   resto_latam:{en:'Rest of LATAM',es:'Resto de LATAM',pt:'Resto da LATAM'},
   paises:{en:'countries',es:'países',pt:'países'},
+  sin_gasto_corto:{en:'No spend attributed',es:'Sin gasto atribuido',pt:'Sem gasto atribuído'},
+  sin_gasto_nota:{en:'This view has leads but $0 spend attributed here, so CPL is not meaningful.',es:'Esta vista tiene leads pero $0 de gasto atribuido, así que el CPL no tiene sentido aquí.',pt:'Esta visão tem leads mas $0 de gasto atribuído aqui, então o CPL não faz sentido.'},
+  avg_ncc_dia:{en:'Avg. New Cash Core/day',es:'Prom. New Cash Core/día',pt:'Méd. New Cash Core/dia'},
+  margen_sin_gasto_nota:{en:'$0 spend attributed here, so % Margin would show a meaningless 100%. Showing average daily New Cash Core generated instead.',es:'$0 de gasto atribuido aquí, así que %Margen mostraría un 100% sin sentido. Se muestra en su lugar el promedio diario de New Cash Core generado.',pt:'$0 de gasto atribuído aqui, então %Margem mostraria um 100% sem sentido. Mostrando em vez disso a média diária de New Cash Core gerado.'},
+  dia:{en:'day',es:'día',pt:'dia'},
   buscar:{en:'Search by name or dimension…',es:'Buscar por nombre o dimensión…',pt:'Buscar por nome ou dimensão…'},
   de:{en:'of',es:'de',pt:'de'}, creativos:{en:'creatives',es:'creativos',pt:'criativos'},
   click_ordenar:{en:'Click a header to sort',es:'Click en un encabezado para ordenar',pt:'Clique num cabeçalho para ordenar'},
@@ -262,7 +292,7 @@ function metricsGridHTML(item){
     var val=item[key], active=key===STATE.metric, negative=METRIC_DEFS[key].isMargin && val!=null && val<0;
     return '<div class="metric-card'+(active?' active':'')+(negative?' negative':'')+'">'+
       '<div class="metric-card-head"><span>'+METRIC_DEFS[key].icon+'</span><span>'+metricLabel(key)+'</span></div>'+
-      '<div class="metric-card-val">'+metricFmt(key,val)+'</div>'+
+      '<div class="metric-card-val">'+metricDisplayHTML(key,item)+'</div>'+
       '<div class="metric-card-formula">'+formulaText(key,item)+'</div>'+
     '</div>';
   }).join('')+'</div>';
@@ -289,7 +319,7 @@ function openModal(dim, code, metrics){
       members.map(function(m){
         var color = rankColorCSS(activeMetric, m[activeMetric], minMax);
         return '<tr><td><span class="legend-swatch" style="background:'+color+'"></span></td><td><button class="link-btn" data-daily-detail="'+escAttr(m.nombre)+'">'+esc(m.nombre)+'</button> '+videoLinkHTML(m.link_video)+'</td>'+
-          '<td class="num">'+m.num_dias_activos+'</td>'+METRIC_ORDER.map(function(k){ return '<td class="num">'+metricFmt(k,m[k])+'</td>'; }).join('')+'</tr>';
+          '<td class="num">'+m.num_dias_activos+'</td>'+METRIC_ORDER.map(function(k){ return '<td class="num">'+metricDisplayHTML(k,m)+'</td>'; }).join('')+'</tr>';
       }).join('')+'</tbody></table></div>';
     members.forEach(function(m){ window.__creativeRowLookup[m.nombre]=m; });
   }
@@ -417,7 +447,7 @@ function openDailyDetailModal(row){
   html += '<div class="foot-note" style="margin-top:14px; font-weight:700; text-transform:uppercase; font-size:10.5px;">'+T('trazabilidad')+' ('+STATE.year+' · '+row.num_dias_activos+' '+T('dias_activos')+')</div>';
   html += '<div class="day-list">'+ranges.map(function(g){
     var dateLabel = g.fecha_inicio===g.fecha_fin? g.fecha_inicio : (g.fecha_inicio+' → '+g.fecha_fin);
-    var metricsLine = METRIC_ORDER.map(function(k){ return METRIC_DEFS[k].icon+' '+metricFmt(k,g[k]); }).join(' · ');
+    var metricsLine = METRIC_ORDER.map(function(k){ return METRIC_DEFS[k].icon+' '+metricDisplayHTML(k,g); }).join(' · ');
     var splitsHtml = g.mixed
       ? '<div class="foot-note" style="margin:2px 0 0; font-weight:700;">'+T('rotacion_mixta')+'</div>'+g.splits.map(function(s){ return splitLineHTML(s, true); }).join('')
       : splitLineHTML(g.splits[0], false);
@@ -627,7 +657,7 @@ function rankListHTML(rows, opts){
     return '<div class="rank-item"><div class="rank-row">'+
       '<div class="rank-pos">'+(i+1)+'</div>'+
       '<div class="rank-name-wrap">'+nameHtml+'</div>'+
-      '<div class="rank-val"><span class="rank-val-label">'+METRIC_DEFS[activeMetric].icon+' '+metricShort(activeMetric)+'</span><span class="rank-val-num">'+metricFmt(activeMetric,val)+'</span></div>'+
+      '<div class="rank-val"><span class="rank-val-label">'+METRIC_DEFS[activeMetric].icon+' '+metricShort(activeMetric)+'</span><span class="rank-val-num">'+metricDisplayHTML(activeMetric,r)+'</span></div>'+
       '</div><div class="rank-track"><div class="rank-fill" style="width:'+widthPct+'%; background:'+color+';"></div></div>'+
       '<div class="rank-sub">'+esc(subLabel)+'</div>'+
     '</div>';
@@ -682,7 +712,7 @@ function renderExplorer(creatives){
         '<td><button class="link-btn" data-daily-detail="'+escAttr(r.nombre)+'">'+esc(r.nombre)+'</button> '+videoLinkHTML(r.link_video)+'</td>'+
         dims.map(function(d){ return '<td>'+esc(TAX(d.key, r[d.field]))+'</td>'; }).join('')+
         '<td class="num">'+r.num_dias_activos+'</td>'+
-        METRIC_ORDER.map(function(k){ return '<td class="num'+(k===STATE.metric?' active-metric':'')+'">'+metricFmt(k,r[k])+'</td>'; }).join('')+
+        METRIC_ORDER.map(function(k){ return '<td class="num'+(k===STATE.metric?' active-metric':'')+'">'+metricDisplayHTML(k,r)+'</td>'; }).join('')+
       '</tr>';
     }).join('');
   }
