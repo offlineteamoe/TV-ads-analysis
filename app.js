@@ -89,8 +89,12 @@ var STR = {
   v_hook_audio_type:{en:'Audio Hook Type',es:'Tipo de Hook de Audio',pt:'Tipo de Hook de Áudio'},
   v_hook_visual_type:{en:'Visual Hook Type',es:'Tipo de Hook Visual',pt:'Tipo de Hook Visual'},
   v_cta_type:{en:'CTA Type',es:'Tipo de CTA',pt:'Tipo de CTA'},
-  new_chip:{en:'NEW',es:'NUEVA',pt:'NOVA'},
   creativos_activos_en:{en:'active creatives in',es:'creativos activos en',pt:'criativos ativos em'},
+  versiones:{en:'versions',es:'versiones',pt:'versões'},
+  incluye_versiones:{en:'This ad groups the following versions',es:'Este ad agrupa las siguientes versiones',pt:'Este ad agrupa as seguintes versões'},
+  rotacion_mixta:{en:'Mixed rotation split by country this period',es:'Rotación mixta por país en este período',pt:'Rotação mista por país neste período'},
+  resto_latam:{en:'Rest of LATAM',es:'Resto de LATAM',pt:'Resto da LATAM'},
+  paises:{en:'countries',es:'países',pt:'países'},
   buscar:{en:'Search by name or dimension…',es:'Buscar por nombre o dimensión…',pt:'Buscar por nome ou dimensão…'},
   de:{en:'of',es:'de',pt:'de'}, creativos:{en:'creatives',es:'creativos',pt:'criativos'},
   click_ordenar:{en:'Click a header to sort',es:'Click en un encabezado para ordenar',pt:'Clique num cabeçalho para ordenar'},
@@ -171,6 +175,41 @@ function getWorkingCreatives(){
   if(STATE.adType !== 'Todos') all = all.filter(function(r){ return r.ad_type === STATE.adType; });
   return all.map(recomputeCreative).filter(function(r){ return r.num_dias_activos>0; });
 }
+/* ============================ agrupar por Ad Name (columna B del Excel STANDARD) ============================
+   Video Name (columna A) puede tener variantes V2/V3/V4/V5 del MISMO ad --
+   el Ranking debe sumar esas versiones bajo un solo Ad Name (columna B).
+   Al hacer click, el detalle si distingue cada Video Name (cada version
+   conserva su propio link/fecha de lanzamiento, y cada dia de detalle queda
+   etiquetado con que Video Name lo genero). */
+function groupCreativesByAdName(creatives){
+  var groups = {};
+  creatives.forEach(function(r){
+    var adName = r.ad_name || r.nombre;
+    (groups[adName] = groups[adName] || []).push(r);
+  });
+  return Object.keys(groups).map(function(adName){
+    var versions = groups[adName];
+    var sums = { adcost:sumField(versions,'adcost'), leads:sumField(versions,'leads'), core_enrollments:sumField(versions,'core_enrollments'), new_cash_core:sumField(versions,'new_cash_core') };
+    var primary = versions.slice().sort(function(a,b){ return b.num_dias_activos - a.num_dias_activos; })[0];
+    var mergedDetalle = [];
+    var allDates = new Set();
+    versions.forEach(function(v){
+      (v.detalle_diario||[]).forEach(function(d){
+        mergedDetalle.push(Object.assign({video_name:v.nombre}, d));
+        allDates.add(d.fecha);
+      });
+    });
+    var out = Object.assign({}, primary, sums, metricsFromSums(sums));
+    out.nombre = adName;
+    out.ad_name = adName;
+    out.is_grouped = versions.length > 1;
+    out.versions = versions.map(function(v){ return {video_name:v.nombre, link_video:v.link_video, fecha_lanzamiento:v.fecha_lanzamiento, num_dias_activos:v.num_dias_activos}; });
+    out.num_dias_activos = allDates.size;
+    out.detalle_diario = mergedDetalle;
+    out.fecha_lanzamiento = versions.reduce(function(m,v){ return (v.fecha_lanzamiento && (!m || v.fecha_lanzamiento<m)) ? v.fecha_lanzamiento : m; }, null);
+    return out;
+  });
+}
 function computeRollup(creatives, dim){
   var groups = {};
   creatives.forEach(function(r){
@@ -194,15 +233,15 @@ function computeRollup(creatives, dim){
    y automaticamente muestre mas tabs cuando se despliegue tvads-creative-taxonomy.json
    completo (theme, pain_point, type_of_production, tone_category, y las 4 categorias nuevas). */
 var CANDIDATE_DIMS = [
-  {key:'theme', field:'theme', isNew:false},
-  {key:'pain_point', field:'pain_point_code', isNew:false},
-  {key:'type_of_production', field:'type_of_production', isNew:false},
-  {key:'tone_category', field:'tone_category', isNew:false},
-  {key:'campaign_name', field:'campaign_name', isNew:false},
-  {key:'theme_mechanism', field:'theme_mechanism_code', isNew:true},
-  {key:'hook_audio_type', field:'hook_audio_type_code', isNew:true},
-  {key:'hook_visual_type', field:'hook_visual_type_code', isNew:true},
-  {key:'cta_type', field:'cta_type_code', isNew:true},
+  {key:'campaign_name', field:'campaign_name', group:'strategy'},
+  {key:'theme', field:'theme', group:'strategy'},
+  {key:'theme_mechanism', field:'theme_mechanism_code', group:'strategy'},
+  {key:'pain_point', field:'pain_point_code', group:'strategy'},
+  {key:'hook_audio_type', field:'hook_audio_type_code', group:'execution'},
+  {key:'hook_visual_type', field:'hook_visual_type_code', group:'execution'},
+  {key:'cta_type', field:'cta_type_code', group:'execution'},
+  {key:'type_of_production', field:'type_of_production', group:'production'},
+  {key:'tone_category', field:'tone_category', group:'production'},
 ];
 function availableDimTabs(creatives){
   return CANDIDATE_DIMS.filter(function(d){ return creatives.some(function(r){ return r[d.field]!=null && r[d.field]!=='' && r[d.field]!=='-'; }); });
@@ -264,46 +303,79 @@ document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeModa
 
 /* ============================ modal: trazabilidad diaria (agrupada por tanda continua) ============================ */
 function meanArr(arr){ var v=arr.filter(function(x){return x!=null;}); return v.length? v.reduce(function(s,x){return s+x;},0)/v.length : null; }
-function daySignature(d){ return (d.companions||[]).map(function(c){return c.nombre;}).sort().join('|'); }
+function splitKey(d){
+  return (d.video_name?d.video_name+'::':'') + (d.peso_propio==null?'x':d.peso_propio.toFixed(4)) + '||' +
+    (d.companions||[]).map(function(c){ return c.nombre+'@'+c.peso.toFixed(4); }).sort().join(',');
+}
 /* Un creativo bajo el tag generico "Rotacion Latam" tiene UNA fila de
-   detalle_diario por cada pais libre ese dia (topcountry granular) -- antes
-   de agrupar por tanda continua hay que consolidar esas filas en UNA sola
-   por fecha calendario (sumando metricas, promediando companions), o el
-   mismo dia aparece repetido una vez por pais en la trazabilidad. */
+   detalle_diario por cada pais libre ese dia (topcountry granular). Antes se
+   promediaba peso_propio a traves de esas filas para mostrar UN solo % por
+   dia -- pero si un pais tiene su propio override de rotacion (ej. Colombia
+   40/60 mientras el resto de LATAM esta 50/50 el mismo dia), promediar da un
+   numero que no corresponde a NINGUN split real (bug reportado por el
+   usuario). Ahora se subagrupa por split EXACTO (peso propio + companions +
+   version) dentro de cada fecha: si todos los paises comparten el mismo
+   split ese dia, se colapsa en una sola entrada (caso comun, sin cambios de
+   comportamiento); si difieren, se preservan como splits separados con la
+   lista real de paises de cada uno, en vez de inventar un promedio. */
 function consolidateByDate(days){
   var byFecha = {};
-  days.forEach(function(d){
-    var acc = byFecha[d.fecha];
-    if(!acc){ acc = { fecha:d.fecha, adcost:0, leads:0, core_enrollments:0, new_cash_core:0, pesos:[], compAgg:{} }; byFecha[d.fecha]=acc; }
-    acc.adcost += d.adcost||0; acc.leads += d.leads||0; acc.core_enrollments += d.core_enrollments||0; acc.new_cash_core += d.new_cash_core||0;
-    if(d.peso_propio!=null) acc.pesos.push(d.peso_propio);
-    (d.companions||[]).forEach(function(c){ if(!acc.compAgg[c.nombre]) acc.compAgg[c.nombre]={sum:0,count:0}; acc.compAgg[c.nombre].sum+=c.peso; acc.compAgg[c.nombre].count+=1; });
-  });
+  days.forEach(function(d){ (byFecha[d.fecha] = byFecha[d.fecha] || []).push(d); });
   return Object.keys(byFecha).map(function(fecha){
-    var acc = byFecha[fecha];
-    var companions = Object.keys(acc.compAgg).map(function(name){ return {nombre:name, peso:acc.compAgg[name].sum/acc.compAgg[name].count}; }).sort(function(a,b){return b.peso-a.peso;});
-    return { fecha:fecha, adcost:acc.adcost, leads:acc.leads, core_enrollments:acc.core_enrollments, new_cash_core:acc.new_cash_core, peso_propio:meanArr(acc.pesos), companions:companions };
+    var rows = byFecha[fecha];
+    var bySplit = {};
+    rows.forEach(function(d){
+      var key = splitKey(d);
+      if(!bySplit[key]) bySplit[key] = { peso_propio:d.peso_propio, companions:d.companions||[], video_name:d.video_name, countries:[], adcost:0, leads:0, core_enrollments:0, new_cash_core:0 };
+      var g = bySplit[key];
+      if(d.topcountry) g.countries.push(d.topcountry);
+      g.adcost += d.adcost||0; g.leads += d.leads||0; g.core_enrollments += d.core_enrollments||0; g.new_cash_core += d.new_cash_core||0;
+    });
+    var splits = Object.keys(bySplit).map(function(k){ return bySplit[k]; });
+    var totals = { adcost:0, leads:0, core_enrollments:0, new_cash_core:0 };
+    splits.forEach(function(s){ totals.adcost+=s.adcost; totals.leads+=s.leads; totals.core_enrollments+=s.core_enrollments; totals.new_cash_core+=s.new_cash_core; });
+    return Object.assign({ fecha:fecha, splits:splits, mixed:splits.length>1 }, totals);
   });
+}
+function consolidatedSignature(cd){
+  return cd.splits.map(function(s){ return (s.video_name?s.video_name+'::':'')+(s.peso_propio==null?'x':s.peso_propio.toFixed(4))+':'+(s.companions||[]).map(function(c){return c.nombre+'@'+c.peso.toFixed(4);}).sort().join(',')+':'+s.countries.slice().sort().join(','); }).sort().join('|');
+}
+function mergeSplitsAcrossDays(dayList){
+  // dayList: consolidated-by-date entries that share the identical signature (mismo split exacto) -- se suman metricas por split, preservando la lista de paises/companions (idéntica en todos).
+  var bySplit = {};
+  dayList.forEach(function(cd){
+    cd.splits.forEach(function(s){
+      var key = (s.video_name?s.video_name+'::':'')+(s.peso_propio==null?'x':s.peso_propio.toFixed(4))+':'+(s.companions||[]).map(function(c){return c.nombre;}).sort().join(',');
+      if(!bySplit[key]) bySplit[key] = { peso_propio:s.peso_propio, companions:s.companions, video_name:s.video_name, countries:s.countries, adcost:0, leads:0, core_enrollments:0, new_cash_core:0 };
+      var g = bySplit[key];
+      g.adcost += s.adcost; g.leads += s.leads; g.core_enrollments += s.core_enrollments; g.new_cash_core += s.new_cash_core;
+    });
+  });
+  return Object.keys(bySplit).map(function(k){ var s=bySplit[k]; return Object.assign({}, s, metricsFromSums(s)); });
 }
 function groupContinuousDays(daysRaw){
   var days = consolidateByDate(daysRaw);
   var asc = days.slice().sort(function(a,b){ return a.fecha<b.fecha?-1:(a.fecha>b.fecha?1:0); });
   var groups=[], current=null, lastTime=null, lastSig=null;
   asc.forEach(function(d){
-    var t=Date.parse(d.fecha+'T00:00:00Z'), sig=daySignature(d);
+    var t=Date.parse(d.fecha+'T00:00:00Z'), sig=consolidatedSignature(d);
     if(current && lastTime!=null && (t-lastTime)===86400000 && sig===lastSig){ current.push(d); }
     else { current=[d]; groups.push(current); }
     lastTime=t; lastSig=sig;
   });
   return groups.map(function(ds){
-    var n=ds.length, compAgg={};
-    ds.forEach(function(d){ (d.companions||[]).forEach(function(c){ if(!compAgg[c.nombre]) compAgg[c.nombre]={sum:0,count:0}; compAgg[c.nombre].sum+=c.peso; compAgg[c.nombre].count+=1; }); });
-    var companions = Object.keys(compAgg).map(function(name){ return {nombre:name, peso:compAgg[name].sum/compAgg[name].count}; }).sort(function(a,b){return b.peso-a.peso;});
+    var n=ds.length;
+    var splits = mergeSplitsAcrossDays(ds);
     var sums = { adcost:sumField(ds,'adcost'), leads:sumField(ds,'leads'), core_enrollments:sumField(ds,'core_enrollments'), new_cash_core:sumField(ds,'new_cash_core') };
-    var g = { fecha_inicio:ds[0].fecha, fecha_fin:ds[n-1].fecha, num_dias:n, peso_propio:meanArr(ds.map(function(d){return d.peso_propio;})), companions:companions };
+    var g = { fecha_inicio:ds[0].fecha, fecha_fin:ds[n-1].fecha, num_dias:n, mixed:splits.length>1, splits:splits };
     Object.assign(g, sums, metricsFromSums(sums));
     return g;
   }).sort(function(a,b){ return a.fecha_fin<b.fecha_fin?1:-1; });
+}
+function countryLabel(countries){
+  if(!countries || !countries.length) return '';
+  if(countries.length<=3) return countries.join(', ');
+  return countries.length+' '+T('paises');
 }
 function taxonomyFullHTML(row){
   var items = availableDimTabs([row]).map(function(d){
@@ -316,24 +388,42 @@ function taxonomyFullHTML(row){
   }).join('');
   return '<div class="foot-note" style="margin-top:14px; font-weight:700; text-transform:uppercase; font-size:10.5px;">'+(LANG==='en'?'Creative information':LANG==='pt'?'Informação do criativo':'Información del creativo')+'</div>'+items;
 }
+function splitLineHTML(s, showCountry){
+  var pesoPct = s.peso_propio!=null? fmtPct(s.peso_propio,0) : '—';
+  var companionsHtml = s.companions && s.companions.length ? (T('acompanado_por')+': '+s.companions.map(function(c){return esc(c.nombre)+' ('+fmtPct(c.peso,0)+')';}).join(', ')) : '—';
+  var countryLbl = '';
+  if(showCountry){
+    countryLbl = (s.countries && s.countries.length) ? esc(countryLabel(s.countries)) : T('resto_latam');
+  }
+  var versionLbl = s.video_name ? '<span class="version-pill">'+esc(s.video_name)+'</span>' : '';
+  return '<div class="day-split"><div class="day-split-head">'+versionLbl+(countryLbl?'<b>'+countryLbl+'</b>: ':'')+pesoPct+'</div>'+
+    '<div class="day-companions">'+companionsHtml+'</div></div>';
+}
 function openDailyDetailModal(row){
   document.getElementById('modal-card').classList.add('wide');
   document.getElementById('modal-eyebrow').textContent = row.ad_type || '';
-  document.getElementById('modal-title').innerHTML = esc(row.nombre) + videoLinkHTML(row.link_video, true);
+  document.getElementById('modal-title').innerHTML = esc(row.nombre) + (row.is_grouped ? '' : videoLinkHTML(row.link_video, true));
   var html = metricsGridHTML(row);
+  if(row.is_grouped && row.versions && row.versions.length>1){
+    html += '<div class="foot-note" style="margin-top:10px; font-weight:700; text-transform:uppercase; font-size:10.5px;">'+T('incluye_versiones')+' ('+row.versions.length+' '+T('versiones')+')</div>';
+    html += '<div class="versions-list">'+row.versions.map(function(v){
+      return '<span class="version-pill">'+esc(v.video_name)+(v.fecha_lanzamiento?' · '+esc(v.fecha_lanzamiento):'')+'</span>'+videoLinkHTML(v.link_video);
+    }).join('')+'</div>';
+  }
   html += taxonomyFullHTML(row);
   if(row.fecha_lanzamiento) html += '<p class="foot-note">'+T('lanzamiento')+': <b>'+esc(row.fecha_lanzamiento)+'</b></p>';
   var ranges = groupContinuousDays(row.detalle_diario);
   if(!ranges.length){ html += '<p class="foot-note" style="margin-top:14px;">'+T('sin_datos_filtro')+'</p>'; document.getElementById('modal-body').innerHTML=html; document.getElementById('modal-backdrop').classList.add('open'); return; }
   html += '<div class="foot-note" style="margin-top:14px; font-weight:700; text-transform:uppercase; font-size:10.5px;">'+T('trazabilidad')+' ('+STATE.year+' · '+row.num_dias_activos+' '+T('dias_activos')+')</div>';
   html += '<div class="day-list">'+ranges.map(function(g){
-    var pesoPct = g.peso_propio!=null? fmtPct(g.peso_propio,0) : '—';
     var dateLabel = g.fecha_inicio===g.fecha_fin? g.fecha_inicio : (g.fecha_inicio+' → '+g.fecha_fin);
-    var companionsHtml = g.companions && g.companions.length ? (T('acompanado_por')+': '+g.companions.map(function(c){return esc(c.nombre)+' ('+fmtPct(c.peso,0)+')';}).join(', ')) : '—';
     var metricsLine = METRIC_ORDER.map(function(k){ return METRIC_DEFS[k].icon+' '+metricFmt(k,g[k]); }).join(' · ');
-    return '<div class="day-entry"><div class="day-head"><span class="day-date">'+esc(dateLabel)+' <span class="chip">'+g.num_dias+'d</span></span><span>'+pesoPct+'</span></div>'+
+    var splitsHtml = g.mixed
+      ? '<div class="foot-note" style="margin:2px 0 0; font-weight:700;">'+T('rotacion_mixta')+'</div>'+g.splits.map(function(s){ return splitLineHTML(s, true); }).join('')
+      : splitLineHTML(g.splits[0], false);
+    return '<div class="day-entry"><div class="day-head"><span class="day-date">'+esc(dateLabel)+' <span class="chip">'+g.num_dias+'d</span></span></div>'+
       '<div class="day-metrics">'+Math.round(g.leads)+' '+T('leads')+' · '+metricsLine+'</div>'+
-      '<div class="day-companions">'+companionsHtml+'</div></div>';
+      splitsHtml+'</div>';
   }).join('')+'</div>';
   document.getElementById('modal-body').innerHTML = html;
   document.getElementById('modal-backdrop').classList.add('open');
@@ -458,14 +548,19 @@ function wireTabScroll(el){
 }
 function renderViewTabs(creatives){
   var dims = availableDimTabs(creatives);
-  var views = ['ranking'].concat(dims.map(function(d){return d.key;})).concat(['explorador']);
   var el = document.getElementById('viewtabs');
-  if(views.indexOf(STATE.view)===-1) STATE.view='ranking';
-  el.innerHTML = views.map(function(v){
-    var d = dims.filter(function(x){return x.key===v;})[0];
-    var isNew = d && d.isNew;
-    return '<button data-view="'+v+'" class="'+(STATE.view===v?'active':'')+(isNew?' newcat':'')+'">'+esc(T('v_'+v))+(isNew?'<span class="newcat-chip">'+T('new_chip')+'</span>':'')+'</button>';
-  }).join('');
+  var allViews = ['ranking'].concat(dims.map(function(d){return d.key;})).concat(['explorador']);
+  if(allViews.indexOf(STATE.view)===-1) STATE.view='ranking';
+
+  var html = '<button data-view="ranking" class="'+(STATE.view==='ranking'?'active':'')+'">'+esc(T('v_ranking'))+'</button>';
+  var lastGroup = null;
+  dims.forEach(function(d){
+    if(lastGroup!==null && d.group!==lastGroup) html += '<span class="tab-group-gap"></span>';
+    lastGroup = d.group;
+    html += '<button data-view="'+d.key+'" class="'+(STATE.view===d.key?'active':'')+'">'+esc(T('v_'+d.key))+'</button>';
+  });
+  html += '<span class="tab-group-gap"></span><button data-view="explorador" class="'+(STATE.view==='explorador'?'active':'')+'">'+esc(T('v_explorador'))+'</button>';
+  el.innerHTML = html;
   Array.from(el.querySelectorAll('button')).forEach(function(btn){ btn.addEventListener('click', function(){ STATE.view=btn.dataset.view; renderAll(); }); });
   wireTabScroll(el);
 }
@@ -483,19 +578,33 @@ document.getElementById('btn-theme').addEventListener('click', function(){
   if(next) root.setAttribute('data-theme', next); else root.removeAttribute('data-theme');
 });
 
-/* ============================ KPI strip ============================ */
-function renderKpiStrip(creatives){
-  var sums = { adcost:sumField(creatives,'adcost'), leads:sumField(creatives,'leads'), core_enrollments:sumField(creatives,'core_enrollments'), new_cash_core:sumField(creatives,'new_cash_core') };
-  var m = metricsFromSums(sums);
-  var tiles = [
-    {label:T('spend_total'), val:fmt$(sums.adcost,0)},
-    {label:T('leads_total'), val:fmtNum(sums.leads,0)},
-    {label:T('ventas_total'), val:fmtNum(sums.core_enrollments,0)},
-    {label:T('margen_total'), val:fmtPct(m.mncc_core_pct,1), hl:true},
-  ];
-  document.getElementById('kpi-strip').innerHTML = tiles.map(function(t){
-    return '<div class="kpi-tile'+(t.hl?' hl':'')+'"><div class="kpi-tile-label">'+t.label+'</div><div class="kpi-tile-val">'+t.val+'</div></div>';
-  }).join('');
+/* ============================ titulo ejecutivo dinamico ============================
+   Resume en una linea lo que se esta viendo segun los filtros activos (marca,
+   lugar, fecha, y filtros secundarios si difieren del default) -- reemplaza
+   las tarjetas de resumen (KPI strip) que se quitaron a pedido del usuario. */
+function contextTitleHTML(creatives){
+  var parts = [STATE.organization];
+  if(STATE.region === 'Latam'){
+    parts.push(T('latam'));
+    if(STATE.paisSel.length < COUNTRIES.length) parts.push(countryLabel(STATE.paisSel));
+  } else {
+    parts.push(T('brazil'));
+  }
+  parts.push(STATE.year);
+  var viewLabel = T('v_'+STATE.view) || STATE.view;
+  parts.push(viewLabel);
+
+  var sub = [];
+  if(STATE.quarter !== 'Todos') sub.push(T('trimestre')+': '+STATE.quarter);
+  if(STATE.semana1) sub.push(T('primera_semana'));
+  if(STATE.adType !== 'Todos') sub.push(T('ad_type')+': '+STATE.adType);
+  if(STATE.marketingOrg.length>1 || STATE.marketingOrg[0]!==STATE.organization) sub.push(T('mktorg')+': '+STATE.marketingOrg.join(' + '));
+  sub.push(creatives.length+' '+T('creativos_activos_en')+' '+STATE.year);
+
+  return '<h1>'+parts.map(esc).join(' · ')+'</h1><div class="context-sub">'+sub.map(esc).join(' · ')+'</div>';
+}
+function renderContextTitle(creatives){
+  document.getElementById('context-title').innerHTML = contextTitleHTML(creatives);
 }
 
 /* ============================ rank list (reusado para ranking y para cada dimension) ============================ */
@@ -513,7 +622,7 @@ function rankListHTML(rows, opts){
       ? '<button class="rank-name-btn" data-daily-detail="'+escAttr(r.nombre)+'"><span>'+esc(r.nombre)+'</span></button>'+videoLinkHTML(r.link_video)
       : '<button class="rank-name-btn" data-def-dim="'+escAttr(opts.dim)+'" data-def-code="'+escAttr(r._code)+'"><span>'+esc(TAX(opts.dim, r._code))+'</span><span class="info-dot">i</span></button>';
     var subLabel = opts.isCreative
-      ? (r.num_dias_activos+' '+T('dias_activos')+(r.marca?(' · '+r.marca):''))
+      ? (r.num_dias_activos+' '+T('dias_activos')+(r.marca?(' · '+r.marca):'')+(r.is_grouped?(' · '+r.versions.length+' '+T('versiones')):''))
       : ((r.num_creativos||0)+' '+T('creativos'));
     return '<div class="rank-item"><div class="rank-row">'+
       '<div class="rank-pos">'+(i+1)+'</div>'+
@@ -539,8 +648,10 @@ function renderPage(creatives){
   populateLookups(creatives);
 
   if(STATE.view==='ranking'){
-    var ranked = creatives.slice().sort(function(a,b){ var av=a[STATE.metric],bv=b[STATE.metric]; if(av==null) return 1; if(bv==null) return -1; return METRIC_DEFS[STATE.metric].higherIsBetter?(bv-av):(av-bv); });
-    page.innerHTML = '<div class="card"><div class="panel-title"><span>'+T('v_ranking')+' — '+creatives.length+' '+T('creativos_activos_en')+' '+STATE.year+'</span></div>'+rankListHTML(ranked,{isCreative:true})+'</div>';
+    var grouped = groupCreativesByAdName(creatives);
+    grouped.forEach(function(r){ window.__creativeRowLookup[r.nombre]=r; });
+    var ranked = grouped.slice().sort(function(a,b){ var av=a[STATE.metric],bv=b[STATE.metric]; if(av==null) return 1; if(bv==null) return -1; return METRIC_DEFS[STATE.metric].higherIsBetter?(bv-av):(av-bv); });
+    page.innerHTML = '<div class="card"><div class="panel-title"><span>'+T('v_ranking')+' — '+grouped.length+' '+T('creativos_activos_en')+' '+STATE.year+'</span></div>'+rankListHTML(ranked,{isCreative:true})+'</div>';
     return;
   }
   if(STATE.view==='explorador'){
@@ -551,7 +662,7 @@ function renderPage(creatives){
     var groups = computeRollup(creatives, dim.field);
     var rows = Object.keys(groups).map(function(code){ var g=groups[code]; g._code=code; return g; });
     rows.sort(function(a,b){ var av=a[STATE.metric],bv=b[STATE.metric]; if(av==null) return 1; if(bv==null) return -1; return METRIC_DEFS[STATE.metric].higherIsBetter?(bv-av):(av-bv); });
-    page.innerHTML = '<div class="card'+(dim.isNew?' newcat':'')+'"><div class="panel-title"><span>'+T('v_'+dim.key)+(dim.isNew?' <span class="newcat-chip">'+T('new_chip')+'</span>':'')+'</span></div>'+rankListHTML(rows,{dim:dim.key})+'</div>';
+    page.innerHTML = '<div class="card"><div class="panel-title"><span>'+T('v_'+dim.key)+'</span></div>'+rankListHTML(rows,{dim:dim.key})+'</div>';
   }
 }
 function renderExplorer(creatives){
@@ -599,8 +710,8 @@ function renderAll(){
   var creatives = getWorkingCreatives();
   renderLangBtns();
   renderSidebar();
-  renderKpiStrip(creatives);
   renderViewTabs(creatives);
+  renderContextTitle(creatives);
   renderPage(creatives);
   renderFooter();
 }
