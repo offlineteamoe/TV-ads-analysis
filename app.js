@@ -127,8 +127,7 @@ var STR = {
   avg_ncc_dia:{en:'Avg. New Cash Core/day',es:'Prom. New Cash Core/día',pt:'Méd. New Cash Core/dia'},
   margen_sin_gasto_nota:{en:'$0 spend attributed here, so % Margin would show a meaningless 100%. Showing average daily New Cash Core generated instead.',es:'$0 de gasto atribuido aquí, así que %Margen mostraría un 100% sin sentido. Se muestra en su lugar el promedio diario de New Cash Core generado.',pt:'$0 de gasto atribuído aqui, então %Margem mostraria um 100% sem sentido. Mostrando em vez disso a média diária de New Cash Core gerado.'},
   dia:{en:'day',es:'día',pt:'dia'},
-  pooled_chip:{en:'Pooling leads/sales/NCC',es:'Sumando leads/ventas/NCC',pt:'Somando leads/vendas/NCC'},
-  pooled_nota:{en:'Spend is still counted only for',es:'El gasto se sigue contando solo para',pt:'O gasto continua sendo contado apenas para'},
+  pooled_chip:{en:'Pooling spend/leads/sales/NCC across',es:'Sumando gasto/leads/ventas/NCC entre',pt:'Somando gasto/leads/vendas/NCC entre'},
   buscar:{en:'Search by name or dimension…',es:'Buscar por nombre o dimensión…',pt:'Buscar por nome ou dimensão…'},
   de:{en:'of',es:'de',pt:'de'}, creativos:{en:'creatives',es:'creativos',pt:'criativos'},
   click_ordenar:{en:'Click a header to sort',es:'Click en un encabezado para ordenar',pt:'Clique num cabeçalho para ordenar'},
@@ -192,25 +191,32 @@ function dayPassesSemana1(fecha, fechaLanzamiento){
 function dayPassesPais(topcountry){ if(topcountry==null) return true; return STATE.paisSel.indexOf(topcountry)!==-1; }
 /* La LISTA de creativos siempre es la de Organization (single-select) -- eso
    nunca cambia, sin importar que este marcado en MarketingOrganization. Lo
-   que SI cambia con MarketingOrganization es como se suman las metricas de
-   ESOS MISMOS creativos de Organization: el gasto (adcost) es SIEMPRE el
-   propio de Organization (by_org[STATE.organization].adcost -- es lo que
-   Organization realmente puso, nunca cambia); leads/ventas/New Cash Core en
-   cambio se SUMAN entre TODAS las marcas marcadas en MarketingOrganization
-   (por defecto, solo Organization -> identico a antes; si se marca otra
-   marca ademas, se le da credito a este mismo creativo de Organization por
-   lo que TAMBIEN genero para esa otra marca, sin que eso cambie cuanto costo).
-   Esto es lo que le da efecto real y coherente a MarketingOrganization en
-   TODAS las metricas (leads/$1k, CPL, CVR, Margen, Prom. Leads/dia), sin
-   alterar jamas la lista de creativos mostrada. */
+   que SI cambia con MarketingOrganization es como se suman las CUATRO
+   metricas crudas de ESOS MISMOS creativos de Organization: gasto, leads,
+   ventas y New Cash Core se suman TODAS por igual, dia por dia, entre las
+   marcas marcadas en MarketingOrganization (by_org[org] de cada una) -- sin
+   excepcion para el gasto. Por defecto (MarketingOrganization = solo la
+   marca de Organization) esto da exactamente el gasto/leads/ventas/NCC
+   propios de siempre. Si se agrega OTRA marca ademas de la de Organization,
+   el gasto no cambia en la practica porque el gasto de un creativo SOLO
+   existe en el by_org de quien realmente lo compro (todo otro by_org trae
+   gasto=$0 por construccion en engine.js) -- pero leads/ventas/NCC si pueden
+   crecer si ese creativo tambien le genero algo a la otra marca. Si en
+   cambio se EXCLUYE la marca propia de Organization de MarketingOrganization
+   (ej. Organization=Open English Junior, MarketingOrganization=Open English
+   unicamente), el gasto de estos creativos de Junior SI da $0 -- porque
+   Open English nunca puso el dinero en un creativo que compro Junior -- y
+   ahi Leads/$1k, CPL y %MNCC dejan de poder calcularse (ver
+   isZeroSpendCase). Esto es lo que le da efecto real y coherente a
+   MarketingOrganization en TODAS las metricas, sin alterar jamas la lista de
+   creativos mostrada. */
 function pooledDayFields(d){
-  var home = (d.by_org && d.by_org[STATE.organization]) || {adcost:0};
-  var leads=0, core=0, newCash=0;
+  var adcost=0, leads=0, core=0, newCash=0;
   STATE.marketingOrg.forEach(function(org){
-    var b = (d.by_org && d.by_org[org]) || {leads:0,core_enrollments:0,new_cash_core:0};
-    leads += b.leads||0; core += b.core_enrollments||0; newCash += b.new_cash_core||0;
+    var b = (d.by_org && d.by_org[org]) || {adcost:0,leads:0,core_enrollments:0,new_cash_core:0};
+    adcost += b.adcost||0; leads += b.leads||0; core += b.core_enrollments||0; newCash += b.new_cash_core||0;
   });
-  return Object.assign({}, d, { adcost: home.adcost||0, leads: leads, core_enrollments: core, new_cash_core: newCash });
+  return Object.assign({}, d, { adcost: adcost, leads: leads, core_enrollments: core, new_cash_core: newCash });
 }
 function isPooledView(){ return !(STATE.marketingOrg.length===1 && STATE.marketingOrg[0]===STATE.organization); }
 function recomputeCreative(row){
@@ -469,7 +475,7 @@ function openDailyDetailModal(row){
   document.getElementById('modal-title').innerHTML = esc(row.nombre) + (row.is_grouped ? '' : videoLinkHTML(row.link_video, true));
   var html = '';
   if(isPooledView()){
-    html += '<div class="foot-note" style="margin-bottom:10px;"><span class="chip cross-sell">'+esc(T('pooled_chip'))+': '+esc(STATE.marketingOrg.join(' + '))+'</span> '+esc(T('pooled_nota'))+' '+esc(STATE.organization)+'.</div>';
+    html += '<div class="foot-note" style="margin-bottom:10px;"><span class="chip cross-sell">'+esc(T('pooled_chip'))+': '+esc(STATE.marketingOrg.join(' + '))+'</span></div>';
   }
   html += metricsGridHTML(row);
   if(row.is_grouped && row.versions && row.versions.length>1){
@@ -670,7 +676,7 @@ function contextTitleHTML(creatives){
   if(STATE.quarter !== 'Todos') sub.push(T('trimestre')+': '+STATE.quarter);
   if(STATE.semana1) sub.push(T('primera_semana'));
   if(STATE.adType !== 'Todos') sub.push(T('ad_type')+': '+STATE.adType);
-  if(isPooledView()) sub.push(T('pooled_chip')+': '+STATE.marketingOrg.join(' + ')+' · '+T('pooled_nota')+' '+STATE.organization);
+  if(isPooledView()) sub.push(T('pooled_chip')+': '+STATE.marketingOrg.join(' + '));
   sub.push(creatives.length+' '+T('creativos_activos_en')+' '+STATE.year);
 
   return '<h1>'+parts.map(esc).join(' · ')+'</h1><div class="context-sub">'+sub.map(esc).join(' · ')+'</div>';
