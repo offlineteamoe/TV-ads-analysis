@@ -178,6 +178,10 @@ function buildYearsData(rotation, deckJsons, taxonomyByName, years) {
         fecha_lanzamiento: diasDelAnio.reduce(function (m, d) { return (!m || d.fecha < m) ? d.fecha : m; }, null),
         detalle_diario: diasDelAnio.slice().sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; }),
       }, totals, metrics, tax);
+      // El Excel STANDARD/taxonomia llama a esta columna "Adstream Link" ->
+      // adstream_link en el JSON; app.js espera link_video en todos sus sitios
+      // de renderizado (boton "Ver video"). Normalizar aqui, una sola vez.
+      row.link_video = tax.adstream_link || null;
 
       (slicesAccum[sliceKey] = slicesAccum[sliceKey] || []).push(row);
     });

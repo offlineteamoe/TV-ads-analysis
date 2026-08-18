@@ -451,14 +451,15 @@ function taxonomyFullHTML(row){
   }).join('');
   return '<div class="foot-note" style="margin-top:14px; font-weight:700; text-transform:uppercase; font-size:10.5px;">'+(LANG==='en'?'Creative information':LANG==='pt'?'Informação do criativo':'Información del creativo')+'</div>'+items;
 }
-function splitLineHTML(s, showCountry){
+function splitLineHTML(s, showCountry, videoLinkByName){
   var pesoPct = s.peso_propio!=null? fmtPct(s.peso_propio,0) : '—';
   var companionsHtml = s.companions && s.companions.length ? (T('acompanado_por')+': '+s.companions.map(function(c){return esc(c.nombre)+' ('+fmtPct(c.peso,0)+')';}).join(', ')) : '—';
   var countryLbl = '';
   if(showCountry){
     countryLbl = (s.countries && s.countries.length) ? esc(countryLabel(s.countries)) : T('resto_latam');
   }
-  var versionLbl = s.video_name ? '<span class="version-pill">'+esc(s.video_name)+'</span>' : '';
+  var link = s.video_name && videoLinkByName && videoLinkByName[s.video_name];
+  var versionLbl = s.video_name ? '<span class="version-pill">'+esc(s.video_name)+'</span>'+(link?videoLinkHTML(link):'') : '';
   return '<div class="day-split"><div class="day-split-head">'+versionLbl+(countryLbl?'<b>'+countryLbl+'</b>: ':'')+pesoPct+'</div>'+
     '<div class="day-companions">'+companionsHtml+'</div></div>';
 }
@@ -482,13 +483,15 @@ function openDailyDetailModal(row){
   var effectiveDays = row.detalle_diario.map(pooledDayFields);
   var ranges = groupContinuousDays(effectiveDays);
   if(!ranges.length){ html += '<p class="foot-note" style="margin-top:14px;">'+T('sin_datos_filtro')+'</p>'; document.getElementById('modal-body').innerHTML=html; document.getElementById('modal-backdrop').classList.add('open'); return; }
+  var videoLinkByName = {};
+  (row.versions || [{video_name:row.nombre, link_video:row.link_video}]).forEach(function(v){ videoLinkByName[v.video_name] = v.link_video; });
   html += '<div class="foot-note" style="margin-top:14px; font-weight:700; text-transform:uppercase; font-size:10.5px;">'+T('trazabilidad')+' ('+STATE.year+' · '+row.num_dias_activos+' '+T('dias_activos')+')</div>';
   html += '<div class="day-list">'+ranges.map(function(g){
     var dateLabel = g.fecha_inicio===g.fecha_fin? g.fecha_inicio : (g.fecha_inicio+' → '+g.fecha_fin);
     var metricsLine = METRIC_ORDER.map(function(k){ return METRIC_DEFS[k].icon+' '+metricDisplayHTML(k,g); }).join(' · ');
     var splitsHtml = g.mixed
-      ? '<div class="foot-note" style="margin:2px 0 0; font-weight:700;">'+T('rotacion_mixta')+'</div>'+g.splits.map(function(s){ return splitLineHTML(s, true); }).join('')
-      : splitLineHTML(g.splits[0], false);
+      ? '<div class="foot-note" style="margin:2px 0 0; font-weight:700;">'+T('rotacion_mixta')+'</div>'+g.splits.map(function(s){ return splitLineHTML(s, true, videoLinkByName); }).join('')
+      : splitLineHTML(g.splits[0], false, videoLinkByName);
     return '<div class="day-entry"><div class="day-head"><span class="day-date">'+esc(dateLabel)+' <span class="chip">'+g.num_dias+'d</span></span></div>'+
       '<div class="day-metrics">'+Math.round(g.leads)+' '+T('leads')+' · '+metricsLine+'</div>'+
       splitsHtml+'</div>';
