@@ -46,6 +46,13 @@ function metricsFromSums(sums){
    Leads/$1k ya da null limpio cuando adcost=0 (division por cero evitada),
    y CVR no depende del gasto en absoluto. */
 function isZeroSpendCase(item){ return !!item && (item.adcost||0) === 0; }
+function leadsPer1kDisplayHTML(item){
+  if(isZeroSpendCase(item) && (item.leads||0) > 0){
+    var days = item.num_dias_activos || item.num_dias || 1;
+    return esc(fmtNum(item.leads/days, 1)) + ' <span class="chip" title="'+escAttr(T('leads_dia_nota'))+'">'+esc(T('avg_leads_dia'))+'</span>';
+  }
+  return esc(metricFmt('leads_per_1k', item.leads_per_1k));
+}
 function cplDisplayHTML(item){
   if(isZeroSpendCase(item) && (item.leads||0) > 0) return '<span title="'+escAttr(T('sin_gasto_nota'))+'">'+esc(T('sin_gasto_corto'))+'</span>';
   return esc(metricFmt('cpl', item.cpl));
@@ -58,6 +65,7 @@ function marginDisplayHTML(item){
   return esc(metricFmt('mncc_core_pct', item.mncc_core_pct));
 }
 function metricDisplayHTML(key, item){
+  if(key==='leads_per_1k') return leadsPer1kDisplayHTML(item);
   if(key==='cpl') return cplDisplayHTML(item);
   if(key==='mncc_core_pct') return marginDisplayHTML(item);
   return esc(metricFmt(key, item[key]));
@@ -120,6 +128,8 @@ var STR = {
   rotacion_mixta:{en:'Mixed rotation split by country this period',es:'Rotación mixta por país en este período',pt:'Rotação mista por país neste período'},
   resto_latam:{en:'Rest of LATAM',es:'Resto de LATAM',pt:'Resto da LATAM'},
   paises:{en:'countries',es:'países',pt:'países'},
+  avg_leads_dia:{en:'Avg. Leads/day',es:'Prom. Leads/día',pt:'Méd. Leads/dia'},
+  leads_dia_nota:{en:'$0 spend attributed here, so Leads per $1,000 can\'t be computed. Showing average daily leads generated instead.',es:'$0 de gasto atribuido aquí, así que Leads x $1,000 no se puede calcular. Se muestra en su lugar el promedio diario de leads generados.',pt:'$0 de gasto atribuído aqui, então Leads por $1.000 não pode ser calculado. Mostrando em vez disso a média diária de leads gerados.'},
   sin_gasto_corto:{en:'No spend attributed',es:'Sin gasto atribuido',pt:'Sem gasto atribuído'},
   sin_gasto_nota:{en:'This view has leads but $0 spend attributed here, so CPL is not meaningful.',es:'Esta vista tiene leads pero $0 de gasto atribuido, así que el CPL no tiene sentido aquí.',pt:'Esta visão tem leads mas $0 de gasto atribuído aqui, então o CPL não faz sentido.'},
   avg_ncc_dia:{en:'Avg. New Cash Core/day',es:'Prom. New Cash Core/día',pt:'Méd. New Cash Core/dia'},
