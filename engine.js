@@ -32,46 +32,52 @@ function sumRawEngine(dicts) {
   return out;
 }
 
-/* Paso 1: totales diarios en vivo (Brand TV Channels), por (region, marca
-   que compro el anuncio [MarketingOrganization], fecha, pais) -- pero SIN
-   colapsar el cliente que realmente convirtio (Organization). Cada archivo
-   de deck ya viene filtrado por Organization real (OE-*.json = clientes que
-   terminaron comprando Open English, JR-*.json = clientes Junior); el spend
-   real SOLO aparece en el archivo cuyo Organization coincide con quien puso
-   el dinero (customerOrg===marca -> "home"), y en el archivo "ajeno" ese
-   mismo anuncio aparece con spend=0 pero leads/ventas reales si hubo
-   cross-sell. Se preserva el desglose por_org completo (no se suma a ciegas)
-   para que Organization (filtro) pueda elegir CUALQUIERA de los dos lados,
-   no solo el propio -- eso es lo que le da efecto real a MarketingOrganization
-   cuando se marca una marca ademas de la de Organization. */
+/* Paso 1: totales diarios en vivo (Brand TV Channels), por (region,
+   Organization -- el archivo de deck, OE-*.json = clientes que terminaron
+   comprando Open English, JR-*.json = clientes Junior --, fecha, pais).
+   CORREGIDO 2026-08-19 (tercera vuelta): confirmado con el usuario, con la
+   columna F ("Brand") del Excel de rotacion como prueba, que la columna que
+   fija un creativo a una sola marca (nunca a las dos) es Organization, no
+   MarketingOrganization -- por eso rotation.pesos (parts[3] de su key) y
+   este `totals` deben quedar keyed por Organization, no por
+   marketing_organization como antes. Dentro de cada (Organization,fecha,
+   pais), se guarda ademas un desglose por MarketingOrganization
+   (`byMktOrg`) SOLO para leads/ventas/New Cash Core -- el spend real
+   siempre es el de la fila cuyo marketing_organization coincide con el
+   Organization del deck (offlineSpendReal igual), la fila "ajena" (ej.
+   dentro de OE-BR.json una fila con marketing_organization=Open English
+   Junior) trae spend=0 pero puede traer leads reales (alguien vio un
+   anuncio/campana de Junior pero termino siendo cliente de Open English) --
+   eso es lo unico que MarketingOrganization (filtro) debe sumar o no. */
 function buildLiveTotals(deckJsons) {
-  var totals = new Map(); // key: region|marca|fecha|pais -> { byOrg: { customerOrg: {spend,leads,core_enrollments,new_cash_core} } }
+  var totals = new Map(); // key: region|Organization|fecha|pais -> { spend, mediaSpendReal, byMktOrg: { mktOrg: {leads,core_enrollments,new_cash_core} } }
   var allCountries = new Set();
   Object.keys(DECK_INFO).forEach(function (deckKey) {
-    var info = DECK_INFO[deckKey];
+    var info = DECK_INFO[deckKey]; // info.customerOrg = Organization (identidad del deck)
     var d = deckJsons[deckKey];
     if (!d) return;
     d.dailyRows.forEach(function (r) {
       if (r.channel_grouping !== 'Brand TV Channels') return;
-      var marca = MKTORG_MARCA[r.marketing_organization];
-      if (!marca) return; // NextU/Open Mundo: fuera del universo de rotacion
+      var mktOrg = MKTORG_MARCA[r.marketing_organization];
+      if (!mktOrg) return; // NextU/Open Mundo: fuera del universo de rotacion
       var country = info.region === 'Brazil' ? null : r.country;
       if (country) allCountries.add(country);
-      var k = info.region + '|' + marca + '|' + r.date + '|' + (country || '');
+      var k = info.region + '|' + info.customerOrg + '|' + r.date + '|' + (country || '');
       var t = totals.get(k);
-      if (!t) { t = { byOrg: {}, mediaSpendReal: 0 }; totals.set(k, t); }
-      var b = t.byOrg[info.customerOrg];
-      if (!b) { b = { spend: 0, leads: 0, core_enrollments: 0, new_cash_core: 0 }; t.byOrg[info.customerOrg] = b; }
-      b.spend += r.spend || 0;
+      if (!t) { t = { spend: 0, mediaSpendReal: 0, byMktOrg: {} }; totals.set(k, t); }
+      /* spend/offlineSpendReal SOLO son reales en la fila cuyo
+         marketing_organization coincide con el Organization de este deck
+         (la fila "ajena" siempre trae spend=0) -- por eso el gasto de un
+         creativo nunca cambia segun MarketingOrganization (filtro). */
+      if (mktOrg === info.customerOrg) {
+        t.spend += r.spend || 0;
+        t.mediaSpendReal += r.offlineSpendReal || 0;
+      }
+      var b = t.byMktOrg[mktOrg];
+      if (!b) { b = { leads: 0, core_enrollments: 0, new_cash_core: 0 }; t.byMktOrg[mktOrg] = b; }
       b.leads += r.leadsEligible || 0;
       b.core_enrollments += r.coreEnrollmentsTotal || 0;
       b.new_cash_core += r.newCashCore || 0;
-      /* offlineSpendReal = "Brand TV Channels" (spend) menos lo que de ese
-         monto es en realidad SEM-Brand digital, no TV real -- ya viene
-         calculado en el KPI export. Solo tiene sentido en el archivo "home"
-         (customerOrg===marca, el mismo que trae el spend real); en los
-         archivos ajenos siempre viene en 0, igual que spend. */
-      if (info.customerOrg === marca) t.mediaSpendReal += r.offlineSpendReal || 0;
     });
   });
   return { totals: totals, allCountries: allCountries };
@@ -93,22 +99,25 @@ function resolveCountryKeys(feed, tag, tagsActivos, allCountriesArr) {
 }
 
 /* Paso 2: cruce peso de rotacion x total del dia/pais -> dias crudos por creativo,
-   con companions (otros creativos del mismo feed|fecha|tag|marca ese dia).
-   Cada dia guarda DOS cosas: los campos planos (adcost/leads/etc, siempre el
-   lado "propio" -- customerOrg===marca del creativo, identico a como
-   funcionaba antes) para no romper nada que ya lea esos campos, MAS un
-   "by_org" con el desglose completo por Organization real (incluye cross-
-   sell hacia la OTRA marca, con adcost=0 porque el dinero no se puso ahi). */
+   con companions (otros creativos del mismo feed|fecha|tag|Organization ese
+   dia). Cada dia guarda: adcost/adcost_real (el gasto REAL de ese Organization
+   ese dia, prorrateado por peso -- SIEMPRE el mismo sin importar
+   MarketingOrganization), leads/core/new_cash_core "home" (solo lo que trajo
+   el propio MarketingOrganization===Organization, por compatibilidad), MAS
+   un "by_mktorg" con el desglose completo por MarketingOrganization (incluye
+   lo que trajo la OTRA marca hacia este mismo Organization) -- eso es lo
+   unico que MarketingOrganization (filtro) suma o no en app.js, sin tocar
+   nunca el gasto ni la lista de creativos. */
 function buildRawCreativeDays(rotation, liveTotals) {
   var allCountriesArr = Array.from(liveTotals.allCountries);
   var totals = liveTotals.totals;
-  var byCreative = new Map(); // creativo -> {marca, region, diasByKey: Map((fecha,tc)->accum)}
+  var byCreative = new Map(); // creativo -> {organization, region, diasByKey: Map((fecha,tc)->accum)}
   var stats = { inversionAtribuida: 0, tagsNoReconocidos: 0, combosSinDato: 0, diasSinMediaSpend: 0 };
 
   Object.keys(rotation.pesos).forEach(function (key) {
     var parts = key.split('|');
-    var feed = parts[0], dateIso = parts[1], tag = parts[2], marca = parts[3];
-    if (marca !== 'Open English' && marca !== 'Open English Junior') return;
+    var feed = parts[0], dateIso = parts[1], tag = parts[2], organization = parts[3];
+    if (organization !== 'Open English' && organization !== 'Open English Junior') return;
     var tagsActivos = rotation.tags_por_fecha[feed + '|' + dateIso] || [];
     var countryKeys = resolveCountryKeys(feed, tag, tagsActivos, allCountriesArr);
     var entries = rotation.pesos[key];
@@ -121,7 +130,7 @@ function buildRawCreativeDays(rotation, liveTotals) {
         .map(function (e) { return { nombre: e.creativo, peso: e.peso }; });
 
       countryKeys.forEach(function (tc) {
-        var tKey = feed + '|' + marca + '|' + dateIso + '|' + (tc || '');
+        var tKey = feed + '|' + organization + '|' + dateIso + '|' + (tc || '');
         var t = totals.get(tKey);
         if (!t) { stats.combosSinDato++; return; }
         /* Sin media spend real (TV realmente apagada ese dia/pais, aunque el
@@ -131,30 +140,24 @@ function buildRawCreativeDays(rotation, liveTotals) {
            gasto, ni ventas), no solo se excluye de un contador aparte. */
         if ((t.mediaSpendReal || 0) <= 0) { stats.diasSinMediaSpend++; return; }
 
-        if (!byCreative.has(creativo)) byCreative.set(creativo, { marca: marca, region: feed, diasByKey: new Map() });
+        if (!byCreative.has(creativo)) byCreative.set(creativo, { marca: organization, region: feed, diasByKey: new Map() });
         var rec = byCreative.get(creativo);
         var dayKey = dateIso + '|' + (tc || '');
         var accum = rec.diasByKey.get(dayKey);
         if (!accum) {
           accum = { fecha: dateIso, topcountry: tc, peso_propio: peso, companions: companions,
-            adcost: 0, adcost_real: 0, leads: 0, core_enrollments: 0, new_cash_core: 0, by_org: {} };
+            adcost: peso * (t.spend || 0), adcost_real: peso * (t.mediaSpendReal || 0),
+            leads: 0, core_enrollments: 0, new_cash_core: 0, by_mktorg: {} };
           rec.diasByKey.set(dayKey, accum);
+          stats.inversionAtribuida += accum.adcost;
         }
-        Object.keys(t.byOrg).forEach(function (customerOrg) {
-          var b = t.byOrg[customerOrg];
-          var dAdcost = peso * (b.spend || 0), dLeads = peso * (b.leads || 0),
-            dCore = peso * (b.core_enrollments || 0), dNewCash = peso * (b.new_cash_core || 0);
-          /* adcost_real = mismo gasto pero neto de SEM-Brand (offlineSpendReal
-             agregado en t.mediaSpendReal, solo tiene valor real en el archivo
-             home -- igual que spend). Se prorratea con el mismo peso de
-             rotacion, y se suma con el mismo desglose by_org que adcost para
-             que el pooling de MarketingOrganization (app.js) lo trate igual. */
-          var dAdcostReal = peso * (customerOrg === marca ? (t.mediaSpendReal || 0) : 0);
-          var bucket = accum.by_org[customerOrg] || (accum.by_org[customerOrg] = { adcost: 0, adcost_real: 0, leads: 0, core_enrollments: 0, new_cash_core: 0 });
-          bucket.adcost += dAdcost; bucket.adcost_real += dAdcostReal; bucket.leads += dLeads; bucket.core_enrollments += dCore; bucket.new_cash_core += dNewCash;
-          if (customerOrg === marca) {
-            accum.adcost += dAdcost; accum.adcost_real += dAdcostReal; accum.leads += dLeads; accum.core_enrollments += dCore; accum.new_cash_core += dNewCash;
-            stats.inversionAtribuida += dAdcost;
+        Object.keys(t.byMktOrg).forEach(function (mktOrg) {
+          var b = t.byMktOrg[mktOrg];
+          var dLeads = peso * (b.leads || 0), dCore = peso * (b.core_enrollments || 0), dNewCash = peso * (b.new_cash_core || 0);
+          var bucket = accum.by_mktorg[mktOrg] || (accum.by_mktorg[mktOrg] = { leads: 0, core_enrollments: 0, new_cash_core: 0 });
+          bucket.leads += dLeads; bucket.core_enrollments += dCore; bucket.new_cash_core += dNewCash;
+          if (mktOrg === organization) {
+            accum.leads += dLeads; accum.core_enrollments += dCore; accum.new_cash_core += dNewCash;
           }
         });
       });
@@ -200,12 +203,12 @@ function buildYearsData(rotation, deckJsons, taxonomyByName, years) {
     raw.byCreative.forEach(function (rec, creativo) {
       var diasDelAnio = Array.from(rec.diasByKey.values()).filter(function (d) { return d.fecha.indexOf(year) === 0; });
       if (!diasDelAnio.length) return;
-      var totals = sumRawEngine(diasDelAnio); // "home" (propio) -- por compatibilidad con el resto del pipeline
-      // No descartar por leads=0 en "home": puede tener leads reales solo en
-      // cross-sell (by_org de la OTRA Organization), que Organization (filtro)
-      // puede llegar a pedir mas adelante en el cliente.
+      var totals = sumRawEngine(diasDelAnio); // "home" (propio, MarketingOrganization===Organization) -- por compatibilidad con el resto del pipeline
+      // No descartar por leads=0 en "home": puede tener leads reales solo via
+      // la OTRA MarketingOrganization (by_mktorg), que el filtro del mismo
+      // nombre puede llegar a pedir mas adelante en el cliente.
       var anyLeads = totals.leads > 0 || diasDelAnio.some(function (d) {
-        return Object.keys(d.by_org || {}).some(function (o) { return (d.by_org[o].leads || 0) > 0; });
+        return Object.keys(d.by_mktorg || {}).some(function (o) { return (d.by_mktorg[o].leads || 0) > 0; });
       });
       if (!anyLeads) return;
       var metrics = metricsFromSumsEngine(totals);

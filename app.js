@@ -152,18 +152,11 @@ var STR = {
   avg_ncc_dia:{en:'Avg. New Cash Core/day',es:'Prom. New Cash Core/día',pt:'Méd. New Cash Core/dia'},
   margen_sin_gasto_nota:{en:'$0 spend attributed here, so % MNCC would show a meaningless 100%. Showing average daily New Cash Core generated instead.',es:'$0 de gasto atribuido aquí, así que %MNCC mostraría un 100% sin sentido. Se muestra en su lugar el promedio diario de New Cash Core generado.',pt:'$0 de gasto atribuído aqui, então %MNCC mostraria um 100% sem sentido. Mostrando em vez disso a média diária de New Cash Core gerado.'},
   dia:{en:'day',es:'día',pt:'dia'},
-  cross_sell:{en:'Cross-brand',es:'Cruce de marca',pt:'Cruzamento de marca'},
-  cross_sell_hacia:{en:'Cross-brand → ',es:'Cruce de marca → ',pt:'Cruzamento de marca → '},
-  cross_sell_nota:{en:'This ad was bought by another brand’s budget; showing only what it generated (leads, sales, New Cash Core) for the Organization you selected ($0 spend attributed here).',es:'Este anuncio lo compró el presupuesto de otra marca; se muestra solo lo que generó (leads, ventas, New Cash Core) para la Organization que elegiste (gasto $0 atribuido aquí).',pt:'Este anúncio foi comprado pelo orçamento de outra marca; mostrando apenas o que gerou (leads, vendas, New Cash Core) para a Organization que você escolheu (gasto $0 atribuído aqui).'},
   descargar_html:{en:'⬇ Download HTML',es:'⬇ Descargar HTML',pt:'⬇ Baixar HTML'},
   tour_next:{en:'Next',es:'Siguiente',pt:'Próximo'},
   tour_back:{en:'← Back',es:'← Atrás',pt:'← Voltar'},
   tour_finish:{en:'Finish',es:'Finalizar',pt:'Concluir'},
   tour_skip:{en:'Skip tour',es:'Saltar recorrido',pt:'Pular tour'},
-  toast_auto_switch:{
-    en:'Metric switched to "Avg. Leads/day": Organization and MarketingOrganization are opposite brands here, so spend is $0 and Leads/$1,000, CPL and % MNCC can’t be calculated.',
-    es:'La métrica cambió a "Prom. Leads/día": Organization y MarketingOrganization son marcas opuestas aquí, así que el gasto es $0 y no se pueden calcular Leads/$1,000, CPL ni % MNCC.',
-    pt:'A métrica mudou para "Méd. Leads/dia": Organization e MarketingOrganization são marcas opostas aqui, então o gasto é $0 e não é possível calcular Leads/$1.000, CPL nem % MNCC.'},
   buscar:{en:'Search by name or dimension…',es:'Buscar por nombre o dimensión…',pt:'Buscar por nome ou dimensão…'},
   de:{en:'of',es:'de',pt:'de'}, creativos:{en:'creatives',es:'creativos',pt:'criativos'},
   click_ordenar:{en:'Click a header to sort',es:'Click en un encabezado para ordenar',pt:'Clique num cabeçalho para ordenar'},
@@ -249,51 +242,46 @@ function dayPassesSemana1(fecha, launchDates){
   });
 }
 function dayPassesPais(topcountry){ if(topcountry==null) return true; return STATE.paisSel.indexOf(topcountry)!==-1; }
-/* CORREGIDO 2026-08-19 (segunda vuelta) -- confirmado explicitamente con el
-   usuario cual columna es cual, porque el codigo las tenia invertidas desde
-   la Fase 7:
-     - Organization = quien es el CLIENTE REAL que convirtio (OE adulto o
-       Junior) -- el campo `by_org`/customerOrg de engine.js.
-     - MarketingOrganization = quien COMPRO/PAGO el anuncio -- lo que engine.js
-       llama "marca" (el mismo eje que ya usa `yearData.slices`, keyed
-       `marca|region|Total`, y el mismo eje de la rotacion).
-   La LISTA de creativos se arma buscando en TODAS las slices (marcas)
-   marcadas en MarketingOrganization -- un creativo solo puede vivir en UNA
-   marca (la que lo compro, fija por su calendario de rotacion), asi que
-   marcar mas de una marca en MarketingOrganization simplemente AGREGA a la
-   lista los creativos de esa otra marca que tambien le generaron algo a la
-   Organization elegida (cruce de marca) -- nunca inventa numeros nuevos
-   para un mismo creativo. Para cada creativo, las 4 metricas crudas salen
-   de UN SOLO lugar: by_org[Organization] dentro de SU PROPIA marca (si
-   row.marca===Organization eso es simplemente lo propio/home; si no, es la
-   salpicadura hacia Organization) -- nunca se suma mas de un by_org por
-   creativo, porque cada creativo solo vive en una marca. */
-function orgDayFields(d){
-  var b = (d.by_org && d.by_org[STATE.organization]) || {adcost:0,adcost_real:0,leads:0,core_enrollments:0,new_cash_core:0};
-  return Object.assign({}, d, { adcost: b.adcost||0, adcost_real: b.adcost_real||0, leads: b.leads||0, core_enrollments: b.core_enrollments||0, new_cash_core: b.new_cash_core||0 });
+/* CORREGIDO 2026-08-19 (tercera vuelta) -- confirmado con el usuario, con la
+   columna F ("Brand") del Excel de rotacion y con casos concretos, como
+   deben comportarse las dos columnas:
+     - Organization fija LA LISTA de creativos, sola, siempre -- nunca cambia
+       segun MarketingOrganization. Es una simple busqueda de UNA slice:
+       yearData.slices[Organization|region|Total].
+     - MarketingOrganization NUNCA agrega ni quita creativos de esa lista, y
+       NUNCA cambia el gasto (adcost/adcost_real, siempre el real y completo
+       de Organization) -- solo decide, dentro de CADA creativo ya listado,
+       que MarketingOrganization(es) cuentan para leads/core_enrollments/
+       New Cash Core (via by_mktorg, dia por dia). Marcar mas de una suma
+       mas leads/ventas/NCC (nunca menos), pero nunca mas creativos ni mas
+       gasto. */
+function mktOrgDayFields(d){
+  var leads=0, core=0, newCash=0;
+  STATE.marketingOrg.forEach(function(mo){
+    var b = d.by_mktorg && d.by_mktorg[mo];
+    if(b){ leads+=b.leads||0; core+=b.core_enrollments||0; newCash+=b.new_cash_core||0; }
+  });
+  return Object.assign({}, d, { leads:leads, core_enrollments:core, new_cash_core:newCash });
 }
 function recomputeCreative(row){
-  var days = (row.detalle_diario||[]).filter(function(d){ return dayPassesQuarter(d.fecha) && dayPassesMes(d.fecha) && dayPassesSemana1(d.fecha,row.launch_dates) && dayPassesPais(d.topcountry); });
-  var effDays = days.map(orgDayFields);
+  var dateDays = (row.detalle_diario||[]).filter(function(d){ return dayPassesQuarter(d.fecha) && dayPassesMes(d.fecha) && dayPassesSemana1(d.fecha,row.launch_dates) && dayPassesPais(d.topcountry); });
+  var effDays = dateDays.map(mktOrgDayFields);
   var sums = { adcost:sumField(effDays,'adcost'), adcost_real:sumField(effDays,'adcost_real'), leads:sumField(effDays,'leads'), core_enrollments:sumField(effDays,'core_enrollments'), new_cash_core:sumField(effDays,'new_cash_core') };
   var out = Object.assign({}, row, sums, metricsFromSums(sums));
   var activeDates = new Set();
   effDays.forEach(function(d){ if((d.leads||0) > 0) activeDates.add(d.fecha); });
   out.num_dias_activos = activeDates.size;
   out.avg_leads_dia = out.num_dias_activos ? out.leads/out.num_dias_activos : null;
-  out.detalle_diario = days;
-  out.is_cross_sell = row.marca !== STATE.organization;
+  out.detalle_diario = dateDays;
+  out.has_date_activity = dateDays.some(function(d){ return (d.leads||0) > 0 || Object.keys(d.by_mktorg||{}).some(function(mo){ return (d.by_mktorg[mo].leads||0) > 0; }); });
   return out;
 }
 function getWorkingCreatives(){
   var yearData = currentYearData();
-  var all = [], seen = new Set();
-  STATE.marketingOrg.forEach(function(marca){
-    var slice = yearData.slices[marca+'|'+STATE.region+'|Total'];
-    if(slice) (slice.ranking_creativos||[]).forEach(function(r){ if(!seen.has(r.nombre)){ all.push(r); seen.add(r.nombre); } });
-  });
+  var slice = yearData.slices[STATE.organization+'|'+STATE.region+'|Total'];
+  var all = slice ? (slice.ranking_creativos||[]).slice() : [];
   if(STATE.adType !== 'Todos') all = all.filter(function(r){ return r.ad_type === STATE.adType; });
-  return all.map(recomputeCreative).filter(function(r){ return r.num_dias_activos>0; });
+  return all.map(recomputeCreative).filter(function(r){ return r.has_date_activity; });
 }
 /* ============================ agrupar por Ad Name (columna B del Excel STANDARD) ============================
    Video Name (columna A) puede tener variantes V2/V3/V4/V5 del MISMO ad --
@@ -531,9 +519,6 @@ function openDailyDetailModal(row){
   document.getElementById('modal-eyebrow').textContent = (row.ad_type || '') + (row.marca ? ' · '+row.marca : '');
   document.getElementById('modal-title').innerHTML = esc(row.nombre) + (row.is_grouped ? '' : videoLinkHTML(row.link_video, true));
   var html = '';
-  if(row.is_cross_sell){
-    html += '<div class="foot-note" style="margin-bottom:10px;"><span class="chip cross-sell" title="'+escAttr(T('cross_sell_nota'))+'">'+esc(T('cross_sell_hacia'))+esc(STATE.organization)+'</span> '+esc(T('cross_sell_nota'))+'</div>';
-  }
   html += metricsGridHTML(row);
   if(row.is_grouped && row.versions && row.versions.length>1){
     html += '<div class="foot-note" style="margin-top:10px; font-weight:700; text-transform:uppercase; font-size:10.5px;">'+T('incluye_versiones')+' ('+row.versions.length+' '+T('versiones')+')</div>';
@@ -543,7 +528,7 @@ function openDailyDetailModal(row){
   }
   html += taxonomyFullHTML(row);
   if(row.fecha_lanzamiento) html += '<p class="foot-note">'+T('lanzamiento')+': <b>'+esc(row.fecha_lanzamiento)+'</b></p>';
-  var effectiveDays = row.detalle_diario.map(orgDayFields);
+  var effectiveDays = row.detalle_diario.map(mktOrgDayFields);
   var ranges = groupContinuousDays(effectiveDays);
   if(!ranges.length){ html += '<p class="foot-note" style="margin-top:14px;">'+T('sin_datos_filtro')+'</p>'; document.getElementById('modal-body').innerHTML=html; document.getElementById('modal-backdrop').classList.add('open'); return; }
   var videoLinkByName = {};
@@ -807,13 +792,12 @@ function rankListHTML(rows, opts){
     var subLabel = opts.isCreative
       ? (r.num_dias_activos+' '+T('dias_activos')+(r.marca?(' · '+r.marca):'')+(r.is_grouped?(' · '+r.versions.length+' '+T('versiones')):''))
       : ((r.num_creativos||0)+' '+T('creativos'));
-    var crossSellChip = (opts.isCreative && r.is_cross_sell) ? ' <span class="chip cross-sell" title="'+escAttr(T('cross_sell_nota'))+'">'+esc(T('cross_sell_hacia'))+esc(STATE.organization)+'</span>' : '';
     return '<div class="rank-item"><div class="rank-row">'+
       '<div class="rank-pos">'+(i+1)+'</div>'+
       '<div class="rank-name-wrap">'+nameHtml+'</div>'+
       '<div class="rank-val"><span class="rank-val-label">'+METRIC_DEFS[activeMetric].icon+' '+metricShort(activeMetric)+'</span><span class="rank-val-num">'+metricDisplayHTML(activeMetric,r)+'</span></div>'+
       '</div><div class="rank-track"><div class="rank-fill" style="width:'+widthPct+'%; background:'+color+';"></div></div>'+
-      '<div class="rank-sub">'+esc(subLabel)+crossSellChip+'</div>'+
+      '<div class="rank-sub">'+esc(subLabel)+'</div>'+
     '</div>';
   }).join('') + '</div>';
 }
@@ -888,33 +872,7 @@ function renderFooter(){
 }
 
 /* ============================ orquestacion ============================ */
-/* Si MarketingOrganization queda en UNA sola marca (no varias) y esa marca
-   es DISTINTA a Organization, el pool de leads/ventas/New Cash Core de TODOS
-   los creativos de la vista pasa a ser solo lo que le "salpico" a esa otra
-   marca (se excluye el propio de Organization) mientras el gasto se mantiene
-   siendo el real y completo de Organization -- comparar ese gasto completo
-   contra leads de salpicadura da numeros validos pero poco utiles en
-   Leads/$1k, CPL o Margen. En ese caso, cambiar la metrica activa
-   automaticamente a "Prom. Leads/dia" al ENTRAR a ese estado (no la vuelve a
-   forzar si el usuario elige otra a mano despues, ni la revierte al salir). */
-function showToast(message){
-  var container = document.getElementById('toast-container');
-  if(!container) return;
-  var el = document.createElement('div');
-  el.className = 'toast';
-  el.innerHTML = esc(message)+'<button class="toast-close" aria-label="Cerrar">✕</button>';
-  container.appendChild(el);
-  var timer = setTimeout(function(){ el.remove(); }, 5000);
-  el.querySelector('.toast-close').addEventListener('click', function(){ clearTimeout(timer); el.remove(); });
-}
-var PREV_CROSS_BRAND_ONLY = false;
 function renderAll(){
-  var crossBrandOnly = STATE.marketingOrg.length===1 && STATE.marketingOrg[0]!==STATE.organization;
-  if(crossBrandOnly && !PREV_CROSS_BRAND_ONLY && (STATE.metric==='leads_per_1k' || STATE.metric==='cpl' || STATE.metric==='mncc_core_pct')){
-    STATE.metric = 'avg_leads_dia';
-    showToast(T('toast_auto_switch'));
-  }
-  PREV_CROSS_BRAND_ONLY = crossBrandOnly;
   updateAccent();
   document.documentElement.lang = LANG;
   var creatives = getWorkingCreatives();
