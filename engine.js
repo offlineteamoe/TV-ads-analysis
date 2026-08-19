@@ -59,13 +59,19 @@ function buildLiveTotals(deckJsons) {
       if (country) allCountries.add(country);
       var k = info.region + '|' + marca + '|' + r.date + '|' + (country || '');
       var t = totals.get(k);
-      if (!t) { t = { byOrg: {} }; totals.set(k, t); }
+      if (!t) { t = { byOrg: {}, mediaSpendReal: 0 }; totals.set(k, t); }
       var b = t.byOrg[info.customerOrg];
       if (!b) { b = { spend: 0, leads: 0, core_enrollments: 0, new_cash_core: 0 }; t.byOrg[info.customerOrg] = b; }
       b.spend += r.spend || 0;
       b.leads += r.leadsEligible || 0;
       b.core_enrollments += r.coreEnrollmentsTotal || 0;
       b.new_cash_core += r.newCashCore || 0;
+      /* offlineSpendReal = "Brand TV Channels" (spend) menos lo que de ese
+         monto es en realidad SEM-Brand digital, no TV real -- ya viene
+         calculado en el KPI export. Solo tiene sentido en el archivo "home"
+         (customerOrg===marca, el mismo que trae el spend real); en los
+         archivos ajenos siempre viene en 0, igual que spend. */
+      if (info.customerOrg === marca) t.mediaSpendReal += r.offlineSpendReal || 0;
     });
   });
   return { totals: totals, allCountries: allCountries };
@@ -97,7 +103,7 @@ function buildRawCreativeDays(rotation, liveTotals) {
   var allCountriesArr = Array.from(liveTotals.allCountries);
   var totals = liveTotals.totals;
   var byCreative = new Map(); // creativo -> {marca, region, diasByKey: Map((fecha,tc)->accum)}
-  var stats = { inversionAtribuida: 0, tagsNoReconocidos: 0, combosSinDato: 0 };
+  var stats = { inversionAtribuida: 0, tagsNoReconocidos: 0, combosSinDato: 0, diasSinMediaSpend: 0 };
 
   Object.keys(rotation.pesos).forEach(function (key) {
     var parts = key.split('|');
@@ -118,6 +124,12 @@ function buildRawCreativeDays(rotation, liveTotals) {
         var tKey = feed + '|' + marca + '|' + dateIso + '|' + (tc || '');
         var t = totals.get(tKey);
         if (!t) { stats.combosSinDato++; return; }
+        /* Sin media spend real (TV realmente apagada ese dia/pais, aunque el
+           bucket "Brand TV Channels" siga trayendo un monto de SEM-Brand
+           digital) -- el dia NO cuenta como activo para NINGUN creativo de
+           este slot de rotacion: se descarta por completo (ni leads, ni
+           gasto, ni ventas), no solo se excluye de un contador aparte. */
+        if ((t.mediaSpendReal || 0) <= 0) { stats.diasSinMediaSpend++; return; }
 
         if (!byCreative.has(creativo)) byCreative.set(creativo, { marca: marca, region: feed, diasByKey: new Map() });
         var rec = byCreative.get(creativo);
