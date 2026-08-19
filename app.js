@@ -28,26 +28,33 @@ var METRIC_DEFS = {
   avg_leads_dia: { en:'Avg. Leads/day', es:'Prom. Leads/día', pt:'Méd. Leads/dia', short:'Leads/día', higherIsBetter:true, isMargin:false, icon:'📆', fmt:function(v){ return v==null?'—':fmtNum(v,1); } },
   cpl: { en:'CPL (cost per lead)', es:'CPL (costo por lead)', pt:'CPL (custo por lead)', short:'CPL', higherIsBetter:false, isMargin:false, icon:'💵', fmt:function(v){ return fmt$(v,2); } },
   cvr: { en:'Conversion (sales / leads)', es:'Conversión (ventas / leads)', pt:'Conversão (vendas / leads)', short:'CVR', higherIsBetter:true, isMargin:false, icon:'📈', fmt:function(v){ return fmtPct(v,1); } },
-  mncc_core_pct: { en:'Margin', es:'Margen', pt:'Margem', short:'Margin', higherIsBetter:true, isMargin:true, icon:'💰', fmt:function(v){ return fmtPct(v,1); } },
+  mncc_core_pct: { en:'% MNCC', es:'% MNCC', pt:'% MNCC', short:'% MNCC', higherIsBetter:true, isMargin:true, icon:'💰', fmt:function(v){ return fmtPct(v,1); } },
 };
 var METRIC_ORDER = ['leads_per_1k','avg_leads_dia','cpl','cvr','mncc_core_pct'];
 function metricLabel(key){ return METRIC_DEFS[key][LANG]; }
 function metricShort(key){ return METRIC_DEFS[key].short; }
 function metricFmt(key,v){ return METRIC_DEFS[key].fmt(v); }
+/* activeAdcost: cual "gasto" alimenta Leads/$1k, CPL y %MNCC depende del
+   interruptor "Excluir SEM-Brand Spend" -- item.adcost es el gasto crudo del
+   channel_grouping "Brand TV Channels" (incluye SEM-Brand, que no se puede
+   controlar por pujas de competencia); item.adcost_real es ese mismo gasto
+   neto de SEM-Brand (offlineSpendReal, calculado en engine.js). Por defecto
+   (interruptor apagado) se usa el crudo, igual que siempre. */
+function activeAdcost(sumsOrItem){ return (STATE.excludeSemBrand ? sumsOrItem.adcost_real : sumsOrItem.adcost) || 0; }
 function metricsFromSums(sums){
-  var adcost=sums.adcost||0, leads=sums.leads||0, core=sums.core_enrollments||0, newCash=sums.new_cash_core||0;
+  var adcost=activeAdcost(sums), leads=sums.leads||0, core=sums.core_enrollments||0, newCash=sums.new_cash_core||0;
   return { leads_per_1k: adcost?leads/adcost*1000:null, cpl: leads?adcost/leads:null, cvr: leads?core/leads:null, mncc_core_pct: newCash?(newCash-adcost)/newCash:null };
 }
 /* Caso de gasto=$0 (ej. una fila de cruce de marca -- Organization distinto a
    la marca propia del creativo -- o un hueco de datos puntual): CPL y
-   %Margen calculan un numero MATEMATICAMENTE valido pero enganoso ($0.00 de
-   CPL, o 100% de margen) porque el gasto no esta atribuido a esta vista, no
+   %MNCC calculan un numero MATEMATICAMENTE valido pero enganoso ($0.00 de
+   CPL, o 100% de MNCC) porque el gasto no esta atribuido a esta vista, no
    porque sea gratis o perfecto. Se detecta y se reemplaza la lectura en vez
    de mostrar el numero confuso. Leads/$1k no necesita reemplazo -- ya existe
    "Prom. Leads/día" (avg_leads_dia) como metrica propia, seleccionable, para
    exactamente este caso. CVR tampoco necesita nada especial: no depende del
    gasto en absoluto. */
-function isZeroSpendCase(item){ return !!item && (item.adcost||0) === 0; }
+function isZeroSpendCase(item){ return !!item && activeAdcost(item) === 0; }
 function cplDisplayHTML(item){
   if(isZeroSpendCase(item) && (item.leads||0) > 0) return '<span title="'+escAttr(T('sin_gasto_nota'))+'">'+esc(T('sin_gasto_corto'))+'</span>';
   return esc(metricFmt('cpl', item.cpl));
@@ -73,14 +80,29 @@ function computeMinMax(rows, metric){
   if(!vals.length) return {min:0,max:0};
   return {min:Math.min.apply(null,vals), max:Math.max.apply(null,vals)};
 }
+/* Fraccion de "que tan bueno es este valor" (1=el mejor del grupo visible,
+   hacia 0 mientras peor) -- a proposito NO es un estiramiento min-max
+   ((valor-min)/(max-min)), porque eso exagera diferencias reales minimas:
+   con solo 2 items casi empatados (ej. 27.8 vs 27.6), estirar entre el min y
+   el max de ESE grupo hace que el peor se vea con una barra casi vacia,
+   como si fuera muchisimo peor, cuando en realidad la diferencia real es de
+   menos del 1%. Aca se usa una RAZON contra el mejor valor del grupo (o
+   contra el mas barato, para CPL) -- una diferencia real chica da una barra
+   casi del mismo largo, coherente sin importar cuantos items haya ni que
+   tan juntos esten sus valores. */
+function metricBarFrac(metric, value, minMax){
+  if(value==null) return 0;
+  if(METRIC_DEFS[metric].isMargin && value<0) return 0; // ya tiene su propio color --bad
+  if(METRIC_DEFS[metric].higherIsBetter){
+    return minMax.max>0 ? Math.max(0, Math.min(1, value/minMax.max)) : 0;
+  }
+  // unica metrica lowerIsBetter hoy: CPL (siempre > 0)
+  return value>0 ? Math.max(0, Math.min(1, minMax.min/value)) : 0;
+}
 function rankColorCSS(metric, value, minMax){
   if(value==null) return cv('--border');
   if(METRIC_DEFS[metric].isMargin && value<0) return cv('--bad');
-  var min=minMax.min, max=minMax.max;
-  var frac = (max===min)?0:(value-min)/(max-min);
-  if(!METRIC_DEFS[metric].higherIsBetter) frac = 1-frac;
-  frac = 1-frac;
-  var pct = Math.round(Math.max(0,Math.min(1,frac))*100);
+  var pct = Math.round((1 - metricBarFrac(metric, value, minMax))*100);
   return 'color-mix(in srgb, '+cv('--rank-weak')+' '+pct+'%, '+cv('--rank-strong')+' '+(100-pct)+'%)';
 }
 function colorLegendHTML(metric){
@@ -102,6 +124,8 @@ var STR = {
   anio:{en:'Year',es:'Año',pt:'Ano'},
   trimestre:{en:'Quarter',es:'Trimestre',pt:'Trimestre'},
   mes:{en:'Month',es:'Mes',pt:'Mês'},
+  media_spend:{en:'Media Spend',es:'Gasto en Medios',pt:'Gasto em Mídia'},
+  excluir_sem_brand:{en:'Exclude SEM-Brand Spend',es:'Excluir SEM-Brand Spend',pt:'Excluir Gasto SEM-Brand'},
   marca:{en:'Brand',es:'Marca',pt:'Marca'},
   organizacion:{en:'Organization',es:'Organization',pt:'Organization'},
   mktorg:{en:'MarketingOrganization',es:'MarketingOrganization',pt:'MarketingOrganization'},
@@ -126,7 +150,7 @@ var STR = {
   sin_gasto_corto:{en:'No spend attributed',es:'Sin gasto atribuido',pt:'Sem gasto atribuído'},
   sin_gasto_nota:{en:'This view has leads but $0 spend attributed here, so CPL is not meaningful.',es:'Esta vista tiene leads pero $0 de gasto atribuido, así que el CPL no tiene sentido aquí.',pt:'Esta visão tem leads mas $0 de gasto atribuído aqui, então o CPL não faz sentido.'},
   avg_ncc_dia:{en:'Avg. New Cash Core/day',es:'Prom. New Cash Core/día',pt:'Méd. New Cash Core/dia'},
-  margen_sin_gasto_nota:{en:'$0 spend attributed here, so % Margin would show a meaningless 100%. Showing average daily New Cash Core generated instead.',es:'$0 de gasto atribuido aquí, así que %Margen mostraría un 100% sin sentido. Se muestra en su lugar el promedio diario de New Cash Core generado.',pt:'$0 de gasto atribuído aqui, então %Margem mostraria um 100% sem sentido. Mostrando em vez disso a média diária de New Cash Core gerado.'},
+  margen_sin_gasto_nota:{en:'$0 spend attributed here, so % MNCC would show a meaningless 100%. Showing average daily New Cash Core generated instead.',es:'$0 de gasto atribuido aquí, así que %MNCC mostraría un 100% sin sentido. Se muestra en su lugar el promedio diario de New Cash Core generado.',pt:'$0 de gasto atribuído aqui, então %MNCC mostraria um 100% sem sentido. Mostrando em vez disso a média diária de New Cash Core gerado.'},
   dia:{en:'day',es:'día',pt:'dia'},
   pooled_chip:{en:'Pooling spend/leads/sales/NCC across',es:'Sumando gasto/leads/ventas/NCC entre',pt:'Somando gasto/leads/vendas/NCC entre'},
   descargar_html:{en:'⬇ Download HTML',es:'⬇ Descargar HTML',pt:'⬇ Baixar HTML'},
@@ -135,9 +159,9 @@ var STR = {
   tour_finish:{en:'Finish',es:'Finalizar',pt:'Concluir'},
   tour_skip:{en:'Skip tour',es:'Saltar recorrido',pt:'Pular tour'},
   toast_auto_switch:{
-    en:'Metric switched to "Avg. Leads/day": Organization and MarketingOrganization are opposite brands here, so spend is $0 and Leads/$1,000, CPL and Margin can’t be calculated.',
-    es:'La métrica cambió a "Prom. Leads/día": Organization y MarketingOrganization son marcas opuestas aquí, así que el gasto es $0 y no se pueden calcular Leads/$1,000, CPL ni Margen.',
-    pt:'A métrica mudou para "Méd. Leads/dia": Organization e MarketingOrganization são marcas opostas aqui, então o gasto é $0 e não é possível calcular Leads/$1.000, CPL nem Margem.'},
+    en:'Metric switched to "Avg. Leads/day": Organization and MarketingOrganization are opposite brands here, so spend is $0 and Leads/$1,000, CPL and % MNCC can’t be calculated.',
+    es:'La métrica cambió a "Prom. Leads/día": Organization y MarketingOrganization son marcas opuestas aquí, así que el gasto es $0 y no se pueden calcular Leads/$1,000, CPL ni % MNCC.',
+    pt:'A métrica mudou para "Méd. Leads/dia": Organization e MarketingOrganization são marcas opostas aqui, então o gasto é $0 e não é possível calcular Leads/$1.000, CPL nem % MNCC.'},
   buscar:{en:'Search by name or dimension…',es:'Buscar por nombre o dimensión…',pt:'Buscar por nome ou dimensão…'},
   de:{en:'of',es:'de',pt:'de'}, creativos:{en:'creatives',es:'creativos',pt:'criativos'},
   click_ordenar:{en:'Click a header to sort',es:'Click en un encabezado para ordenar',pt:'Clique num cabeçalho para ordenar'},
@@ -149,8 +173,9 @@ var STR = {
   leads:{en:'leads',es:'leads',pt:'leads'},
   lanzamiento:{en:'Launch',es:'Lanzamiento',pt:'Lançamento'},
   pais_hint:{en:'Click: only that country · Ctrl+click: add/remove · Click and drag: select the range',es:'Clic: solo ese país · Ctrl+clic: agrega/quita · Clic y arrastra: selecciona el rango',pt:'Clique: só esse país · Ctrl+clique: adiciona/remove · Clique e arraste: seleciona o intervalo'},
+  mes_hint:{en:'Click: only that month · Ctrl+click: add/remove · Click and drag: select the range',es:'Clic: solo ese mes · Ctrl+clic: agrega/quita · Clic y arrastra: selecciona el rango',pt:'Clique: só esse mês · Ctrl+clique: adiciona/remove · Clique e arraste: seleciona o intervalo'},
   mejor:{en:'Best',es:'Mejor',pt:'Melhor'}, peor:{en:'Worst',es:'Peor',pt:'Pior'},
-  margen_negativo:{en:'Negative margin',es:'Margen negativo',pt:'Margem negativa'},
+  margen_negativo:{en:'Negative % MNCC',es:'% MNCC negativo',pt:'% MNCC negativo'},
   sin_datos_filtro:{en:'No creative has data under this filter combination.',es:'Ningún creativo tiene datos con esta combinación de filtros.',pt:'Nenhum criativo tem dados com esta combinação de filtros.'},
   spend_total:{en:'Total spend',es:'Gasto total',pt:'Gasto total'}, leads_total:{en:'Total leads',es:'Leads totales',pt:'Leads totais'},
   ventas_total:{en:'Total sales',es:'Ventas totales',pt:'Vendas totais'}, margen_total:{en:'Margin',es:'Margen',pt:'Margem'},
@@ -174,6 +199,7 @@ function DEF(dim, code){ var d=TAX_LOOKUP[dim]; var e=d&&d[code]; return e && e[
 var STATE = {
   year:'2026', metric:'leads_per_1k',
   semana1:false, adType:'Todos', quarter:'Todos', mesSel:[],
+  excludeSemBrand:false,
   organization:'Open English', marketingOrg:['Open English'],
   region:'Latam', paisSel:[],
   view:'ranking',
@@ -243,18 +269,18 @@ function dayPassesPais(topcountry){ if(topcountry==null) return true; return STA
    MarketingOrganization en TODAS las metricas, sin alterar jamas la lista de
    creativos mostrada. */
 function pooledDayFields(d){
-  var adcost=0, leads=0, core=0, newCash=0;
+  var adcost=0, adcostReal=0, leads=0, core=0, newCash=0;
   STATE.marketingOrg.forEach(function(org){
-    var b = (d.by_org && d.by_org[org]) || {adcost:0,leads:0,core_enrollments:0,new_cash_core:0};
-    adcost += b.adcost||0; leads += b.leads||0; core += b.core_enrollments||0; newCash += b.new_cash_core||0;
+    var b = (d.by_org && d.by_org[org]) || {adcost:0,adcost_real:0,leads:0,core_enrollments:0,new_cash_core:0};
+    adcost += b.adcost||0; adcostReal += b.adcost_real||0; leads += b.leads||0; core += b.core_enrollments||0; newCash += b.new_cash_core||0;
   });
-  return Object.assign({}, d, { adcost: adcost, leads: leads, core_enrollments: core, new_cash_core: newCash });
+  return Object.assign({}, d, { adcost: adcost, adcost_real: adcostReal, leads: leads, core_enrollments: core, new_cash_core: newCash });
 }
 function isPooledView(){ return !(STATE.marketingOrg.length===1 && STATE.marketingOrg[0]===STATE.organization); }
 function recomputeCreative(row){
   var days = (row.detalle_diario||[]).filter(function(d){ return dayPassesQuarter(d.fecha) && dayPassesMes(d.fecha) && dayPassesSemana1(d.fecha,row.launch_dates) && dayPassesPais(d.topcountry); });
   var effDays = days.map(pooledDayFields);
-  var sums = { adcost:sumField(effDays,'adcost'), leads:sumField(effDays,'leads'), core_enrollments:sumField(effDays,'core_enrollments'), new_cash_core:sumField(effDays,'new_cash_core') };
+  var sums = { adcost:sumField(effDays,'adcost'), adcost_real:sumField(effDays,'adcost_real'), leads:sumField(effDays,'leads'), core_enrollments:sumField(effDays,'core_enrollments'), new_cash_core:sumField(effDays,'new_cash_core') };
   var out = Object.assign({}, row, sums, metricsFromSums(sums));
   var activeDates = new Set();
   effDays.forEach(function(d){ if((d.leads||0) > 0) activeDates.add(d.fecha); });
@@ -284,7 +310,7 @@ function groupCreativesByAdName(creatives){
   });
   return Object.keys(groups).map(function(adName){
     var versions = groups[adName];
-    var sums = { adcost:sumField(versions,'adcost'), leads:sumField(versions,'leads'), core_enrollments:sumField(versions,'core_enrollments'), new_cash_core:sumField(versions,'new_cash_core') };
+    var sums = { adcost:sumField(versions,'adcost'), adcost_real:sumField(versions,'adcost_real'), leads:sumField(versions,'leads'), core_enrollments:sumField(versions,'core_enrollments'), new_cash_core:sumField(versions,'new_cash_core') };
     var primary = versions.slice().sort(function(a,b){ return b.num_dias_activos - a.num_dias_activos; })[0];
     var mergedDetalle = [];
     var allDates = new Set();
@@ -316,7 +342,7 @@ function computeRollup(creatives, dim){
   var out = {};
   Object.keys(groups).forEach(function(key){
     var mem = groups[key];
-    var sums = { adcost:sumField(mem,'adcost'), leads:sumField(mem,'leads'), core_enrollments:sumField(mem,'core_enrollments'), new_cash_core:sumField(mem,'new_cash_core') };
+    var sums = { adcost:sumField(mem,'adcost'), adcost_real:sumField(mem,'adcost_real'), leads:sumField(mem,'leads'), core_enrollments:sumField(mem,'core_enrollments'), new_cash_core:sumField(mem,'new_cash_core') };
     var agg = Object.assign({}, sums, metricsFromSums(sums));
     var sumDays = mem.reduce(function(s,r){ return s+(r.num_dias_activos||0); },0);
     agg.avg_leads_dia = sumDays ? sums.leads/sumDays : null;
@@ -347,7 +373,7 @@ function availableDimTabs(creatives){
 
 /* ============================ metrics grid (usado en modales) ============================ */
 function formulaText(key,item){
-  var leads=fmtNum(item.leads,0), adcost=fmt$(item.adcost,0), core=fmtNum(item.core_enrollments,0), newCash=fmt$(item.new_cash_core,0);
+  var leads=fmtNum(item.leads,0), adcost=fmt$(activeAdcost(item),0), core=fmtNum(item.core_enrollments,0), newCash=fmt$(item.new_cash_core,0);
   var days=fmtNum(item.num_dias_activos||item.num_dias||0,0);
   if(key==='leads_per_1k') return leads+' leads ÷ '+adcost+' × 1,000';
   if(key==='avg_leads_dia') return leads+' leads ÷ '+days+' '+T('dias_activos');
@@ -426,14 +452,14 @@ function consolidateByDate(days){
     var bySplit = {};
     rows.forEach(function(d){
       var key = splitKey(d);
-      if(!bySplit[key]) bySplit[key] = { peso_propio:d.peso_propio, companions:d.companions||[], video_name:d.video_name, countries:[], adcost:0, leads:0, core_enrollments:0, new_cash_core:0 };
+      if(!bySplit[key]) bySplit[key] = { peso_propio:d.peso_propio, companions:d.companions||[], video_name:d.video_name, countries:[], adcost:0, adcost_real:0, leads:0, core_enrollments:0, new_cash_core:0 };
       var g = bySplit[key];
       if(d.topcountry) g.countries.push(d.topcountry);
-      g.adcost += d.adcost||0; g.leads += d.leads||0; g.core_enrollments += d.core_enrollments||0; g.new_cash_core += d.new_cash_core||0;
+      g.adcost += d.adcost||0; g.adcost_real += d.adcost_real||0; g.leads += d.leads||0; g.core_enrollments += d.core_enrollments||0; g.new_cash_core += d.new_cash_core||0;
     });
     var splits = Object.keys(bySplit).map(function(k){ return bySplit[k]; });
-    var totals = { adcost:0, leads:0, core_enrollments:0, new_cash_core:0 };
-    splits.forEach(function(s){ totals.adcost+=s.adcost; totals.leads+=s.leads; totals.core_enrollments+=s.core_enrollments; totals.new_cash_core+=s.new_cash_core; });
+    var totals = { adcost:0, adcost_real:0, leads:0, core_enrollments:0, new_cash_core:0 };
+    splits.forEach(function(s){ totals.adcost+=s.adcost; totals.adcost_real+=s.adcost_real; totals.leads+=s.leads; totals.core_enrollments+=s.core_enrollments; totals.new_cash_core+=s.new_cash_core; });
     return Object.assign({ fecha:fecha, splits:splits, mixed:splits.length>1 }, totals);
   });
 }
@@ -446,9 +472,9 @@ function mergeSplitsAcrossDays(dayList){
   dayList.forEach(function(cd){
     cd.splits.forEach(function(s){
       var key = (s.video_name?s.video_name+'::':'')+(s.peso_propio==null?'x':s.peso_propio.toFixed(4))+':'+(s.companions||[]).map(function(c){return c.nombre;}).sort().join(',');
-      if(!bySplit[key]) bySplit[key] = { peso_propio:s.peso_propio, companions:s.companions, video_name:s.video_name, countries:s.countries, adcost:0, leads:0, core_enrollments:0, new_cash_core:0 };
+      if(!bySplit[key]) bySplit[key] = { peso_propio:s.peso_propio, companions:s.companions, video_name:s.video_name, countries:s.countries, adcost:0, adcost_real:0, leads:0, core_enrollments:0, new_cash_core:0 };
       var g = bySplit[key];
-      g.adcost += s.adcost; g.leads += s.leads; g.core_enrollments += s.core_enrollments; g.new_cash_core += s.new_cash_core;
+      g.adcost += s.adcost; g.adcost_real += s.adcost_real||0; g.leads += s.leads; g.core_enrollments += s.core_enrollments; g.new_cash_core += s.new_cash_core;
     });
   });
   return Object.keys(bySplit).map(function(k){ var s=bySplit[k]; return Object.assign({}, s, metricsFromSums(s)); });
@@ -466,7 +492,7 @@ function groupContinuousDays(daysRaw){
   return groups.map(function(ds){
     var n=ds.length;
     var splits = mergeSplitsAcrossDays(ds);
-    var sums = { adcost:sumField(ds,'adcost'), leads:sumField(ds,'leads'), core_enrollments:sumField(ds,'core_enrollments'), new_cash_core:sumField(ds,'new_cash_core') };
+    var sums = { adcost:sumField(ds,'adcost'), adcost_real:sumField(ds,'adcost_real'), leads:sumField(ds,'leads'), core_enrollments:sumField(ds,'core_enrollments'), new_cash_core:sumField(ds,'new_cash_core') };
     var g = { fecha_inicio:ds[0].fecha, fecha_fin:ds[n-1].fecha, num_dias:n, mixed:splits.length>1, splits:splits };
     Object.assign(g, sums, metricsFromSums(sums));
     g.avg_leads_dia = n ? sums.leads/n : null;
@@ -574,6 +600,8 @@ function renderSidebar(){
   var el = document.getElementById('filters-root');
   var g1 = '<div class="sb-seg vertical" id="sel-metric">'+METRIC_ORDER.map(function(k){ return '<button data-metric="'+k+'" class="'+(STATE.metric===k?'active':'')+'">'+METRIC_DEFS[k].icon+' '+metricShort(k)+'</button>'; }).join('')+'</div>';
 
+  var gSem = '<div class="sb-seg" id="sel-sembrand"><button data-sembrand="toggle" class="'+(STATE.excludeSemBrand?'active':'')+'">'+esc(T('excluir_sem_brand'))+'</button></div>';
+
   var g2 = '<div class="sb-row-label">'+T('ventana')+'</div><div class="sb-seg" id="sel-semana1">'+
     ['false','true'].map(function(v){ var on=v==='true'; return '<button data-semana1="'+v+'" class="'+(STATE.semana1===on?'active':'')+'">'+(on?T('primera_semana'):T('historico_completo'))+'</button>'; }).join('')+'</div>'+
     '<div class="sb-row-label" style="margin-top:8px;">'+T('ad_type')+'</div><div class="sb-seg" id="sel-adtype">'+
@@ -583,8 +611,9 @@ function renderSidebar(){
     YEAR_OPTIONS.map(function(y){ return '<button data-year="'+y+'" class="'+(STATE.year===y?'active':'')+'">'+y+'</button>'; }).join('')+'</div>'+
     '<div class="sb-row-label" style="margin-top:8px;">'+T('trimestre')+'</div><div class="sb-seg" id="sel-quarter">'+
     QUARTERS.map(function(q){ return '<button data-quarter="'+q+'" class="'+(STATE.quarter===q?'active':'')+'">'+(q==='Todos'?T('todos'):q)+'</button>'; }).join('')+'</div>'+
-    '<div class="sb-row-label" style="margin-top:8px;">'+T('mes')+'</div><div class="sb-seg" id="sel-mes">'+
-    MESES.map(function(m){ return '<button data-mes="'+m+'" class="'+(STATE.mesSel.indexOf(m)!==-1?'active':'')+'">'+mesLabel(m)+'</button>'; }).join('')+'</div>';
+    '<div class="sb-row-label" style="margin-top:8px;">'+T('mes')+'</div><div class="sb-seg" id="sel-mes" title="'+escAttr(T('mes_hint'))+'">'+
+    MESES.map(function(m){ return '<button data-mes="'+m+'" class="'+(STATE.mesSel.indexOf(m)!==-1?'active':'')+'">'+mesLabel(m)+'</button>'; }).join('')+'</div>'+
+    '<div class="sb-hint">'+T('mes_hint')+'</div>';
 
   var g4 = '<div class="sb-row-label">'+T('organizacion')+'</div><div class="sb-seg" id="sel-organization">'+
     ORGANIZATIONS.map(function(o){ return '<button data-organization="'+o+'" class="'+(STATE.organization===o?'active':'')+'">'+o+'</button>'; }).join('')+'</div>'+
@@ -601,6 +630,7 @@ function renderSidebar(){
 
   el.innerHTML =
     sbGroup('metric', T('metrica_exito'), g1) +
+    sbGroup('semBrand', T('media_spend'), gSem) +
     sbGroup('window', T('ventana')+' · '+T('ad_type'), g2) +
     sbGroup('date', T('fecha'), g3) +
     sbGroup('brand', T('marca'), g4) +
@@ -610,47 +640,60 @@ function renderSidebar(){
     h.addEventListener('click', function(){ var k=h.dataset.sbtoggle; SB_COLLAPSED[k]=!SB_COLLAPSED[k]; renderSidebar(); });
   });
   Array.from(el.querySelectorAll('#sel-metric button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.metric=b.dataset.metric; renderAll(); }); });
+  Array.from(el.querySelectorAll('#sel-sembrand button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.excludeSemBrand = !STATE.excludeSemBrand; renderAll(); }); });
   Array.from(el.querySelectorAll('#sel-semana1 button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.semana1=b.dataset.semana1==='true'; renderAll(); }); });
   Array.from(el.querySelectorAll('#sel-adtype button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.adType=b.dataset.adtype; renderAll(); }); });
   Array.from(el.querySelectorAll('#sel-year button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.year=b.dataset.year; renderAll(); }); });
   Array.from(el.querySelectorAll('#sel-quarter button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.quarter=b.dataset.quarter; renderAll(); }); });
-  Array.from(el.querySelectorAll('#sel-mes button')).forEach(function(b){
-    b.addEventListener('click', function(){ var m=b.dataset.mes, idx=STATE.mesSel.indexOf(m); if(idx===-1) STATE.mesSel.push(m); else STATE.mesSel.splice(idx,1); renderAll(); });
-  });
+  wireDragMultiSelect('sel-mes', 'mesSel', MESES, 'mes', false);
   Array.from(el.querySelectorAll('#sel-organization button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.organization=b.dataset.organization; renderAll(); }); });
   Array.from(el.querySelectorAll('#sel-mktorg button')).forEach(function(b){
     b.addEventListener('click', function(){ var o=b.dataset.org, idx=STATE.marketingOrg.indexOf(o); if(idx===-1) STATE.marketingOrg.push(o); else if(STATE.marketingOrg.length>1) STATE.marketingOrg.splice(idx,1); renderAll(); });
   });
   Array.from(el.querySelectorAll('#sel-region button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.region=b.dataset.region; renderAll(); }); });
-  wirePaisMultiSelect();
+  wireDragMultiSelect('sel-pais', 'paisSel', COUNTRIES, 'pais', true);
 }
 
 /* ============================ pais multi-select: clic / ctrl+clic / arrastre ============================ */
-var paisDrag = {active:false, startIdx:null, liveSet:null};
-function applyPaisButtonClasses(set){ Array.from(document.querySelectorAll('#sel-pais button')).forEach(function(btn){ btn.classList.toggle('active', set.indexOf(btn.dataset.pais)!==-1); }); }
-function wirePaisMultiSelect(){
-  var container = document.getElementById('sel-pais'); if(!container) return;
-  Array.from(container.querySelectorAll('button')).forEach(function(btn){
+/* Multi-select reusable con clic / ctrl+clic / clic-y-arrastre -- usado por
+   el selector de pais (#sel-pais, dentro de Lugar) y el de mes (#sel-mes,
+   dentro de Fecha). requireMinOne=true impide que ctrl+clic deje la
+   seleccion en 0 (pais siempre necesita al menos uno activo); mes en cambio
+   SI puede quedar vacio (vacio = sin filtro, ver dayPassesMes). */
+var dragMultiSel = {active:false, startIdx:null, liveSet:null, containerId:null, dataAttr:null};
+function applyDragButtonClasses(containerId, dataAttr, set){
+  Array.from(document.querySelectorAll('#'+containerId+' button')).forEach(function(btn){
+    btn.classList.toggle('active', set.indexOf(btn.dataset[dataAttr])!==-1);
+  });
+}
+function wireDragMultiSelect(containerId, stateKey, fullList, dataAttr, requireMinOne){
+  var container = document.getElementById(containerId); if(!container) return;
+  Array.from(container.querySelectorAll('button')).forEach(function(btn, idx){
     btn.addEventListener('mousedown', function(e){
       e.preventDefault();
-      var pais=btn.dataset.pais, idx=+btn.dataset.idx;
+      var val = btn.dataset[dataAttr];
       if(e.ctrlKey || e.metaKey){
-        var cur=STATE.paisSel.slice(), i=cur.indexOf(pais);
-        if(i===-1) cur.push(pais); else if(cur.length>1) cur.splice(i,1);
-        STATE.paisSel=cur; paisDrag.active=false; renderAll(); return;
+        var cur=STATE[stateKey].slice(), i=cur.indexOf(val);
+        if(i===-1) cur.push(val); else if(!requireMinOne || cur.length>1) cur.splice(i,1);
+        STATE[stateKey]=cur; dragMultiSel.active=false; renderAll(); return;
       }
-      paisDrag.active=true; paisDrag.startIdx=idx; paisDrag.liveSet=[pais];
-      applyPaisButtonClasses(paisDrag.liveSet);
+      dragMultiSel = {active:true, startIdx:idx, liveSet:[val], containerId:containerId, dataAttr:dataAttr, stateKey:stateKey};
+      applyDragButtonClasses(containerId, dataAttr, dragMultiSel.liveSet);
     });
     btn.addEventListener('mouseenter', function(){
-      if(!paisDrag.active) return;
-      var idx=+btn.dataset.idx, lo=Math.min(paisDrag.startIdx,idx), hi=Math.max(paisDrag.startIdx,idx);
-      paisDrag.liveSet = COUNTRIES.slice(lo,hi+1);
-      applyPaisButtonClasses(paisDrag.liveSet);
+      if(!dragMultiSel.active || dragMultiSel.containerId!==containerId) return;
+      var lo=Math.min(dragMultiSel.startIdx,idx), hi=Math.max(dragMultiSel.startIdx,idx);
+      dragMultiSel.liveSet = fullList.slice(lo,hi+1);
+      applyDragButtonClasses(containerId, dataAttr, dragMultiSel.liveSet);
     });
   });
 }
-document.addEventListener('mouseup', function(){ if(!paisDrag.active) return; paisDrag.active=false; STATE.paisSel = paisDrag.liveSet || STATE.paisSel; renderAll(); });
+document.addEventListener('mouseup', function(){
+  if(!dragMultiSel.active) return;
+  dragMultiSel.active=false;
+  STATE[dragMultiSel.stateKey] = dragMultiSel.liveSet || STATE[dragMultiSel.stateKey];
+  renderAll();
+});
 
 document.getElementById('sidebar-toggle').addEventListener('click', function(){
   document.getElementById('sidebar').classList.toggle('collapsed');
@@ -735,6 +778,7 @@ function contextTitleHTML(creatives){
   parts.push(viewLabel);
 
   var sub = [];
+  if(STATE.excludeSemBrand) sub.push(T('excluir_sem_brand'));
   if(STATE.quarter !== 'Todos') sub.push(T('trimestre')+': '+STATE.quarter);
   if(STATE.mesSel.length) sub.push(T('mes')+': '+STATE.mesSel.map(mesLabel).join(', '));
   if(STATE.semana1) sub.push(T('primera_semana'));
@@ -756,9 +800,7 @@ function rankListHTML(rows, opts){
   return colorLegendHTML(activeMetric) + '<div class="rank-list">' + rows.map(function(r, i){
     var val = r[activeMetric];
     var color = rankColorCSS(activeMetric, val, minMax);
-    var frac = 0;
-    if(val!=null){ var mn=minMax.min, mx=minMax.max; frac = (mx===mn)?1:(val-mn)/(mx-mn); if(!METRIC_DEFS[activeMetric].higherIsBetter) frac=1-frac; }
-    var widthPct = Math.max(4, Math.round(Math.max(0,Math.min(1,frac))*100));
+    var widthPct = Math.max(4, Math.round(metricBarFrac(activeMetric, val, minMax)*100));
     var nameHtml = opts.isCreative
       ? '<button class="rank-name-btn" data-daily-detail="'+escAttr(r.nombre)+'"><span>'+esc(r.nombre)+'</span></button>'+videoLinkHTML(r.link_video)
       : '<button class="rank-name-btn" data-def-dim="'+escAttr(opts.dim)+'" data-def-code="'+escAttr(r._code)+'"><span>'+esc(TAX(opts.dim, r._code))+'</span><span class="info-dot">i</span></button>';
@@ -905,9 +947,13 @@ var TOUR_STEPS = [
       es:'Un recorrido rápido por cada filtro, pestaña y botón antes de empezar. Puedes repetirlo cuando quieras desde el ícono 🎓.',
       pt:'Um passeio rápido por cada filtro, aba e botão antes de começar. Repita quando quiser pelo ícone 🎓.'} },
   { group:'metric', selector:'#sel-metric', title:{en:'Success metric',es:'Métrica de éxito',pt:'Métrica de sucesso'},
-    body:{en:'Choose how success is measured: Leads per $1,000, Avg. Leads/day, CPL, Conversion or Margin. The whole dashboard (ranking, colors, tabs) recalculates around whichever you pick.',
-      es:'Elige con qué métrica medir el éxito: Leads x $1,000, Prom. Leads/día, CPL, Conversión o Margen. Todo el dashboard (ranking, colores, tabs) se recalcula según la que elijas.',
-      pt:'Escolha como medir o sucesso: Leads por US$1.000, Méd. Leads/dia, CPL, Conversão ou Margem. Todo o dashboard (ranking, cores, abas) se recalcula de acordo com a escolhida.'} },
+    body:{en:'Choose how success is measured: Leads per $1,000, Avg. Leads/day, CPL, Conversion or % MNCC. The whole dashboard (ranking, colors, tabs) recalculates around whichever you pick.',
+      es:'Elige con qué métrica medir el éxito: Leads x $1,000, Prom. Leads/día, CPL, Conversión o % MNCC. Todo el dashboard (ranking, colores, tabs) se recalcula según la que elijas.',
+      pt:'Escolha como medir o sucesso: Leads por US$1.000, Méd. Leads/dia, CPL, Conversão ou % MNCC. Todo o dashboard (ranking, cores, abas) se recalcula de acordo com a escolhida.'} },
+  { group:'semBrand', selector:'#sel-sembrand', title:{en:'Exclude SEM-Brand Spend',es:'Excluir SEM-Brand Spend',pt:'Excluir Gasto SEM-Brand'},
+    body:{en:'The "Brand TV Channels" spend always mixes in some SEM-Brand digital spend, which you can’t control (it moves with competitor bidding, not your own strategy). Turn this on to net it out of Leads/$1,000, CPL and % MNCC.',
+      es:'El gasto de "Brand TV Channels" siempre trae mezclado algo de gasto digital SEM-Brand, que no podemos controlar (varía por pujas de la competencia, no por nuestra estrategia). Actívalo para descontarlo de Leads/$1,000, CPL y % MNCC.',
+      pt:'O gasto de "Brand TV Channels" sempre traz misturado um pouco de gasto digital SEM-Brand, que não podemos controlar (varia por lances da concorrência, não pela nossa estratégia). Ative para descontá-lo de Leads/$1.000, CPL e % MNCC.'} },
   { group:'window', selector:'[data-sbtoggle="window"]', title:{en:'Collapse any section',es:'Colapsa cualquier sección',pt:'Recolha qualquer seção'},
     body:{en:'Click a section title (with the ▾ arrow) to collapse or expand it and keep the sidebar tidy — every section works this way.',
       es:'Haz clic en el título de cualquier sección (con la flecha ▾) para colapsarla o expandirla y mantener el panel ordenado — todas las secciones funcionan así.',

@@ -15,7 +15,7 @@ var DECK_INFO = {
   'OE-BR': { region: 'Brazil', customerOrg: 'Open English' },
   'JR-BR': { region: 'Brazil', customerOrg: 'Open English Junior' },
 };
-var RAW_FIELDS = ['adcost', 'leads', 'core_enrollments', 'new_cash_core'];
+var RAW_FIELDS = ['adcost', 'adcost_real', 'leads', 'core_enrollments', 'new_cash_core'];
 
 function metricsFromSumsEngine(s) {
   var adcost = s.adcost || 0, leads = s.leads || 0, core = s.core_enrollments || 0, newCash = s.new_cash_core || 0;
@@ -27,7 +27,7 @@ function metricsFromSumsEngine(s) {
   };
 }
 function sumRawEngine(dicts) {
-  var out = { adcost: 0, leads: 0, core_enrollments: 0, new_cash_core: 0 };
+  var out = { adcost: 0, adcost_real: 0, leads: 0, core_enrollments: 0, new_cash_core: 0 };
   dicts.forEach(function (d) { RAW_FIELDS.forEach(function (f) { out[f] += d[f] || 0; }); });
   return out;
 }
@@ -137,17 +137,23 @@ function buildRawCreativeDays(rotation, liveTotals) {
         var accum = rec.diasByKey.get(dayKey);
         if (!accum) {
           accum = { fecha: dateIso, topcountry: tc, peso_propio: peso, companions: companions,
-            adcost: 0, leads: 0, core_enrollments: 0, new_cash_core: 0, by_org: {} };
+            adcost: 0, adcost_real: 0, leads: 0, core_enrollments: 0, new_cash_core: 0, by_org: {} };
           rec.diasByKey.set(dayKey, accum);
         }
         Object.keys(t.byOrg).forEach(function (customerOrg) {
           var b = t.byOrg[customerOrg];
           var dAdcost = peso * (b.spend || 0), dLeads = peso * (b.leads || 0),
             dCore = peso * (b.core_enrollments || 0), dNewCash = peso * (b.new_cash_core || 0);
-          var bucket = accum.by_org[customerOrg] || (accum.by_org[customerOrg] = { adcost: 0, leads: 0, core_enrollments: 0, new_cash_core: 0 });
-          bucket.adcost += dAdcost; bucket.leads += dLeads; bucket.core_enrollments += dCore; bucket.new_cash_core += dNewCash;
+          /* adcost_real = mismo gasto pero neto de SEM-Brand (offlineSpendReal
+             agregado en t.mediaSpendReal, solo tiene valor real en el archivo
+             home -- igual que spend). Se prorratea con el mismo peso de
+             rotacion, y se suma con el mismo desglose by_org que adcost para
+             que el pooling de MarketingOrganization (app.js) lo trate igual. */
+          var dAdcostReal = peso * (customerOrg === marca ? (t.mediaSpendReal || 0) : 0);
+          var bucket = accum.by_org[customerOrg] || (accum.by_org[customerOrg] = { adcost: 0, adcost_real: 0, leads: 0, core_enrollments: 0, new_cash_core: 0 });
+          bucket.adcost += dAdcost; bucket.adcost_real += dAdcostReal; bucket.leads += dLeads; bucket.core_enrollments += dCore; bucket.new_cash_core += dNewCash;
           if (customerOrg === marca) {
-            accum.adcost += dAdcost; accum.leads += dLeads; accum.core_enrollments += dCore; accum.new_cash_core += dNewCash;
+            accum.adcost += dAdcost; accum.adcost_real += dAdcostReal; accum.leads += dLeads; accum.core_enrollments += dCore; accum.new_cash_core += dNewCash;
             stats.inversionAtribuida += dAdcost;
           }
         });
