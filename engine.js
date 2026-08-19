@@ -145,6 +145,29 @@ function buildRawCreativeDays(rotation, liveTotals) {
   return { byCreative: byCreative, stats: stats };
 }
 
+/* Un creativo puede tener MAS de un "lanzamiento" real en el mismo ano: sale
+   al aire, se apaga por completo varias semanas o meses, y vuelve a salir
+   (relanzamiento) -- cada uno de esos arranques tiene su propia "primera
+   semana", independiente del anterior. Lo que NO cuenta como un lanzamiento
+   nuevo es que cambie el creativo ACOMPANANTE de una semana a la otra (eso es
+   normal en la rotacion, no significa que ESTE creativo se haya relanzado).
+   Por eso la deteccion se hace SOLO sobre las fechas propias del creativo
+   (nunca sobre companions/splits): se ordenan las fechas unicas en las que
+   estuvo activo y se corta un lanzamiento nuevo cuando hay un hueco de mas
+   de 7 dias completos sin actividad -- un hueco corto (unos pocos dias sin
+   aparecer por como cayo la rotacion esa semana) sigue siendo el MISMO
+   lanzamiento. */
+function computeLaunchDates(fechasUnicasOrdenadas) {
+  var launches = [];
+  var prevTime = null;
+  fechasUnicasOrdenadas.forEach(function (fecha) {
+    var t = Date.parse(fecha + 'T00:00:00Z');
+    if (prevTime === null || (t - prevTime) / 86400000 > 7) launches.push(fecha);
+    prevTime = t;
+  });
+  return launches;
+}
+
 /* Paso 3: ensamblar en la MISMA estructura que consumia el dashboard anterior
    (years.{year}.slices.{marca|region|Total}.ranking_creativos[], cada uno con
    detalle_diario) para poder reusar computeRollup/renderRanking/modales tal cual. */
@@ -170,12 +193,14 @@ function buildYearsData(rotation, deckJsons, taxonomyByName, years) {
       var metrics = metricsFromSumsEngine(totals);
       var tax = taxonomyByName[creativo] || {};
       var sliceKey = rec.marca + '|' + rec.region + '|Total';
+      var fechasUnicas = Array.from(new Set(diasDelAnio.map(function (d) { return d.fecha; }))).sort();
 
       var row = Object.assign({
         nombre: creativo, marca: rec.marca, region: rec.region,
-        num_dias_activos: new Set(diasDelAnio.map(function (d) { return d.fecha; })).size,
+        num_dias_activos: fechasUnicas.length,
         meses_activos: Array.from(new Set(diasDelAnio.map(function (d) { return d.fecha.slice(0, 7); }))).sort(),
-        fecha_lanzamiento: diasDelAnio.reduce(function (m, d) { return (!m || d.fecha < m) ? d.fecha : m; }, null),
+        fecha_lanzamiento: fechasUnicas[0] || null,
+        launch_dates: computeLaunchDates(fechasUnicas),
         detalle_diario: diasDelAnio.slice().sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; }),
       }, totals, metrics, tax);
       // El Excel STANDARD/taxonomia llama a esta columna "Adstream Link" ->

@@ -193,10 +193,19 @@ function currentYearData(){ return YEARS_DATA[STATE.year] || {slices:{}}; }
 /* ============================ filtros: recalculo 100% client-side ============================ */
 function quarterOf(fecha){ return 'Q'+(Math.floor((+fecha.slice(5,7)-1)/3)+1); }
 function dayPassesQuarter(fecha){ return STATE.quarter==='Todos' || quarterOf(fecha)===STATE.quarter; }
-function dayPassesSemana1(fecha, fechaLanzamiento){
-  if(!STATE.semana1 || !fechaLanzamiento) return true;
-  var diff = Math.round((Date.parse(fecha+'T00:00:00Z') - Date.parse(fechaLanzamiento+'T00:00:00Z'))/86400000);
-  return diff>=0 && diff<=6;
+/* launchDates: uno o mas arranques reales del creativo ese ano (ver
+   computeLaunchDates en engine.js -- un hueco de mas de 7 dias sin
+   actividad separa un relanzamiento del anterior; que cambie el
+   acompanante de rotacion NO cuenta como relanzamiento). Una fecha pasa el
+   filtro "Primera semana" si cae en los primeros 7 dias de CUALQUIERA de
+   esos lanzamientos. */
+function dayPassesSemana1(fecha, launchDates){
+  if(!STATE.semana1 || !launchDates || !launchDates.length) return true;
+  var t = Date.parse(fecha+'T00:00:00Z');
+  return launchDates.some(function(l){
+    var diff = Math.round((t - Date.parse(l+'T00:00:00Z'))/86400000);
+    return diff>=0 && diff<=6;
+  });
 }
 function dayPassesPais(topcountry){ if(topcountry==null) return true; return STATE.paisSel.indexOf(topcountry)!==-1; }
 /* La LISTA de creativos siempre es la de Organization (single-select) -- eso
@@ -230,7 +239,7 @@ function pooledDayFields(d){
 }
 function isPooledView(){ return !(STATE.marketingOrg.length===1 && STATE.marketingOrg[0]===STATE.organization); }
 function recomputeCreative(row){
-  var days = (row.detalle_diario||[]).filter(function(d){ return dayPassesQuarter(d.fecha) && dayPassesSemana1(d.fecha,row.fecha_lanzamiento) && dayPassesPais(d.topcountry); });
+  var days = (row.detalle_diario||[]).filter(function(d){ return dayPassesQuarter(d.fecha) && dayPassesSemana1(d.fecha,row.launch_dates) && dayPassesPais(d.topcountry); });
   var effDays = days.map(pooledDayFields);
   var sums = { adcost:sumField(effDays,'adcost'), leads:sumField(effDays,'leads'), core_enrollments:sumField(effDays,'core_enrollments'), new_cash_core:sumField(effDays,'new_cash_core') };
   var out = Object.assign({}, row, sums, metricsFromSums(sums));
