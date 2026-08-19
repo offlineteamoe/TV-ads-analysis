@@ -652,14 +652,35 @@ function wirePaisMultiSelect(){
 }
 document.addEventListener('mouseup', function(){ if(!paisDrag.active) return; paisDrag.active=false; STATE.paisSel = paisDrag.liveSet || STATE.paisSel; renderAll(); });
 
-document.getElementById('sidebar-toggle').addEventListener('click', function(){ document.getElementById('sidebar').classList.toggle('collapsed'); });
+document.getElementById('sidebar-toggle').addEventListener('click', function(){
+  document.getElementById('sidebar').classList.toggle('collapsed');
+  // Colapsar/expandir el sidebar cambia el ancho disponible de #viewtabs (20/80 del layout) --
+  // hay que re-evaluar si las flechas de scroll de las pestanas deben mostrarse.
+  setTimeout(tabScrollUpdate, 0);
+});
 
-/* ============================ tabs (scrollable, con flechas) ============================ */
+/* ============================ tabs (scrollable, con flechas) ============================
+   IMPORTANTE: la primera vez que renderViewTabs()/wireTabScroll() corren es
+   DENTRO de renderAll() (via startApp()), que a su vez corre ANTES de que
+   boot() (en dashboard.html) le agregue la clase 'ready' a #appShell -- hasta
+   ese momento #appShell tiene display:none, asi que #viewtabs mide
+   scrollWidth/clientWidth = 0 y las dos flechas (izq/der) quedan escondidas
+   para siempre (nunca se vuelven a recalcular solas: el listener de resize
+   no dispara solo porque el panel se hizo visible). Por eso boot() llama a
+   tabScrollUpdate() de nuevo, explicitamente, justo despues de agregar
+   'ready'. tabScrollUpdate queda como funcion global (no anidada) para poder
+   invocarla desde ahi y desde el toggle del sidebar completo. */
+function tabScrollUpdate(){
+  var el = document.getElementById('viewtabs');
+  var leftBtn = document.getElementById('tabscroll-left'), rightBtn = document.getElementById('tabscroll-right');
+  if(!el || !leftBtn || !rightBtn) return;
+  leftBtn.classList.toggle('hidden', el.scrollLeft<=2);
+  rightBtn.classList.toggle('hidden', el.scrollLeft>=(el.scrollWidth-el.clientWidth-2));
+}
 function wireTabScroll(el){
   var leftBtn=document.getElementById('tabscroll-left'), rightBtn=document.getElementById('tabscroll-right');
-  function update(){ leftBtn.classList.toggle('hidden', el.scrollLeft<=2); rightBtn.classList.toggle('hidden', el.scrollLeft>=(el.scrollWidth-el.clientWidth-2)); }
   leftBtn.onclick=function(){ el.scrollBy({left:-160}); }; rightBtn.onclick=function(){ el.scrollBy({left:160}); };
-  el.onscroll=update; window.addEventListener('resize', update); update();
+  el.onscroll=tabScrollUpdate; window.addEventListener('resize', tabScrollUpdate); tabScrollUpdate();
 }
 function renderViewTabs(creatives){
   var dims = availableDimTabs(creatives);
@@ -891,6 +912,10 @@ var TOUR_STEPS = [
     body:{en:'Click a section title (with the ▾ arrow) to collapse or expand it and keep the sidebar tidy — every section works this way.',
       es:'Haz clic en el título de cualquier sección (con la flecha ▾) para colapsarla o expandirla y mantener el panel ordenado — todas las secciones funcionan así.',
       pt:'Clique no título de qualquer seção (com a seta ▾) para recolhê-la ou expandi-la e manter o painel organizado — todas as seções funcionam assim.'} },
+  { selector:'#sidebar-toggle', title:{en:'Collapse the whole panel',es:'Colapsa todo el panel',pt:'Recolha o painel inteiro'},
+    body:{en:'Click the ☰ icon to collapse or expand the ENTIRE filters panel (the left 0–20% of the screen) and get more room for the data.',
+      es:'Haz clic en el ícono ☰ para colapsar o expandir TODO el panel de filtros (el 0–20% izquierdo de la pantalla) y ganar más espacio para la data.',
+      pt:'Clique no ícone ☰ para recolher ou expandir TODO o painel de filtros (os 0–20% esquerdos da tela) e ganhar mais espaço para os dados.'} },
   { group:'window', selector:'#sel-semana1', title:{en:'Window & Ad Type',es:'Ventana y tipo de anuncio',pt:'Janela e tipo de anúncio'},
     body:{en:'Compare full history against just the first week of each launch, and filter by ad type (Promo or Generic).',
       es:'Compara el histórico completo contra solo la primera semana de cada lanzamiento, y filtra por tipo de anuncio (Promo o Genérico).',
@@ -926,11 +951,23 @@ var TOUR_STEPS = [
 ];
 var TOUR_IDX = 0;
 function tourStepTarget(step){ return step.selector ? document.querySelector(step.selector) : null; }
+/* El "spotlight" es el truco de box-shadow:0 0 0 9999px sobre este mismo
+   elemento -- por eso SIEMPRE debe quedar visible mientras el tour esta
+   activo, incluso en pasos sin elemento propio (ej. bienvenida): si se
+   ocultaba (display:none) en esos pasos, el fondo dejaba de oscurecerse por
+   completo y el tooltip quedaba flotando sin contraste sobre la pagina. Sin
+   elemento, se centra una caja de tamaño 0 (sigue oscureciendo TODA la
+   pantalla via el box-shadow) y se le quita el borde de acento. */
 function positionTourHighlight(el){
   var hi = document.getElementById('tour-highlight');
-  if(!el){ hi.style.display='none'; return; }
-  var r = el.getBoundingClientRect();
   hi.style.display='block';
+  hi.classList.toggle('tour-no-target', !el);
+  if(!el){
+    hi.style.top=(window.innerHeight/2)+'px'; hi.style.left=(window.innerWidth/2)+'px';
+    hi.style.width='0px'; hi.style.height='0px';
+    return;
+  }
+  var r = el.getBoundingClientRect();
   hi.style.top=(r.top-6)+'px'; hi.style.left=(r.left-6)+'px'; hi.style.width=(r.width+12)+'px'; hi.style.height=(r.height+12)+'px';
 }
 function positionTourTooltip(el){

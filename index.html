@@ -188,8 +188,9 @@ td.num, th.num{text-align:right;}
 
 /* ---------- tour guiado ---------- */
 #tour-blocker{position:fixed; inset:0; z-index:399; background:transparent;}
-#tour-highlight{position:fixed; border-radius:10px; border:2px solid var(--accent); background:transparent; box-shadow:0 0 0 9999px rgba(10,12,20,.66); pointer-events:none; transition:top .25s ease, left .25s ease, width .25s ease, height .25s ease; z-index:400;}
-#tour-highlight.tour-emphasis{border-color:var(--warn-border); box-shadow:0 0 0 9999px rgba(10,12,20,.7), 0 0 0 5px var(--warn);}
+#tour-highlight{position:fixed; border-radius:10px; border:2px solid var(--accent); background:transparent; box-shadow:0 0 0 9999px rgba(8,10,16,.74); pointer-events:none; transition:top .25s ease, left .25s ease, width .25s ease, height .25s ease; z-index:400;}
+#tour-highlight.tour-no-target{border-color:transparent;}
+#tour-highlight.tour-emphasis{border-color:var(--warn-border); box-shadow:0 0 0 9999px rgba(8,10,16,.78), 0 0 0 5px var(--warn);}
 #tour-tooltip{position:fixed; z-index:401; width:300px; max-width:calc(100vw - 28px); background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); padding:16px 18px; transition:top .2s ease, left .2s ease;}
 .tour-progress{font-size:10.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); margin-bottom:6px;}
 .tour-title{font-size:14.5px; font-weight:800; margin-bottom:6px;}
@@ -405,6 +406,12 @@ async function boot(fetcher){
     startApp(YEARS_DATA_FULL);
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('appShell').classList.add('ready');
+    // #appShell estaba display:none cuando renderViewTabs() midio por primera
+    // vez el ancho de #viewtabs (dentro de startApp de arriba) -- recalcular
+    // las flechas de scroll de las pestanas ahora que el panel ya es visible.
+    // requestAnimationFrame NO alcanza a ver el layout ya asentado en este
+    // caso especifico (probado); setTimeout(...,0) si.
+    setTimeout(function(){ if(typeof tabScrollUpdate==='function') tabScrollUpdate(); }, 0);
     setTimeout(maybeAutoStartTour, 300);
   }catch(e){
     showLoginError('Error loading data: '+e.message);
@@ -413,6 +420,6 @@ async function boot(fetcher){
   }
 }
 </script>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=16"></script>
 </body>
 </html>
