@@ -645,7 +645,7 @@ function renderSidebar(){
   Array.from(el.querySelectorAll('#sel-year button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.year=b.dataset.year; renderAll(); }); });
   Array.from(el.querySelectorAll('#sel-quarter button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.quarter=b.dataset.quarter; renderAll(); }); });
   wireDragMultiSelect('sel-mes', 'mesSel', MESES, 'mes', false);
-  Array.from(el.querySelectorAll('#sel-organization button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.organization=b.dataset.organization; renderAll(); }); });
+  Array.from(el.querySelectorAll('#sel-organization button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.organization=b.dataset.organization; STATE.marketingOrg=[STATE.organization]; renderAll(); }); });
   Array.from(el.querySelectorAll('#sel-mktorg button')).forEach(function(b){
     b.addEventListener('click', function(){ var o=b.dataset.org, idx=STATE.marketingOrg.indexOf(o); if(idx===-1) STATE.marketingOrg.push(o); else if(STATE.marketingOrg.length>1) STATE.marketingOrg.splice(idx,1); renderAll(); });
   });
