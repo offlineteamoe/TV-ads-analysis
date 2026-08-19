@@ -81,7 +81,7 @@ function rankColorCSS(metric, value, minMax){
   if(!METRIC_DEFS[metric].higherIsBetter) frac = 1-frac;
   frac = 1-frac;
   var pct = Math.round(Math.max(0,Math.min(1,frac))*100);
-  return 'color-mix(in srgb, '+cv('--rank-blue-weak')+' '+pct+'%, '+cv('--rank-blue-strong')+' '+(100-pct)+'%)';
+  return 'color-mix(in srgb, '+cv('--rank-weak')+' '+pct+'%, '+cv('--rank-strong')+' '+(100-pct)+'%)';
 }
 function colorLegendHTML(metric){
   var html = '<div class="color-legend"><span>'+T('mejor')+'</span><div class="legend-gradient"></div><span>'+T('peor')+'</span>';
@@ -128,6 +128,10 @@ var STR = {
   margen_sin_gasto_nota:{en:'$0 spend attributed here, so % Margin would show a meaningless 100%. Showing average daily New Cash Core generated instead.',es:'$0 de gasto atribuido aquí, así que %Margen mostraría un 100% sin sentido. Se muestra en su lugar el promedio diario de New Cash Core generado.',pt:'$0 de gasto atribuído aqui, então %Margem mostraria um 100% sem sentido. Mostrando em vez disso a média diária de New Cash Core gerado.'},
   dia:{en:'day',es:'día',pt:'dia'},
   pooled_chip:{en:'Pooling spend/leads/sales/NCC across',es:'Sumando gasto/leads/ventas/NCC entre',pt:'Somando gasto/leads/vendas/NCC entre'},
+  toast_auto_switch:{
+    en:'Metric switched to "Avg. Leads/day": Organization and MarketingOrganization are opposite brands here, so spend is $0 and Leads/$1,000, CPL and Margin can’t be calculated.',
+    es:'La métrica cambió a "Prom. Leads/día": Organization y MarketingOrganization son marcas opuestas aquí, así que el gasto es $0 y no se pueden calcular Leads/$1,000, CPL ni Margen.',
+    pt:'A métrica mudou para "Méd. Leads/dia": Organization e MarketingOrganization são marcas opostas aqui, então o gasto é $0 e não é possível calcular Leads/$1.000, CPL nem Margem.'},
   buscar:{en:'Search by name or dimension…',es:'Buscar por nombre o dimensión…',pt:'Buscar por nome ou dimensão…'},
   de:{en:'of',es:'de',pt:'de'}, creativos:{en:'creatives',es:'creativos',pt:'criativos'},
   click_ordenar:{en:'Click a header to sort',es:'Click en un encabezado para ordenar',pt:'Clique num cabeçalho para ordenar'},
@@ -177,7 +181,12 @@ var YEAR_OPTIONS = [];
 var YEARS_DATA = {};
 
 function organizationColor(org){ if(org==='Open English Junior') return cv('--oejr'); if(org==='Open English') return cv('--oe'); return cv('--neutral-bar'); }
-function updateAccent(){ document.documentElement.style.setProperty('--accent', organizationColor(STATE.organization)); }
+function updateAccent(){
+  document.documentElement.style.setProperty('--accent', organizationColor(STATE.organization));
+  var isJr = STATE.organization === 'Open English Junior';
+  document.documentElement.style.setProperty('--rank-strong', cv(isJr ? '--rank-orange-strong' : '--rank-blue-strong'));
+  document.documentElement.style.setProperty('--rank-weak', cv(isJr ? '--rank-orange-weak' : '--rank-blue-weak'));
+}
 function currentYearData(){ return YEARS_DATA[STATE.year] || {slices:{}}; }
 
 /* ============================ filtros: recalculo 100% client-side ============================ */
@@ -676,10 +685,10 @@ function contextTitleHTML(creatives){
   if(STATE.quarter !== 'Todos') sub.push(T('trimestre')+': '+STATE.quarter);
   if(STATE.semana1) sub.push(T('primera_semana'));
   if(STATE.adType !== 'Todos') sub.push(T('ad_type')+': '+STATE.adType);
-  if(isPooledView()) sub.push(T('pooled_chip')+': '+STATE.marketingOrg.join(' + '));
   sub.push(creatives.length+' '+T('creativos_activos_en')+' '+STATE.year);
 
-  return '<h1>'+parts.map(esc).join(' · ')+'</h1><div class="context-sub">'+sub.map(esc).join(' · ')+'</div>';
+  var metricChip = '<span class="context-metric-chip">'+METRIC_DEFS[STATE.metric].icon+' '+esc(metricLabel(STATE.metric))+'</span>';
+  return '<h1>'+metricChip+' '+parts.map(esc).join(' · ')+'</h1><div class="context-sub">'+sub.map(esc).join(' · ')+'</div>';
 }
 function renderContextTitle(creatives){
   document.getElementById('context-title').innerHTML = contextTitleHTML(creatives);
@@ -791,11 +800,22 @@ function renderFooter(){
    Leads/$1k, CPL o Margen. En ese caso, cambiar la metrica activa
    automaticamente a "Prom. Leads/dia" al ENTRAR a ese estado (no la vuelve a
    forzar si el usuario elige otra a mano despues, ni la revierte al salir). */
+function showToast(message){
+  var container = document.getElementById('toast-container');
+  if(!container) return;
+  var el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = esc(message)+'<button class="toast-close" aria-label="Cerrar">✕</button>';
+  container.appendChild(el);
+  var timer = setTimeout(function(){ el.remove(); }, 5000);
+  el.querySelector('.toast-close').addEventListener('click', function(){ clearTimeout(timer); el.remove(); });
+}
 var PREV_CROSS_BRAND_ONLY = false;
 function renderAll(){
   var crossBrandOnly = STATE.marketingOrg.length===1 && STATE.marketingOrg[0]!==STATE.organization;
   if(crossBrandOnly && !PREV_CROSS_BRAND_ONLY && (STATE.metric==='leads_per_1k' || STATE.metric==='cpl' || STATE.metric==='mncc_core_pct')){
     STATE.metric = 'avg_leads_dia';
+    showToast(T('toast_auto_switch'));
   }
   PREV_CROSS_BRAND_ONLY = crossBrandOnly;
   updateAccent();
