@@ -234,6 +234,7 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
     <div class="topbar"><div class="topbar-inner">
       <div style="flex:1"></div>
       <div class="iconbtns">
+        <a class="iconbtn" id="btn-download-standalone" href="standalone.html" download="Dashboard_TV_Ads_v3_Standalone.html"></a>
         <button class="iconbtn" id="btn-methodology">?</button>
         <button class="iconbtn" id="btn-theme">◐</button>
         <div class="iconbtns" id="lang-btns"></div>
@@ -270,6 +271,11 @@ var DRIVE_EXPORT_FOLDER_ID = '1tF4sj9XWMJWDphx1nyodiDlqmnVYOMxr';
 var ALLOWED_EMAIL_DOMAIN = 'openenglish.com';
 var DECK_FILES = ['OE-LATAM.json', 'OE-BR.json', 'JR-LATAM.json', 'JR-BR.json', 'tvads-rotation.json', 'tvads-creative-taxonomy.json'];
 var DEV_MODE = new URLSearchParams(location.search).get('dev') === '1';
+/* window.__EMBEDDED_DATA__ solo existe en la version "Standalone" que genera
+   scripts/build_standalone_dashboard.py -- esta version en vivo (GitHub) no
+   la define nunca, asi que este bloque queda inerte aqui y el flujo de login
+   con Google sigue exactamente igual. */
+var EMBEDDED_DATA = window.__EMBEDDED_DATA__ || null;
 var driveAccessToken = null;
 
 function showLoginError(msg){ var e=document.getElementById('loginError'); e.textContent=msg; e.style.display='block'; }
@@ -291,6 +297,10 @@ async function fetchDevJsonFile(fileName){
   if(!res.ok) throw new Error('dev fetch failed: '+fileName);
   return res.json();
 }
+async function fetchEmbeddedJsonFile(fileName){
+  if(!EMBEDDED_DATA || !EMBEDDED_DATA[fileName]) throw new Error('Embedded data missing: '+fileName);
+  return EMBEDDED_DATA[fileName];
+}
 
 async function loadAllData(fetcher){
   var files = await Promise.all(DECK_FILES.map(fetcher));
@@ -300,6 +310,7 @@ async function loadAllData(fetcher){
 }
 
 function initGoogleLogin(){
+  if(EMBEDDED_DATA){ document.getElementById('googleLoginBtn').style.display='none'; document.getElementById('loginSub').textContent='Cargando datos incluidos en este archivo…'; boot(fetchEmbeddedJsonFile); return; }
   if(DEV_MODE){ document.getElementById('googleLoginBtn').style.display='none'; document.getElementById('loginSub').textContent='Dev mode (no login) — loading local data…'; boot(fetchDevJsonFile); return; }
   var tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GOOGLE_CLIENT_ID,
@@ -332,10 +343,22 @@ async function onLoginSuccess(){
     setLoginBusy(false);
   }
 }
-(function waitForGoogleThenInit(){
-  if(DEV_MODE || (window.google && google.accounts && google.accounts.oauth2)) initGoogleLogin();
+/* boot() (via initGoogleLogin) termina llamando a funciones de app.js
+   (startApp/renderAll/TAX_LOOKUP...), pero app.js es el SIGUIENTE <script> en
+   el documento -- todavia no se ha ejecutado en este punto. Con fetchers que
+   tardan (fetch real a Drive o a devdata/), la espera de red alcanzaba a
+   darle tiempo al parser de llegar a app.js antes de que boot() retomara tras
+   su primer await -- pero fetchEmbeddedJsonFile() resuelve casi instantaneo
+   (no hay red de por medio), así que esa carrera se perdía y explotaba con
+   "TAX_LOOKUP is not defined". Fix real (no solo para Standalone): esperar a
+   DOMContentLoaded, que solo se dispara cuando TODOS los scripts sincronos
+   del documento -- incluido app.js -- ya terminaron de ejecutarse. */
+function waitForGoogleThenInit(){
+  if(EMBEDDED_DATA || DEV_MODE || (window.google && google.accounts && google.accounts.oauth2)) initGoogleLogin();
   else setTimeout(waitForGoogleThenInit, 50);
-})();
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', waitForGoogleThenInit);
+else waitForGoogleThenInit();
 
 /* ================= boot: fetch data, build engine output, start app ================= */
 async function boot(fetcher){
@@ -357,6 +380,6 @@ async function boot(fetcher){
   }
 }
 </script>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>

@@ -128,6 +128,7 @@ var STR = {
   margen_sin_gasto_nota:{en:'$0 spend attributed here, so % Margin would show a meaningless 100%. Showing average daily New Cash Core generated instead.',es:'$0 de gasto atribuido aquí, así que %Margen mostraría un 100% sin sentido. Se muestra en su lugar el promedio diario de New Cash Core generado.',pt:'$0 de gasto atribuído aqui, então %Margem mostraria um 100% sem sentido. Mostrando em vez disso a média diária de New Cash Core gerado.'},
   dia:{en:'day',es:'día',pt:'dia'},
   pooled_chip:{en:'Pooling spend/leads/sales/NCC across',es:'Sumando gasto/leads/ventas/NCC entre',pt:'Somando gasto/leads/vendas/NCC entre'},
+  descargar_html:{en:'⬇ Download HTML',es:'⬇ Descargar HTML',pt:'⬇ Baixar HTML'},
   toast_auto_switch:{
     en:'Metric switched to "Avg. Leads/day": Organization and MarketingOrganization are opposite brands here, so spend is $0 and Leads/$1,000, CPL and Margin can’t be calculated.',
     es:'La métrica cambió a "Prom. Leads/día": Organization y MarketingOrganization son marcas opuestas aquí, así que el gasto es $0 y no se pueden calcular Leads/$1,000, CPL ni Margen.',
@@ -658,6 +659,10 @@ function renderLangBtns(){
   el.innerHTML = ['en','es','pt'].map(function(l){ return '<button class="iconbtn'+(LANG===l?' active':'')+'" data-lang="'+l+'">'+l.toUpperCase()+'</button>'; }).join('');
   Array.from(el.querySelectorAll('button')).forEach(function(b){ b.addEventListener('click', function(){ LANG=b.dataset.lang; localStorage.setItem('tvads_lang',LANG); renderAll(); }); });
 }
+function renderDownloadBtn(){
+  var el = document.getElementById('btn-download-standalone');
+  if(el) el.textContent = T('descargar_html');
+}
 document.getElementById('btn-theme').addEventListener('click', function(){
   var root=document.documentElement;
   var cur = root.getAttribute('data-theme');
@@ -822,6 +827,7 @@ function renderAll(){
   document.documentElement.lang = LANG;
   var creatives = getWorkingCreatives();
   renderLangBtns();
+  renderDownloadBtn();
   renderSidebar();
   renderViewTabs(creatives);
   renderContextTitle(creatives);
