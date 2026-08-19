@@ -152,7 +152,7 @@ var STR = {
   avg_ncc_dia:{en:'Avg. New Cash Core/day',es:'Prom. New Cash Core/día',pt:'Méd. New Cash Core/dia'},
   margen_sin_gasto_nota:{en:'$0 spend attributed here, so % MNCC would show a meaningless 100%. Showing average daily New Cash Core generated instead.',es:'$0 de gasto atribuido aquí, así que %MNCC mostraría un 100% sin sentido. Se muestra en su lugar el promedio diario de New Cash Core generado.',pt:'$0 de gasto atribuído aqui, então %MNCC mostraria um 100% sem sentido. Mostrando em vez disso a média diária de New Cash Core gerado.'},
   dia:{en:'day',es:'día',pt:'dia'},
-  pooled_chip:{en:'Pooling spend/leads/sales/NCC across',es:'Sumando gasto/leads/ventas/NCC entre',pt:'Somando gasto/leads/vendas/NCC entre'},
+  pooled_chip:{en:'Showing only what these creatives generated for',es:'Mostrando solo lo que estos creativos generaron para',pt:'Mostrando apenas o que estes criativos geraram para'},
   descargar_html:{en:'⬇ Download HTML',es:'⬇ Descargar HTML',pt:'⬇ Baixar HTML'},
   tour_next:{en:'Next',es:'Siguiente',pt:'Próximo'},
   tour_back:{en:'← Back',es:'← Atrás',pt:'← Voltar'},
@@ -248,35 +248,45 @@ function dayPassesSemana1(fecha, launchDates){
 }
 function dayPassesPais(topcountry){ if(topcountry==null) return true; return STATE.paisSel.indexOf(topcountry)!==-1; }
 /* La LISTA de creativos siempre es la de Organization (single-select) -- eso
-   nunca cambia, sin importar que este marcado en MarketingOrganization. Lo
-   que SI cambia con MarketingOrganization es como se suman las CUATRO
-   metricas crudas de ESOS MISMOS creativos de Organization: gasto, leads,
-   ventas y New Cash Core se suman TODAS por igual, dia por dia, entre las
-   marcas marcadas en MarketingOrganization (by_org[org] de cada una) -- sin
-   excepcion para el gasto. Por defecto (MarketingOrganization = solo la
-   marca de Organization) esto da exactamente el gasto/leads/ventas/NCC
-   propios de siempre. Si se agrega OTRA marca ademas de la de Organization,
-   el gasto no cambia en la practica porque el gasto de un creativo SOLO
-   existe en el by_org de quien realmente lo compro (todo otro by_org trae
-   gasto=$0 por construccion en engine.js) -- pero leads/ventas/NCC si pueden
-   crecer si ese creativo tambien le genero algo a la otra marca. Si en
-   cambio se EXCLUYE la marca propia de Organization de MarketingOrganization
-   (ej. Organization=Open English Junior, MarketingOrganization=Open English
-   unicamente), el gasto de estos creativos de Junior SI da $0 -- porque
-   Open English nunca puso el dinero en un creativo que compro Junior -- y
-   ahi Leads/$1k, CPL y %MNCC dejan de poder calcularse (ver
-   isZeroSpendCase). Esto es lo que le da efecto real y coherente a
-   MarketingOrganization en TODAS las metricas, sin alterar jamas la lista de
-   creativos mostrada. */
+   nunca cambia, sin importar que este marcado en MarketingOrganization.
+
+   CORREGIDO 2026-08-19 tras comparar contra Spotfire (el usuario detecto que
+   el dashboard NO cuadraba): la version anterior SUMABA by_org de TODAS las
+   marcas marcadas en MarketingOrganization sin excepcion -- eso esta MAL en
+   cuanto Organization (su propia marca) tambien queda marcada: para "60%
+   OFF 2026" (Brasil, Organization=Open English, MarketingOrganization=Ambas)
+   Spotfire da 2,221 leads (SOLO lo propio) pero el dashboard daba 2,356
+   (propio 2,221 + salpicadura hacia Junior 135, sumados de mas).
+
+   La regla correcta (verificada contra Spotfire Y contra el caso ya
+   confirmado antes de "Andres JR Facts Costoso"):
+   - Si la marca de Organization ESTA marcada en MarketingOrganization (sola
+     o junto con otras) -> se muestra SOLO lo propio (by_org[Organization]).
+     Marcar ademas otra marca en MarketingOrganization NO suma nada extra.
+   - Si la marca de Organization esta EXCLUIDA de MarketingOrganization (ej.
+     Organization=Open English Junior, MarketingOrganization=Open English
+     unicamente) -> se muestra SOLO la salpicadura hacia las marcas que SI
+     estan marcadas (by_org de esas marcas) -- nunca lo propio. Ahi el gasto
+     SI da $0 (Open English nunca puso el dinero en un creativo que compro
+     Junior) y Leads/$1k, CPL, %MNCC dejan de poder calcularse (ver
+     isZeroSpendCase).
+   Aplica igual a las 4 metricas crudas (gasto, leads, ventas, New Cash
+   Core) -- ninguna es un caso especial. */
 function pooledDayFields(d){
+  var orgIncluida = STATE.marketingOrg.indexOf(STATE.organization) !== -1;
+  var orgsRelevantes = orgIncluida ? [STATE.organization] : STATE.marketingOrg;
   var adcost=0, adcostReal=0, leads=0, core=0, newCash=0;
-  STATE.marketingOrg.forEach(function(org){
+  orgsRelevantes.forEach(function(org){
     var b = (d.by_org && d.by_org[org]) || {adcost:0,adcost_real:0,leads:0,core_enrollments:0,new_cash_core:0};
     adcost += b.adcost||0; adcostReal += b.adcost_real||0; leads += b.leads||0; core += b.core_enrollments||0; newCash += b.new_cash_core||0;
   });
   return Object.assign({}, d, { adcost: adcost, adcost_real: adcostReal, leads: leads, core_enrollments: core, new_cash_core: newCash });
 }
-function isPooledView(){ return !(STATE.marketingOrg.length===1 && STATE.marketingOrg[0]===STATE.organization); }
+/* true SOLO cuando la marca de Organization esta EXCLUIDA de
+   MarketingOrganization (la unica situacion donde los numeros dejan de ser
+   los propios de siempre -- ver pooledDayFields). Marcar otra marca ADEMAS
+   de la propia no activa esto: sigue siendo la vista de siempre. */
+function isPooledView(){ return STATE.marketingOrg.indexOf(STATE.organization) === -1; }
 function recomputeCreative(row){
   var days = (row.detalle_diario||[]).filter(function(d){ return dayPassesQuarter(d.fecha) && dayPassesMes(d.fecha) && dayPassesSemana1(d.fecha,row.launch_dates) && dayPassesPais(d.topcountry); });
   var effDays = days.map(pooledDayFields);
@@ -778,6 +788,7 @@ function contextTitleHTML(creatives){
   parts.push(viewLabel);
 
   var sub = [];
+  if(isPooledView()) sub.push(T('pooled_chip')+': '+STATE.marketingOrg.join(' + '));
   if(STATE.excludeSemBrand) sub.push(T('excluir_sem_brand'));
   if(STATE.quarter !== 'Todos') sub.push(T('trimestre')+': '+STATE.quarter);
   if(STATE.mesSel.length) sub.push(T('mes')+': '+STATE.mesSel.map(mesLabel).join(', '));
