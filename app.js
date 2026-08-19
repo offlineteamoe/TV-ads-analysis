@@ -130,6 +130,10 @@ var STR = {
   dia:{en:'day',es:'día',pt:'dia'},
   pooled_chip:{en:'Pooling spend/leads/sales/NCC across',es:'Sumando gasto/leads/ventas/NCC entre',pt:'Somando gasto/leads/vendas/NCC entre'},
   descargar_html:{en:'⬇ Download HTML',es:'⬇ Descargar HTML',pt:'⬇ Baixar HTML'},
+  tour_next:{en:'Next',es:'Siguiente',pt:'Próximo'},
+  tour_back:{en:'← Back',es:'← Atrás',pt:'← Voltar'},
+  tour_finish:{en:'Finish',es:'Finalizar',pt:'Concluir'},
+  tour_skip:{en:'Skip tour',es:'Saltar recorrido',pt:'Pular tour'},
   toast_auto_switch:{
     en:'Metric switched to "Avg. Leads/day": Organization and MarketingOrganization are opposite brands here, so spend is $0 and Leads/$1,000, CPL and Margin can’t be calculated.',
     es:'La métrica cambió a "Prom. Leads/día": Organization y MarketingOrganization son marcas opuestas aquí, así que el gasto es $0 y no se pueden calcular Leads/$1,000, CPL ni Margen.',
@@ -868,3 +872,115 @@ function startApp(yearsDataFull){
   LANG = localStorage.getItem('tvads_lang') || 'en';
   renderAll();
 }
+
+/* ============================ recorrido guiado ============================
+   Se dispara solo una vez (localStorage) apenas termina de cargar la data,
+   tanto en la version web (tras login) como en la version Standalone (sin
+   login) -- ver `maybeAutoStartTour()` llamado desde boot() en dashboard.html.
+   Tambien se puede repetir en cualquier momento desde el icono 🎓. */
+var TOUR_STEPS = [
+  { title:{en:'Welcome to TV Ads Performance',es:'Bienvenido a TV Ads Performance',pt:'Bem-vindo ao TV Ads Performance'},
+    body:{en:'A quick tour of every filter, tab and button before you dive in. Replay it anytime from the 🎓 icon.',
+      es:'Un recorrido rápido por cada filtro, pestaña y botón antes de empezar. Puedes repetirlo cuando quieras desde el ícono 🎓.',
+      pt:'Um passeio rápido por cada filtro, aba e botão antes de começar. Repita quando quiser pelo ícone 🎓.'} },
+  { group:'metric', selector:'#sel-metric', title:{en:'Success metric',es:'Métrica de éxito',pt:'Métrica de sucesso'},
+    body:{en:'Choose how success is measured: Leads per $1,000, Avg. Leads/day, CPL, Conversion or Margin. The whole dashboard (ranking, colors, tabs) recalculates around whichever you pick.',
+      es:'Elige con qué métrica medir el éxito: Leads x $1,000, Prom. Leads/día, CPL, Conversión o Margen. Todo el dashboard (ranking, colores, tabs) se recalcula según la que elijas.',
+      pt:'Escolha como medir o sucesso: Leads por US$1.000, Méd. Leads/dia, CPL, Conversão ou Margem. Todo o dashboard (ranking, cores, abas) se recalcula de acordo com a escolhida.'} },
+  { group:'window', selector:'[data-sbtoggle="window"]', title:{en:'Collapse any section',es:'Colapsa cualquier sección',pt:'Recolha qualquer seção'},
+    body:{en:'Click a section title (with the ▾ arrow) to collapse or expand it and keep the sidebar tidy — every section works this way.',
+      es:'Haz clic en el título de cualquier sección (con la flecha ▾) para colapsarla o expandirla y mantener el panel ordenado — todas las secciones funcionan así.',
+      pt:'Clique no título de qualquer seção (com a seta ▾) para recolhê-la ou expandi-la e manter o painel organizado — todas as seções funcionam assim.'} },
+  { group:'window', selector:'#sel-semana1', title:{en:'Window & Ad Type',es:'Ventana y tipo de anuncio',pt:'Janela e tipo de anúncio'},
+    body:{en:'Compare full history against just the first week of each launch, and filter by ad type (Promo or Generic).',
+      es:'Compara el histórico completo contra solo la primera semana de cada lanzamiento, y filtra por tipo de anuncio (Promo o Genérico).',
+      pt:'Compare o histórico completo com apenas a primeira semana de cada lançamento, e filtre por tipo de anúncio (Promo ou Genérico).'} },
+  { group:'date', selector:'#sel-year', title:{en:'Date',es:'Fecha',pt:'Data'},
+    body:{en:'Pick year, quarter and month (multi-select) to narrow down the exact dates being analyzed — e.g. "how did creatives perform in July 2026".',
+      es:'Elige año, trimestre y mes (selección múltiple) para acotar las fechas exactas que se analizan — por ejemplo, "cómo funcionaron los creativos en julio de 2026".',
+      pt:'Escolha ano, trimestre e mês (seleção múltipla) para restringir as datas exatas analisadas — por exemplo, "como os criativos performaram em julho de 2026".'} },
+  { group:'brand', selector:'#sel-organization', title:{en:'Brand',es:'Marca',pt:'Marca'},
+    body:{en:'Organization decides which creatives you see. MarketingOrganization decides which brands get pooled into those same creatives’ metrics (spend, leads, sales, New Cash Core).',
+      es:'Organization define qué creativos ves. MarketingOrganization decide qué marcas se suman en las métricas (gasto, leads, ventas, New Cash Core) de esos mismos creativos.',
+      pt:'Organization define quais criativos você vê. MarketingOrganization decide quais marcas são somadas nas métricas (gasto, leads, vendas, New Cash Core) desses mesmos criativos.'} },
+  { group:'place', selector:'#sel-region', title:{en:'Place',es:'Lugar',pt:'Local'},
+    body:{en:'Filter by region and country. In the country list you can click, Ctrl+click to add/remove, or click-and-drag to select a range.',
+      es:'Filtra por región y país. En la lista de países puedes hacer clic, Ctrl+clic para sumar/quitar, o arrastrar para seleccionar un rango.',
+      pt:'Filtre por região e país. Na lista de países você pode clicar, Ctrl+clique para adicionar/remover, ou clicar e arrastar para selecionar um intervalo.'} },
+  { selector:'#viewtabs', title:{en:'Tabs',es:'Pestañas',pt:'Abas'},
+    body:{en:'Each tab regroups the same creatives by a different dimension: Ranking, Campaign, Theme, Creative Mechanism, Pain Point, Hooks, CTA, Production, Tone — plus the Explorer, with everything in one table.',
+      es:'Cada pestaña reagrupa los mismos creativos por una dimensión distinta: Ranking, Campaña, Theme, Mecanismo Creativo, Pain Point, Hooks, CTA, Producción, Tono — más el Explorador, con todo en una sola tabla.',
+      pt:'Cada aba reagrupa os mesmos criativos por uma dimensão diferente: Ranking, Campanha, Theme, Mecanismo Criativo, Pain Point, Hooks, CTA, Produção, Tom — mais o Explorador, com tudo em uma única tabela.'} },
+  { selector:'#lang-btns', title:{en:'Language',es:'Idioma',pt:'Idioma'},
+    body:{en:'Switch the dashboard between English, Spanish and Portuguese anytime.',
+      es:'Cambia el idioma del dashboard entre inglés, español y portugués en cualquier momento.',
+      pt:'Mude o idioma do dashboard entre inglês, espanhol e português a qualquer momento.'} },
+  { selector:'#btn-theme', title:{en:'Light / dark mode',es:'Modo claro / oscuro',pt:'Modo claro / escuro'},
+    body:{en:'Toggle between light and dark mode.', es:'Alterna entre modo claro y oscuro.', pt:'Alterne entre modo claro e escuro.'} },
+  { selector:'#btn-methodology', title:{en:'Methodology',es:'Metodología',pt:'Metodologia'},
+    body:{en:'See the exact formula behind every metric.', es:'Aquí puedes ver la fórmula exacta detrás de cada métrica.', pt:'Veja a fórmula exata por trás de cada métrica.'} },
+  { selector:'#btn-download-standalone', emphasis:true, title:{en:'⬇ Download the local version',es:'⬇ Descarga la versión local',pt:'⬇ Baixe a versão local'},
+    body:{en:'Important: this downloads a fully self-contained copy of this dashboard, with all the data already included — no internet and no login needed to open it. Perfect for a presentation or to share without depending on a connection.',
+      es:'Importante: esto descarga una copia 100% autocontenida de este dashboard, con todos los datos ya incluidos — no necesita internet ni inicio de sesión para abrirla. Ideal para una presentación o para compartirla sin depender de la conexión.',
+      pt:'Importante: isso baixa uma cópia 100% autocontida deste dashboard, com todos os dados já incluídos — não precisa de internet nem de login para abri-la. Ideal para uma apresentação ou para compartilhar sem depender da conexão.'} },
+];
+var TOUR_IDX = 0;
+function tourStepTarget(step){ return step.selector ? document.querySelector(step.selector) : null; }
+function positionTourHighlight(el){
+  var hi = document.getElementById('tour-highlight');
+  if(!el){ hi.style.display='none'; return; }
+  var r = el.getBoundingClientRect();
+  hi.style.display='block';
+  hi.style.top=(r.top-6)+'px'; hi.style.left=(r.left-6)+'px'; hi.style.width=(r.width+12)+'px'; hi.style.height=(r.height+12)+'px';
+}
+function positionTourTooltip(el){
+  var tip = document.getElementById('tour-tooltip');
+  if(!el){ tip.style.top='50%'; tip.style.left='50%'; tip.style.transform='translate(-50%,-50%)'; return; }
+  tip.style.transform='none';
+  var r = el.getBoundingClientRect();
+  var tw = tip.offsetWidth, th = tip.offsetHeight;
+  var top;
+  if(window.innerHeight - r.bottom > th + 24) top = r.bottom + 14;
+  else if(r.top > th + 24) top = r.top - th - 14;
+  else top = Math.max(14, (window.innerHeight - th) / 2);
+  var left = Math.min(Math.max(14, r.left), window.innerWidth - tw - 14);
+  tip.style.top = top+'px'; tip.style.left = left+'px';
+}
+function renderTourStep(){
+  var step = TOUR_STEPS[TOUR_IDX];
+  if(step.group && SB_COLLAPSED[step.group]){ SB_COLLAPSED[step.group]=false; renderSidebar(); }
+  var el = tourStepTarget(step);
+  if(el && el.scrollIntoView) el.scrollIntoView({block:'center'});
+  document.getElementById('tour-progress').textContent = (TOUR_IDX+1)+' / '+TOUR_STEPS.length;
+  document.getElementById('tour-title').textContent = step.title[LANG] || step.title.en;
+  document.getElementById('tour-body').textContent = step.body[LANG] || step.body.en;
+  document.getElementById('tour-skip').textContent = T('tour_skip');
+  document.getElementById('tour-prev').textContent = T('tour_back');
+  document.getElementById('tour-prev').style.visibility = TOUR_IDX===0 ? 'hidden' : 'visible';
+  document.getElementById('tour-next').textContent = (TOUR_IDX===TOUR_STEPS.length-1) ? T('tour_finish') : T('tour_next');
+  document.getElementById('tour-highlight').classList.toggle('tour-emphasis', !!step.emphasis);
+  positionTourHighlight(el);
+  positionTourTooltip(el);
+}
+function startTour(){
+  TOUR_IDX = 0;
+  document.getElementById('tour-blocker').style.display='block';
+  document.getElementById('tour-tooltip').style.display='block';
+  renderTourStep();
+}
+function endTour(){
+  document.getElementById('tour-blocker').style.display='none';
+  document.getElementById('tour-tooltip').style.display='none';
+  document.getElementById('tour-highlight').style.display='none';
+  localStorage.setItem('tvads_tour_seen','1');
+}
+function maybeAutoStartTour(){
+  if(!localStorage.getItem('tvads_tour_seen')) startTour();
+}
+document.getElementById('tour-next').addEventListener('click', function(){
+  if(TOUR_IDX >= TOUR_STEPS.length-1) endTour(); else { TOUR_IDX++; renderTourStep(); }
+});
+document.getElementById('tour-prev').addEventListener('click', function(){ if(TOUR_IDX>0){ TOUR_IDX--; renderTourStep(); } });
+document.getElementById('tour-skip').addEventListener('click', endTour);
+document.getElementById('btn-tour').addEventListener('click', startTour);
+window.addEventListener('resize', function(){ if(document.getElementById('tour-tooltip').style.display==='block') renderTourStep(); });

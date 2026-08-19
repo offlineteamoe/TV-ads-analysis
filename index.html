@@ -185,6 +185,22 @@ td.num, th.num{text-align:right;}
 .metrics-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin:14px 0;}
 .metric-card{border:1px solid var(--border); border-radius:12px; padding:13px 15px; background:var(--surface-2);}
 .metric-card.active{border-color:var(--accent); border-width:2px; background:var(--surface);}
+
+/* ---------- tour guiado ---------- */
+#tour-blocker{position:fixed; inset:0; z-index:399; background:transparent;}
+#tour-highlight{position:fixed; border-radius:10px; border:2px solid var(--accent); background:transparent; box-shadow:0 0 0 9999px rgba(10,12,20,.66); pointer-events:none; transition:top .25s ease, left .25s ease, width .25s ease, height .25s ease; z-index:400;}
+#tour-highlight.tour-emphasis{border-color:var(--warn-border); box-shadow:0 0 0 9999px rgba(10,12,20,.7), 0 0 0 5px var(--warn);}
+#tour-tooltip{position:fixed; z-index:401; width:300px; max-width:calc(100vw - 28px); background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); padding:16px 18px; transition:top .2s ease, left .2s ease;}
+.tour-progress{font-size:10.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); margin-bottom:6px;}
+.tour-title{font-size:14.5px; font-weight:800; margin-bottom:6px;}
+.tour-body{font-size:12.5px; color:var(--ink-soft); line-height:1.55; margin-bottom:14px;}
+.tour-actions{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+.tour-link{background:none; border:none; color:var(--ink-faint); font-size:11.5px; font-weight:700; cursor:pointer; padding:4px;}
+.tour-link:hover{color:var(--ink);}
+.tour-nav{display:flex; gap:6px;}
+.tour-btn{border-radius:8px; padding:7px 14px; font-size:12px; font-weight:700; cursor:pointer; border:1px solid var(--border);}
+.tour-btn-ghost{background:var(--surface-2); color:var(--ink-soft);}
+.tour-btn-primary{background:var(--accent); color:#fff; border-color:var(--accent);}
 .metric-card.negative{border-color:var(--bad); background:var(--bad-soft);}
 .metric-card-head{display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; color:var(--ink-soft); margin-bottom:7px;}
 .metric-card-val{font-weight:800; font-size:25px;}
@@ -235,6 +251,7 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
       <div style="flex:1"></div>
       <div class="iconbtns">
         <a class="iconbtn" id="btn-download-standalone" href="standalone.html" download="Dashboard_TV_Ads_v3_Standalone.html"></a>
+        <button class="iconbtn" id="btn-tour">🎓</button>
         <button class="iconbtn" id="btn-methodology">?</button>
         <button class="iconbtn" id="btn-theme">◐</button>
         <div class="iconbtns" id="lang-btns"></div>
@@ -258,6 +275,21 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
     <div class="modal-eyebrow" id="modal-eyebrow"></div>
     <div class="modal-title" id="modal-title"></div>
     <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<div id="tour-blocker" style="display:none;"></div>
+<div id="tour-highlight" style="display:none;"></div>
+<div id="tour-tooltip" style="display:none;">
+  <div class="tour-progress" id="tour-progress"></div>
+  <div class="tour-title" id="tour-title"></div>
+  <div class="tour-body" id="tour-body"></div>
+  <div class="tour-actions">
+    <button class="tour-link" id="tour-skip"></button>
+    <div class="tour-nav">
+      <button class="tour-btn tour-btn-ghost" id="tour-prev"></button>
+      <button class="tour-btn tour-btn-primary" id="tour-next"></button>
+    </div>
   </div>
 </div>
 
@@ -373,6 +405,7 @@ async function boot(fetcher){
     startApp(YEARS_DATA_FULL);
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('appShell').classList.add('ready');
+    setTimeout(maybeAutoStartTour, 300);
   }catch(e){
     showLoginError('Error loading data: '+e.message);
     setLoginBusy(false);
@@ -380,6 +413,6 @@ async function boot(fetcher){
   }
 }
 </script>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>
