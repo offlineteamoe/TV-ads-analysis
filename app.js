@@ -101,6 +101,7 @@ var STR = {
   fecha:{en:'Date',es:'Fecha',pt:'Data'},
   anio:{en:'Year',es:'Año',pt:'Ano'},
   trimestre:{en:'Quarter',es:'Trimestre',pt:'Trimestre'},
+  mes:{en:'Month',es:'Mes',pt:'Mês'},
   marca:{en:'Brand',es:'Marca',pt:'Marca'},
   organizacion:{en:'Organization',es:'Organization',pt:'Organization'},
   mktorg:{en:'MarketingOrganization',es:'MarketingOrganization',pt:'MarketingOrganization'},
@@ -168,7 +169,7 @@ function DEF(dim, code){ var d=TAX_LOOKUP[dim]; var e=d&&d[code]; return e && e[
 /* ============================ state ============================ */
 var STATE = {
   year:'2026', metric:'leads_per_1k',
-  semana1:false, adType:'Todos', quarter:'Todos',
+  semana1:false, adType:'Todos', quarter:'Todos', mesSel:[],
   organization:'Open English', marketingOrg:['Open English'],
   region:'Latam', paisSel:[],
   view:'ranking',
@@ -176,6 +177,13 @@ var STATE = {
 var MARKETING_ORGS = ['Open English','Open English Junior'];
 var ORGANIZATIONS = ['Open English','Open English Junior'];
 var QUARTERS = ['Todos','Q1','Q2','Q3','Q4'];
+var MESES = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+var MES_LABELS = {
+  en:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+  es:['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'],
+  pt:['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'],
+};
+function mesLabel(code){ return MES_LABELS[LANG][MESES.indexOf(code)]; }
 var AD_TYPES = ['Todos','PROMO','GENERIC'];
 var COUNTRIES = [];
 var YEAR_OPTIONS = [];
@@ -193,6 +201,7 @@ function currentYearData(){ return YEARS_DATA[STATE.year] || {slices:{}}; }
 /* ============================ filtros: recalculo 100% client-side ============================ */
 function quarterOf(fecha){ return 'Q'+(Math.floor((+fecha.slice(5,7)-1)/3)+1); }
 function dayPassesQuarter(fecha){ return STATE.quarter==='Todos' || quarterOf(fecha)===STATE.quarter; }
+function dayPassesMes(fecha){ return !STATE.mesSel.length || STATE.mesSel.indexOf(fecha.slice(5,7))!==-1; }
 /* launchDates: uno o mas arranques reales del creativo ese ano (ver
    computeLaunchDates en engine.js -- un hueco de mas de 7 dias sin
    actividad separa un relanzamiento del anterior; que cambie el
@@ -239,7 +248,7 @@ function pooledDayFields(d){
 }
 function isPooledView(){ return !(STATE.marketingOrg.length===1 && STATE.marketingOrg[0]===STATE.organization); }
 function recomputeCreative(row){
-  var days = (row.detalle_diario||[]).filter(function(d){ return dayPassesQuarter(d.fecha) && dayPassesSemana1(d.fecha,row.launch_dates) && dayPassesPais(d.topcountry); });
+  var days = (row.detalle_diario||[]).filter(function(d){ return dayPassesQuarter(d.fecha) && dayPassesMes(d.fecha) && dayPassesSemana1(d.fecha,row.launch_dates) && dayPassesPais(d.topcountry); });
   var effDays = days.map(pooledDayFields);
   var sums = { adcost:sumField(effDays,'adcost'), leads:sumField(effDays,'leads'), core_enrollments:sumField(effDays,'core_enrollments'), new_cash_core:sumField(effDays,'new_cash_core') };
   var out = Object.assign({}, row, sums, metricsFromSums(sums));
@@ -569,7 +578,9 @@ function renderSidebar(){
   var g3 = '<div class="sb-row-label">'+T('anio')+'</div><div class="sb-seg" id="sel-year">'+
     YEAR_OPTIONS.map(function(y){ return '<button data-year="'+y+'" class="'+(STATE.year===y?'active':'')+'">'+y+'</button>'; }).join('')+'</div>'+
     '<div class="sb-row-label" style="margin-top:8px;">'+T('trimestre')+'</div><div class="sb-seg" id="sel-quarter">'+
-    QUARTERS.map(function(q){ return '<button data-quarter="'+q+'" class="'+(STATE.quarter===q?'active':'')+'">'+(q==='Todos'?T('todos'):q)+'</button>'; }).join('')+'</div>';
+    QUARTERS.map(function(q){ return '<button data-quarter="'+q+'" class="'+(STATE.quarter===q?'active':'')+'">'+(q==='Todos'?T('todos'):q)+'</button>'; }).join('')+'</div>'+
+    '<div class="sb-row-label" style="margin-top:8px;">'+T('mes')+'</div><div class="sb-seg" id="sel-mes">'+
+    MESES.map(function(m){ return '<button data-mes="'+m+'" class="'+(STATE.mesSel.indexOf(m)!==-1?'active':'')+'">'+mesLabel(m)+'</button>'; }).join('')+'</div>';
 
   var g4 = '<div class="sb-row-label">'+T('organizacion')+'</div><div class="sb-seg" id="sel-organization">'+
     ORGANIZATIONS.map(function(o){ return '<button data-organization="'+o+'" class="'+(STATE.organization===o?'active':'')+'">'+o+'</button>'; }).join('')+'</div>'+
@@ -599,6 +610,9 @@ function renderSidebar(){
   Array.from(el.querySelectorAll('#sel-adtype button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.adType=b.dataset.adtype; renderAll(); }); });
   Array.from(el.querySelectorAll('#sel-year button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.year=b.dataset.year; renderAll(); }); });
   Array.from(el.querySelectorAll('#sel-quarter button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.quarter=b.dataset.quarter; renderAll(); }); });
+  Array.from(el.querySelectorAll('#sel-mes button')).forEach(function(b){
+    b.addEventListener('click', function(){ var m=b.dataset.mes, idx=STATE.mesSel.indexOf(m); if(idx===-1) STATE.mesSel.push(m); else STATE.mesSel.splice(idx,1); renderAll(); });
+  });
   Array.from(el.querySelectorAll('#sel-organization button')).forEach(function(b){ b.addEventListener('click', function(){ STATE.organization=b.dataset.organization; renderAll(); }); });
   Array.from(el.querySelectorAll('#sel-mktorg button')).forEach(function(b){
     b.addEventListener('click', function(){ var o=b.dataset.org, idx=STATE.marketingOrg.indexOf(o); if(idx===-1) STATE.marketingOrg.push(o); else if(STATE.marketingOrg.length>1) STATE.marketingOrg.splice(idx,1); renderAll(); });
@@ -697,6 +711,7 @@ function contextTitleHTML(creatives){
 
   var sub = [];
   if(STATE.quarter !== 'Todos') sub.push(T('trimestre')+': '+STATE.quarter);
+  if(STATE.mesSel.length) sub.push(T('mes')+': '+STATE.mesSel.map(mesLabel).join(', '));
   if(STATE.semana1) sub.push(T('primera_semana'));
   if(STATE.adType !== 'Todos') sub.push(T('ad_type')+': '+STATE.adType);
   sub.push(creatives.length+' '+T('creativos_activos_en')+' '+STATE.year);
