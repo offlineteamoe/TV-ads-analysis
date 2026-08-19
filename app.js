@@ -152,7 +152,9 @@ var STR = {
   avg_ncc_dia:{en:'Avg. New Cash Core/day',es:'Prom. New Cash Core/día',pt:'Méd. New Cash Core/dia'},
   margen_sin_gasto_nota:{en:'$0 spend attributed here, so % MNCC would show a meaningless 100%. Showing average daily New Cash Core generated instead.',es:'$0 de gasto atribuido aquí, así que %MNCC mostraría un 100% sin sentido. Se muestra en su lugar el promedio diario de New Cash Core generado.',pt:'$0 de gasto atribuído aqui, então %MNCC mostraria um 100% sem sentido. Mostrando em vez disso a média diária de New Cash Core gerado.'},
   dia:{en:'day',es:'día',pt:'dia'},
-  pooled_chip:{en:'Showing only what these creatives generated for',es:'Mostrando solo lo que estos creativos generaron para',pt:'Mostrando apenas o que estes criativos geraram para'},
+  cross_sell:{en:'Cross-brand',es:'Cruce de marca',pt:'Cruzamento de marca'},
+  cross_sell_hacia:{en:'Cross-brand → ',es:'Cruce de marca → ',pt:'Cruzamento de marca → '},
+  cross_sell_nota:{en:'This ad was bought by another brand’s budget; showing only what it generated (leads, sales, New Cash Core) for the Organization you selected ($0 spend attributed here).',es:'Este anuncio lo compró el presupuesto de otra marca; se muestra solo lo que generó (leads, ventas, New Cash Core) para la Organization que elegiste (gasto $0 atribuido aquí).',pt:'Este anúncio foi comprado pelo orçamento de outra marca; mostrando apenas o que gerou (leads, vendas, New Cash Core) para a Organization que você escolheu (gasto $0 atribuído aqui).'},
   descargar_html:{en:'⬇ Download HTML',es:'⬇ Descargar HTML',pt:'⬇ Baixar HTML'},
   tour_next:{en:'Next',es:'Siguiente',pt:'Próximo'},
   tour_back:{en:'← Back',es:'← Atrás',pt:'← Voltar'},
@@ -247,49 +249,32 @@ function dayPassesSemana1(fecha, launchDates){
   });
 }
 function dayPassesPais(topcountry){ if(topcountry==null) return true; return STATE.paisSel.indexOf(topcountry)!==-1; }
-/* La LISTA de creativos siempre es la de Organization (single-select) -- eso
-   nunca cambia, sin importar que este marcado en MarketingOrganization.
-
-   CORREGIDO 2026-08-19 tras comparar contra Spotfire (el usuario detecto que
-   el dashboard NO cuadraba): la version anterior SUMABA by_org de TODAS las
-   marcas marcadas en MarketingOrganization sin excepcion -- eso esta MAL en
-   cuanto Organization (su propia marca) tambien queda marcada: para "60%
-   OFF 2026" (Brasil, Organization=Open English, MarketingOrganization=Ambas)
-   Spotfire da 2,221 leads (SOLO lo propio) pero el dashboard daba 2,356
-   (propio 2,221 + salpicadura hacia Junior 135, sumados de mas).
-
-   La regla correcta (verificada contra Spotfire Y contra el caso ya
-   confirmado antes de "Andres JR Facts Costoso"):
-   - Si la marca de Organization ESTA marcada en MarketingOrganization (sola
-     o junto con otras) -> se muestra SOLO lo propio (by_org[Organization]).
-     Marcar ademas otra marca en MarketingOrganization NO suma nada extra.
-   - Si la marca de Organization esta EXCLUIDA de MarketingOrganization (ej.
-     Organization=Open English Junior, MarketingOrganization=Open English
-     unicamente) -> se muestra SOLO la salpicadura hacia las marcas que SI
-     estan marcadas (by_org de esas marcas) -- nunca lo propio. Ahi el gasto
-     SI da $0 (Open English nunca puso el dinero en un creativo que compro
-     Junior) y Leads/$1k, CPL, %MNCC dejan de poder calcularse (ver
-     isZeroSpendCase).
-   Aplica igual a las 4 metricas crudas (gasto, leads, ventas, New Cash
-   Core) -- ninguna es un caso especial. */
-function pooledDayFields(d){
-  var orgIncluida = STATE.marketingOrg.indexOf(STATE.organization) !== -1;
-  var orgsRelevantes = orgIncluida ? [STATE.organization] : STATE.marketingOrg;
-  var adcost=0, adcostReal=0, leads=0, core=0, newCash=0;
-  orgsRelevantes.forEach(function(org){
-    var b = (d.by_org && d.by_org[org]) || {adcost:0,adcost_real:0,leads:0,core_enrollments:0,new_cash_core:0};
-    adcost += b.adcost||0; adcostReal += b.adcost_real||0; leads += b.leads||0; core += b.core_enrollments||0; newCash += b.new_cash_core||0;
-  });
-  return Object.assign({}, d, { adcost: adcost, adcost_real: adcostReal, leads: leads, core_enrollments: core, new_cash_core: newCash });
+/* CORREGIDO 2026-08-19 (segunda vuelta) -- confirmado explicitamente con el
+   usuario cual columna es cual, porque el codigo las tenia invertidas desde
+   la Fase 7:
+     - Organization = quien es el CLIENTE REAL que convirtio (OE adulto o
+       Junior) -- el campo `by_org`/customerOrg de engine.js.
+     - MarketingOrganization = quien COMPRO/PAGO el anuncio -- lo que engine.js
+       llama "marca" (el mismo eje que ya usa `yearData.slices`, keyed
+       `marca|region|Total`, y el mismo eje de la rotacion).
+   La LISTA de creativos se arma buscando en TODAS las slices (marcas)
+   marcadas en MarketingOrganization -- un creativo solo puede vivir en UNA
+   marca (la que lo compro, fija por su calendario de rotacion), asi que
+   marcar mas de una marca en MarketingOrganization simplemente AGREGA a la
+   lista los creativos de esa otra marca que tambien le generaron algo a la
+   Organization elegida (cruce de marca) -- nunca inventa numeros nuevos
+   para un mismo creativo. Para cada creativo, las 4 metricas crudas salen
+   de UN SOLO lugar: by_org[Organization] dentro de SU PROPIA marca (si
+   row.marca===Organization eso es simplemente lo propio/home; si no, es la
+   salpicadura hacia Organization) -- nunca se suma mas de un by_org por
+   creativo, porque cada creativo solo vive en una marca. */
+function orgDayFields(d){
+  var b = (d.by_org && d.by_org[STATE.organization]) || {adcost:0,adcost_real:0,leads:0,core_enrollments:0,new_cash_core:0};
+  return Object.assign({}, d, { adcost: b.adcost||0, adcost_real: b.adcost_real||0, leads: b.leads||0, core_enrollments: b.core_enrollments||0, new_cash_core: b.new_cash_core||0 });
 }
-/* true SOLO cuando la marca de Organization esta EXCLUIDA de
-   MarketingOrganization (la unica situacion donde los numeros dejan de ser
-   los propios de siempre -- ver pooledDayFields). Marcar otra marca ADEMAS
-   de la propia no activa esto: sigue siendo la vista de siempre. */
-function isPooledView(){ return STATE.marketingOrg.indexOf(STATE.organization) === -1; }
 function recomputeCreative(row){
   var days = (row.detalle_diario||[]).filter(function(d){ return dayPassesQuarter(d.fecha) && dayPassesMes(d.fecha) && dayPassesSemana1(d.fecha,row.launch_dates) && dayPassesPais(d.topcountry); });
-  var effDays = days.map(pooledDayFields);
+  var effDays = days.map(orgDayFields);
   var sums = { adcost:sumField(effDays,'adcost'), adcost_real:sumField(effDays,'adcost_real'), leads:sumField(effDays,'leads'), core_enrollments:sumField(effDays,'core_enrollments'), new_cash_core:sumField(effDays,'new_cash_core') };
   var out = Object.assign({}, row, sums, metricsFromSums(sums));
   var activeDates = new Set();
@@ -297,12 +282,16 @@ function recomputeCreative(row){
   out.num_dias_activos = activeDates.size;
   out.avg_leads_dia = out.num_dias_activos ? out.leads/out.num_dias_activos : null;
   out.detalle_diario = days;
+  out.is_cross_sell = row.marca !== STATE.organization;
   return out;
 }
 function getWorkingCreatives(){
   var yearData = currentYearData();
-  var slice = yearData.slices[STATE.organization+'|'+STATE.region+'|Total'];
-  var all = (slice && slice.ranking_creativos) || [];
+  var all = [], seen = new Set();
+  STATE.marketingOrg.forEach(function(marca){
+    var slice = yearData.slices[marca+'|'+STATE.region+'|Total'];
+    if(slice) (slice.ranking_creativos||[]).forEach(function(r){ if(!seen.has(r.nombre)){ all.push(r); seen.add(r.nombre); } });
+  });
   if(STATE.adType !== 'Todos') all = all.filter(function(r){ return r.ad_type === STATE.adType; });
   return all.map(recomputeCreative).filter(function(r){ return r.num_dias_activos>0; });
 }
@@ -542,8 +531,8 @@ function openDailyDetailModal(row){
   document.getElementById('modal-eyebrow').textContent = (row.ad_type || '') + (row.marca ? ' · '+row.marca : '');
   document.getElementById('modal-title').innerHTML = esc(row.nombre) + (row.is_grouped ? '' : videoLinkHTML(row.link_video, true));
   var html = '';
-  if(isPooledView()){
-    html += '<div class="foot-note" style="margin-bottom:10px;"><span class="chip cross-sell">'+esc(T('pooled_chip'))+': '+esc(STATE.marketingOrg.join(' + '))+'</span></div>';
+  if(row.is_cross_sell){
+    html += '<div class="foot-note" style="margin-bottom:10px;"><span class="chip cross-sell" title="'+escAttr(T('cross_sell_nota'))+'">'+esc(T('cross_sell_hacia'))+esc(STATE.organization)+'</span> '+esc(T('cross_sell_nota'))+'</div>';
   }
   html += metricsGridHTML(row);
   if(row.is_grouped && row.versions && row.versions.length>1){
@@ -554,7 +543,7 @@ function openDailyDetailModal(row){
   }
   html += taxonomyFullHTML(row);
   if(row.fecha_lanzamiento) html += '<p class="foot-note">'+T('lanzamiento')+': <b>'+esc(row.fecha_lanzamiento)+'</b></p>';
-  var effectiveDays = row.detalle_diario.map(pooledDayFields);
+  var effectiveDays = row.detalle_diario.map(orgDayFields);
   var ranges = groupContinuousDays(effectiveDays);
   if(!ranges.length){ html += '<p class="foot-note" style="margin-top:14px;">'+T('sin_datos_filtro')+'</p>'; document.getElementById('modal-body').innerHTML=html; document.getElementById('modal-backdrop').classList.add('open'); return; }
   var videoLinkByName = {};
@@ -788,7 +777,7 @@ function contextTitleHTML(creatives){
   parts.push(viewLabel);
 
   var sub = [];
-  if(isPooledView()) sub.push(T('pooled_chip')+': '+STATE.marketingOrg.join(' + '));
+  if(STATE.marketingOrg.length>1 || STATE.marketingOrg[0]!==STATE.organization) sub.push(T('mktorg')+': '+STATE.marketingOrg.join(' + '));
   if(STATE.excludeSemBrand) sub.push(T('excluir_sem_brand'));
   if(STATE.quarter !== 'Todos') sub.push(T('trimestre')+': '+STATE.quarter);
   if(STATE.mesSel.length) sub.push(T('mes')+': '+STATE.mesSel.map(mesLabel).join(', '));
@@ -818,12 +807,13 @@ function rankListHTML(rows, opts){
     var subLabel = opts.isCreative
       ? (r.num_dias_activos+' '+T('dias_activos')+(r.marca?(' · '+r.marca):'')+(r.is_grouped?(' · '+r.versions.length+' '+T('versiones')):''))
       : ((r.num_creativos||0)+' '+T('creativos'));
+    var crossSellChip = (opts.isCreative && r.is_cross_sell) ? ' <span class="chip cross-sell" title="'+escAttr(T('cross_sell_nota'))+'">'+esc(T('cross_sell_hacia'))+esc(STATE.organization)+'</span>' : '';
     return '<div class="rank-item"><div class="rank-row">'+
       '<div class="rank-pos">'+(i+1)+'</div>'+
       '<div class="rank-name-wrap">'+nameHtml+'</div>'+
       '<div class="rank-val"><span class="rank-val-label">'+METRIC_DEFS[activeMetric].icon+' '+metricShort(activeMetric)+'</span><span class="rank-val-num">'+metricDisplayHTML(activeMetric,r)+'</span></div>'+
       '</div><div class="rank-track"><div class="rank-fill" style="width:'+widthPct+'%; background:'+color+';"></div></div>'+
-      '<div class="rank-sub">'+esc(subLabel)+'</div>'+
+      '<div class="rank-sub">'+esc(subLabel)+crossSellChip+'</div>'+
     '</div>';
   }).join('') + '</div>';
 }
