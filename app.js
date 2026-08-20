@@ -38,8 +38,9 @@ function metricFmt(key,v){ return METRIC_DEFS[key].fmt(v); }
    interruptor "Excluir SEM-Brand Spend" -- item.adcost es el gasto crudo del
    channel_grouping "Brand TV Channels" (incluye SEM-Brand, que no se puede
    controlar por pujas de competencia); item.adcost_real es ese mismo gasto
-   neto de SEM-Brand (offlineSpendReal, calculado en engine.js). Por defecto
-   (interruptor apagado) se usa el crudo, igual que siempre. */
+   neto de SEM-Brand (spend total de brandedTypeRows menos su type
+   "SEM-Brand", calculado en engine.js). Por defecto (interruptor apagado)
+   se usa el crudo, igual que siempre. */
 function activeAdcost(sumsOrItem){ return (STATE.excludeSemBrand ? sumsOrItem.adcost_real : sumsOrItem.adcost) || 0; }
 function metricsFromSums(sums){
   var adcost=activeAdcost(sums), leads=sums.leads||0, core=sums.core_enrollments||0, newCash=sums.new_cash_core||0;

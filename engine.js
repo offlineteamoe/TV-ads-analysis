@@ -44,11 +44,23 @@ function sumRawEngine(dicts) {
    pais), se guarda ademas un desglose por MarketingOrganization
    (`byMktOrg`) SOLO para leads/ventas/New Cash Core -- el spend real
    siempre es el de la fila cuyo marketing_organization coincide con el
-   Organization del deck (offlineSpendReal igual), la fila "ajena" (ej.
-   dentro de OE-BR.json una fila con marketing_organization=Open English
-   Junior) trae spend=0 pero puede traer leads reales (alguien vio un
-   anuncio/campana de Junior pero termino siendo cliente de Open English) --
-   eso es lo unico que MarketingOrganization (filtro) debe sumar o no. */
+   Organization del deck, la fila "ajena" (ej. dentro de OE-BR.json una fila
+   con marketing_organization=Open English Junior) trae spend=0 pero puede
+   traer leads reales (alguien vio un anuncio/campana de Junior pero termino
+   siendo cliente de Open English) -- eso es lo unico que MarketingOrganization
+   (filtro) debe sumar o no.
+   CORREGIDO 2026-08-19 (cuarta vuelta) -- mediaSpendReal (para "Excluir
+   SEM-Brand Spend" y el gate de dia-activo) YA NO usa el campo
+   offlineSpendReal del KPI: viene pre-agregado desde el sistema de origen
+   bajo un "pais" contenedor ("TV LATAM Excl Arg Mex") para el resto de
+   LATAM que NO calza pais por pais con el resto de la data, e infla el
+   gasto de forma inconsistente. Ahora se calcula directamente, verificable,
+   desde `brandedTypeRows` (desglose real de "Brand TV Channels" por type,
+   incluyendo "SEM-Brand", pais por pais): total de todos los types MENOS el
+   type "SEM-Brand". brandedTypeRows no trae marketing_organization (viene
+   ya filtrado por Organization/deck), pero como el spend de la fila "ajena"
+   siempre es $0, sumar sin ese filtro da el mismo resultado que sumar solo
+   el propio. */
 function buildLiveTotals(deckJsons) {
   var totals = new Map(); // key: region|Organization|fecha|pais -> { spend, mediaSpendReal, byMktOrg: { mktOrg: {leads,core_enrollments,new_cash_core} } }
   var allCountries = new Set();
@@ -65,19 +77,24 @@ function buildLiveTotals(deckJsons) {
       var k = info.region + '|' + info.customerOrg + '|' + r.date + '|' + (country || '');
       var t = totals.get(k);
       if (!t) { t = { spend: 0, mediaSpendReal: 0, byMktOrg: {} }; totals.set(k, t); }
-      /* spend/offlineSpendReal SOLO son reales en la fila cuyo
-         marketing_organization coincide con el Organization de este deck
-         (la fila "ajena" siempre trae spend=0) -- por eso el gasto de un
-         creativo nunca cambia segun MarketingOrganization (filtro). */
-      if (mktOrg === info.customerOrg) {
-        t.spend += r.spend || 0;
-        t.mediaSpendReal += r.offlineSpendReal || 0;
-      }
+      /* spend SOLO es real en la fila cuyo marketing_organization coincide
+         con el Organization de este deck (la fila "ajena" siempre trae
+         spend=0) -- por eso el gasto de un creativo nunca cambia segun
+         MarketingOrganization (filtro). */
+      if (mktOrg === info.customerOrg) t.spend += r.spend || 0;
       var b = t.byMktOrg[mktOrg];
       if (!b) { b = { leads: 0, core_enrollments: 0, new_cash_core: 0 }; t.byMktOrg[mktOrg] = b; }
       b.leads += r.leadsEligible || 0;
       b.core_enrollments += r.coreEnrollmentsTotal || 0;
       b.new_cash_core += r.newCashCore || 0;
+    });
+    (d.brandedTypeRows || []).forEach(function (r) {
+      if (r.type === 'SEM-Brand') return;
+      var country = info.region === 'Brazil' ? null : r.country;
+      var k = info.region + '|' + info.customerOrg + '|' + r.date + '|' + (country || '');
+      var t = totals.get(k);
+      if (!t) { t = { spend: 0, mediaSpendReal: 0, byMktOrg: {} }; totals.set(k, t); }
+      t.mediaSpendReal += r.spend || 0;
     });
   });
   return { totals: totals, allCountries: allCountries };
