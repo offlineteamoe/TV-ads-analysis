@@ -65,6 +65,50 @@ a{color:inherit;}
 .login-loading{margin-top:14px; font-size:12.5px; opacity:.85;}
 #appShell{display:none;}
 #appShell.ready{display:flex;}
+#appPicker{display:none; position:fixed; inset:0; z-index:480; background:var(--bg-page); align-items:center; justify-content:center; padding:24px;}
+#appPicker.ready{display:flex;}
+.picker-wrap{max-width:840px; width:100%;}
+.picker-title{font-size:22px; font-weight:800; margin:0 0 6px; text-align:center; color:var(--ink);}
+.picker-sub{text-align:center; color:var(--ink-faint); margin:0 0 28px; font-size:13.5px;}
+.picker-cards{display:grid; grid-template-columns:1fr 1fr; gap:18px;}
+@media (max-width:680px){ .picker-cards{grid-template-columns:1fr;} }
+.picker-card{border:1px solid var(--border-soft); border-radius:16px; padding:26px 22px; background:var(--card-bg); cursor:pointer; transition:transform .15s, box-shadow .15s; text-align:left;}
+.picker-card:hover{transform:translateY(-2px); box-shadow:0 10px 24px rgba(0,0,0,.08);}
+.picker-card-icon{font-size:28px; margin-bottom:10px;}
+.picker-card-title{font-size:16.5px; font-weight:800; color:var(--ink); margin:0 0 6px;}
+.picker-card-desc{font-size:12.5px; color:var(--ink-faint); line-height:1.5; margin:0 0 14px;}
+.picker-card-cta{font-size:12px; font-weight:700; color:var(--oe);}
+.picker-card.tbd .picker-card-cta{color:#0E7C66;}
+#tbdShell{display:none;}
+#tbdShell.ready{display:flex;}
+#tbdShell{height:100vh; overflow:hidden; align-items:stretch;}
+#tbd-sidebar{width:250px; min-width:250px; height:100%; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; flex:0 0 auto; overflow-y:auto;}
+#tbd-main{flex:1 1 auto; min-width:0; height:100%; overflow-y:auto; display:flex; flex-direction:column;}
+#tbd-nav{padding:8px 10px 30px; display:flex; flex-direction:column; gap:1px;}
+.tbd-nav-link{display:block; padding:9px 12px; border-radius:8px; font-size:12.5px; font-weight:600; color:var(--ink-faint); cursor:pointer; text-decoration:none;}
+.tbd-nav-link:hover{background:var(--border-soft); color:var(--ink);}
+.tbd-nav-link.active{background:#0E7C66; color:#fff;}
+.tbd-nav-group{font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-faint); padding:14px 12px 4px;}
+#tbd-filters{display:flex; align-items:center; gap:10px; font-size:12px;}
+.tbd-seg{display:flex; gap:4px;}
+.tbd-seg button{padding:5px 11px; border-radius:7px; border:1px solid var(--border); background:var(--surface); font-size:11.5px; font-weight:700; cursor:pointer; color:var(--ink);}
+.tbd-seg button.active{background:#0E7C66; color:#fff; border-color:#0E7C66;}
+.tbd-kpi-grid{display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:16px;}
+@media (max-width:1100px){ .tbd-kpi-grid{grid-template-columns:repeat(2,1fr);} }
+.tbd-kpi-card{background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px;}
+.tbd-kpi-label{font-size:10.5px; font-weight:800; text-transform:uppercase; color:var(--ink-faint); letter-spacing:.04em; margin-bottom:6px;}
+.tbd-kpi-value{font-size:19px; font-weight:800; color:var(--ink);}
+.tbd-kpi-sub{font-size:11px; color:var(--ink-faint); margin-top:4px;}
+.tbd-table{width:100%; border-collapse:collapse; font-size:12px;}
+.tbd-table th{text-align:left; padding:6px 8px; font-size:10px; font-weight:800; text-transform:uppercase; color:var(--ink-faint); border-bottom:2px solid var(--border-soft); white-space:nowrap;}
+.tbd-table td{padding:7px 8px; border-bottom:1px solid var(--border-soft); white-space:nowrap;}
+.tbd-table tr:hover td{background:var(--border-soft);}
+.tbd-adj{background:color-mix(in srgb, #0E7C66 8%, transparent);}
+.tbd-takeaway{background:#12234f; color:#fff; border-radius:10px; padding:14px 16px; font-size:12.5px; line-height:1.5; margin:14px 0;}
+.tbd-two-col{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+@media (max-width:900px){ .tbd-two-col{grid-template-columns:1fr;} }
+.tbd-section-title{font-size:15px; font-weight:800; margin:0 0 12px; color:var(--ink);}
+.tbd-badge{display:inline-block; font-size:9.5px; font-weight:800; padding:2px 6px; border-radius:5px; background:var(--border-soft); color:var(--ink-faint); text-transform:uppercase;}
 
 /* ---------- layout: sidebar 20% + main, EACH with its own independent scrollbar ---------- */
 #appShell{height:100vh; overflow:hidden; align-items:stretch;}
@@ -241,6 +285,27 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
   </div>
 </div>
 
+<div id="appPicker">
+  <div class="picker-wrap">
+    <h1 class="picker-title" id="picker-title">¿Qué dashboard quieres abrir?</h1>
+    <p class="picker-sub" id="picker-sub">Puedes cambiar de vista cuando quieras desde el ícono ⇄ en la barra superior.</p>
+    <div class="picker-cards">
+      <div class="picker-card" id="picker-card-main">
+        <div class="picker-card-icon">📊</div>
+        <div class="picker-card-title" id="picker-card-main-title">TV Ads Performance</div>
+        <div class="picker-card-desc" id="picker-card-main-desc">El dashboard de ranking de creativos, filtros por marca/región/país/mes y todos los tabs de análisis que ya conoces.</div>
+        <div class="picker-card-cta">Abrir →</div>
+      </div>
+      <div class="picker-card tbd" id="picker-card-tbd">
+        <div class="picker-card-icon">🧭</div>
+        <div class="picker-card-title" id="picker-card-tbd-title">TBD Dolo</div>
+        <div class="picker-card-desc" id="picker-card-tbd-desc">Reporte ejecutivo Enero–Julio 2025 vs 2026, ajustado por estacionalidad de demanda (Ahrefs), con conclusiones y descarga a PowerPoint.</div>
+        <div class="picker-card-cta">Abrir →</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="appShell">
   <button id="sidebar-toggle">☰</button>
   <div id="sidebar"><div id="sidebar-inner">
@@ -252,6 +317,7 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
       <div style="flex:1"></div>
       <div class="iconbtns">
         <a class="iconbtn" id="btn-download-standalone" href="standalone.html" download="Dashboard_TV_Ads_v3_Standalone.html"></a>
+        <button class="iconbtn" id="btn-switch-app" title="Cambiar de dashboard">⇄</button>
         <button class="iconbtn" id="btn-tour">🎓</button>
         <button class="iconbtn" id="btn-methodology">?</button>
         <button class="iconbtn" id="btn-theme">◐</button>
@@ -266,6 +332,24 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
     </div></div>
     <div class="page" id="page"></div>
     <footer><div id="footer-src"></div><div id="footer-note"></div></footer>
+  </div>
+</div>
+
+<div id="tbdShell">
+  <div id="tbd-sidebar">
+    <div class="sb-brand"><span class="dot" style="background:#0E7C66"></span><span>TBD DOLO</span></div>
+    <div id="tbd-nav"></div>
+  </div>
+  <div id="tbd-main">
+    <div class="topbar"><div class="topbar-inner">
+      <div id="tbd-filters"></div>
+      <div style="flex:1"></div>
+      <div class="iconbtns">
+        <button class="iconbtn" id="tbd-btn-ppt">⬇ PPT</button>
+        <button class="iconbtn" id="tbd-btn-switch-app" title="Cambiar de dashboard">⇄</button>
+      </div>
+    </div></div>
+    <div class="page" id="tbd-page"></div>
   </div>
 </div>
 <div id="toast-container" aria-live="polite"></div>
@@ -400,19 +484,15 @@ async function boot(fetcher){
     var taxonomyRaw = Object.assign({}, raw['tvads-creative-taxonomy.json'] || {});
     if(taxonomyRaw.__DIM_LABELS__){ TAX_LOOKUP = taxonomyRaw.__DIM_LABELS__; delete taxonomyRaw.__DIM_LABELS__; }
     window.__TAXONOMY_RAW = taxonomyRaw;
-    var YEARS_DATA_FULL = buildYearsData(raw['tvads-rotation.json'], {
+    var deckJsons = {
       'OE-LATAM': raw['OE-LATAM.json'], 'JR-LATAM': raw['JR-LATAM.json'], 'OE-BR': raw['OE-BR.json'], 'JR-BR': raw['JR-BR.json'],
-    }, taxonomyRaw, ['2025','2026']);
-    startApp(YEARS_DATA_FULL);
+    };
+    var YEARS_DATA_FULL = buildYearsData(raw['tvads-rotation.json'], deckJsons, taxonomyRaw, ['2025','2026']);
+    window.__BOOT_YEARS_DATA__ = YEARS_DATA_FULL;
+    if(typeof tbdBuildJrHaloRaw==='function') TBD_JR_HALO_RAW = tbdBuildJrHaloRaw(deckJsons);
     document.getElementById('loginScreen').style.display = 'none';
-    document.getElementById('appShell').classList.add('ready');
-    // #appShell estaba display:none cuando renderViewTabs() midio por primera
-    // vez el ancho de #viewtabs (dentro de startApp de arriba) -- recalcular
-    // las flechas de scroll de las pestanas ahora que el panel ya es visible.
-    // requestAnimationFrame NO alcanza a ver el layout ya asentado en este
-    // caso especifico (probado); setTimeout(...,0) si.
-    setTimeout(function(){ if(typeof tabScrollUpdate==='function') tabScrollUpdate(); }, 0);
-    setTimeout(maybeAutoStartTour, 300);
+    if(location.hash.indexOf('#/tbd/')===0 && typeof tvadsOpenTbdApp==='function') tvadsOpenTbdApp();
+    else document.getElementById('appPicker').classList.add('ready');
   }catch(e){
     showLoginError('Error loading data: '+e.message);
     setLoginBusy(false);
@@ -421,5 +501,49 @@ async function boot(fetcher){
 }
 </script>
 <script src="app.js?v=24"></script>
+<script src="tbd_seasonality.js?v=1"></script>
+<script src="tbd_dolo.js?v=1"></script>
+<script>
+/* Selector de dashboard: se muestra una vez, apenas termina de cargar la
+   data (boot() en el script anterior le agrega .ready a #appPicker), antes
+   de decidir cual de los dos motores de render arrancar. Cambiar de vista
+   despues (⇄) simplemente oculta un shell y muestra el otro -- ambos leen
+   el MISMO window.__BOOT_YEARS_DATA__, nunca se vuelve a pedir la data. */
+function tvadsOpenMainApp(){
+  document.getElementById('appPicker').classList.remove('ready');
+  document.getElementById('tbdShell').classList.remove('ready');
+  if(!window.__MAIN_APP_STARTED__){
+    window.__MAIN_APP_STARTED__ = true;
+    startApp(window.__BOOT_YEARS_DATA__);
+  }
+  document.getElementById('appShell').classList.add('ready');
+  setTimeout(function(){ if(typeof tabScrollUpdate==='function') tabScrollUpdate(); }, 0);
+  if(!window.__MAIN_APP_TOUR_DONE__){ window.__MAIN_APP_TOUR_DONE__ = true; setTimeout(maybeAutoStartTour, 300); }
+}
+function tvadsOpenTbdApp(){
+  document.getElementById('appPicker').classList.remove('ready');
+  document.getElementById('appShell').classList.remove('ready');
+  document.getElementById('tbdShell').classList.add('ready');
+  // TBD Dolo lee YEARS_DATA/COUNTRIES (globales de app.js) directo -- si el
+  // usuario nunca abrio el dashboard viejo en esta sesion, startApp() jamas
+  // corrio y esos globales siguen vacios. Poblarlos aqui sin llamar a
+  // renderAll()/tocar STATE (eso es exclusivo del dashboard viejo).
+  if(!window.__MAIN_APP_STARTED__){
+    YEARS_DATA = window.__BOOT_YEARS_DATA__.years;
+    COUNTRIES = window.__BOOT_YEARS_DATA__.allCountries || [];
+  }
+  if(typeof tbdBoot==='function') tbdBoot();
+}
+document.getElementById('picker-card-main').addEventListener('click', tvadsOpenMainApp);
+document.getElementById('picker-card-tbd').addEventListener('click', tvadsOpenTbdApp);
+document.getElementById('btn-switch-app').addEventListener('click', function(){
+  document.getElementById('appShell').classList.remove('ready');
+  document.getElementById('appPicker').classList.add('ready');
+});
+document.getElementById('tbd-btn-switch-app').addEventListener('click', function(){
+  document.getElementById('tbdShell').classList.remove('ready');
+  document.getElementById('appPicker').classList.add('ready');
+});
+</script>
 </body>
 </html>
