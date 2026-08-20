@@ -157,6 +157,10 @@ var STR = {
   tour_back:{en:'← Back',es:'← Atrás',pt:'← Voltar'},
   tour_finish:{en:'Finish',es:'Finalizar',pt:'Concluir'},
   tour_skip:{en:'Skip tour',es:'Saltar recorrido',pt:'Pular tour'},
+  toast_auto_switch:{
+    en:'Metric switched to "Avg. Leads/day": Organization and MarketingOrganization are opposite brands here, so spend is $0 and Leads/$1,000, CPL and % MNCC can’t be calculated.',
+    es:'La métrica cambió a "Prom. Leads/día": Organization y MarketingOrganization son marcas opuestas aquí, así que el gasto es $0 y no se pueden calcular Leads/$1,000, CPL ni % MNCC.',
+    pt:'A métrica mudou para "Méd. Leads/dia": Organization e MarketingOrganization são marcas opostas aqui, então o gasto é $0 e não é possível calcular Leads/$1.000, CPL nem % MNCC.'},
   buscar:{en:'Search by name or dimension…',es:'Buscar por nombre o dimensión…',pt:'Buscar por nome ou dimensão…'},
   de:{en:'of',es:'de',pt:'de'}, creativos:{en:'creatives',es:'creativos',pt:'criativos'},
   click_ordenar:{en:'Click a header to sort',es:'Click en un encabezado para ordenar',pt:'Clique num cabeçalho para ordenar'},
@@ -261,7 +265,14 @@ function mktOrgDayFields(d){
     var b = d.by_mktorg && d.by_mktorg[mo];
     if(b){ leads+=b.leads||0; core+=b.core_enrollments||0; newCash+=b.new_cash_core||0; }
   });
-  return Object.assign({}, d, { leads:leads, core_enrollments:core, new_cash_core:newCash });
+  /* adcost/adcost_real solo son reales cuando marketing_organization===
+     Organization (asi vienen ya desde engine.js -- la fila "ajena" siempre
+     trae spend=0), asi que basta con verificar si la propia Organization
+     esta marcada en MarketingOrganization: si no lo esta, este creativo no
+     tiene NADA de gasto propio bajo el filtro actual. */
+  var ownChecked = STATE.marketingOrg.indexOf(STATE.organization) !== -1;
+  return Object.assign({}, d, { leads:leads, core_enrollments:core, new_cash_core:newCash,
+    adcost: ownChecked ? (d.adcost||0) : 0, adcost_real: ownChecked ? (d.adcost_real||0) : 0 });
 }
 function recomputeCreative(row){
   var dateDays = (row.detalle_diario||[]).filter(function(d){ return dayPassesQuarter(d.fecha) && dayPassesMes(d.fecha) && dayPassesSemana1(d.fecha,row.launch_dates) && dayPassesPais(d.topcountry); });
@@ -872,7 +883,32 @@ function renderFooter(){
 }
 
 /* ============================ orquestacion ============================ */
+function showToast(message){
+  var container = document.getElementById('toast-container');
+  if(!container) return;
+  var el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = esc(message)+'<button class="toast-close" aria-label="Cerrar">✕</button>';
+  container.appendChild(el);
+  var timer = setTimeout(function(){ el.remove(); }, 5000);
+  el.querySelector('.toast-close').addEventListener('click', function(){ clearTimeout(timer); el.remove(); });
+}
+/* Si MarketingOrganization queda en UNA sola marca (no varias) y esa marca es
+   DISTINTA a Organization, el gasto de TODOS los creativos de la vista pasa
+   a $0 (mktOrgDayFields lo fuerza asi) mientras los leads/ventas/New Cash
+   Core siguen siendo reales (lo que esa otra marca le genero a Organization)
+   -- comparar leads reales contra $0 de gasto da numeros invalidos en
+   Leads/$1k, CPL o %MNCC. En ese caso, cambiar la metrica activa
+   automaticamente a "Prom. Leads/dia" al ENTRAR a ese estado (no la vuelve a
+   forzar si el usuario elige otra a mano despues, ni la revierte al salir). */
+var PREV_CROSS_BRAND_ONLY = false;
 function renderAll(){
+  var crossBrandOnly = STATE.marketingOrg.length===1 && STATE.marketingOrg[0]!==STATE.organization;
+  if(crossBrandOnly && !PREV_CROSS_BRAND_ONLY && (STATE.metric==='leads_per_1k' || STATE.metric==='cpl' || STATE.metric==='mncc_core_pct')){
+    STATE.metric = 'avg_leads_dia';
+    showToast(T('toast_auto_switch'));
+  }
+  PREV_CROSS_BRAND_ONLY = crossBrandOnly;
   updateAccent();
   document.documentElement.lang = LANG;
   var creatives = getWorkingCreatives();
