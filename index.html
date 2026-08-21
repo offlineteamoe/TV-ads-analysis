@@ -81,8 +81,17 @@ a{color:inherit;}
 .picker-card.tbd .picker-card-cta{color:var(--tbd-accent);}
 #tbdShell{display:none;}
 #tbdShell.ready{display:flex;}
-#tbdShell{height:100vh; overflow:hidden; align-items:stretch; --tbd-accent:var(--oe);}
-#tbdShell.brand-jr{--tbd-accent:var(--oejr);}
+#tbdShell{height:100vh; overflow:hidden; align-items:stretch;}
+/* --tbd-accent vive en :root (NO en #tbdShell) porque el tooltip del tour y
+   el modal se renderizan FUERA de #tbdShell -- si la variable estuviera en el
+   shell, esos elementos la resolverian como indefinida y sus botones
+   quedarian transparentes/invisibles. */
+:root{ --tbd-accent:var(--oe); --tbd-deep:#12234f; --tbd-deep-soft:#9FB3E0; }
+html[data-tbd-brand="jr"]{ --tbd-accent:var(--oejr); --tbd-deep:#4A2E15; --tbd-deep-soft:#F5C89A; }
+/* dentro de TBD Dolo cualquier control "activo" usa el acento de la marca
+   seleccionada, no el azul global de --accent */
+#tbdShell .iconbtn.active{background:var(--tbd-accent); color:#fff; border-color:var(--tbd-accent);}
+#tbdShell .iconbtn:hover{border-color:var(--tbd-accent);}
 #tbd-sidebar{width:250px; min-width:250px; height:100%; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; flex:0 0 auto; overflow-y:auto;}
 #tbd-main{flex:1 1 auto; min-width:0; height:100%; overflow-y:auto; display:flex; flex-direction:column;}
 #tbd-nav{padding:8px 10px 30px; display:flex; flex-direction:column; gap:1px;}
@@ -105,8 +114,8 @@ a{color:inherit;}
 .tbd-table td{padding:7px 8px; border-bottom:1px solid var(--border-soft); white-space:nowrap;}
 .tbd-table tr:hover td{background:var(--border-soft);}
 .tbd-adj{background:color-mix(in srgb, var(--tbd-accent) 8%, transparent);}
-.tbd-takeaway{background:#12234f; color:#fff; border-radius:10px; padding:14px 16px; font-size:12.5px; line-height:1.5; margin:14px 0;}
-.tbd-insight-label{font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:#9FB3E0; margin-bottom:6px;}
+.tbd-takeaway{background:var(--tbd-deep); color:#fff; border-radius:10px; padding:14px 16px; font-size:12.5px; line-height:1.5; margin:14px 0;}
+.tbd-insight-label{font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--tbd-deep-soft); margin-bottom:6px;}
 .tbd-howto{background:var(--surface-2); border:1px dashed var(--border); border-radius:10px; padding:12px 16px; margin:10px 0 14px; font-size:12.5px; line-height:1.5;}
 .tbd-howto-label{font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-bottom:5px;}
 .tbd-howto-body{color:var(--ink-soft);}
@@ -122,7 +131,9 @@ a{color:inherit;}
 .tbd-topbar-divider{width:1px; height:20px; background:var(--border); flex:0 0 auto;}
 .tbd-select{padding:5px 9px; border-radius:7px; border:1px solid var(--border); background:var(--surface); font-size:11.5px; font-weight:700; color:var(--ink); cursor:pointer;}
 .tbd-period-label{font-size:11px; color:var(--ink-faint); white-space:nowrap;}
-.tbd-ppt-btn{background:var(--tbd-accent); color:#fff; border-color:var(--tbd-accent);}
+/* especificidad con #tbdShell: .iconbtn se declara mas abajo en la hoja y con
+   igual especificidad le ganaria por orden, dejando el boton en blanco */
+#tbdShell .tbd-ppt-btn{background:var(--tbd-accent); color:#fff; border-color:var(--tbd-accent);}
 .tbd-layout-toggle{display:flex; align-items:center; gap:7px;}
 .tbd-switch{position:relative; display:inline-block; width:34px; height:19px; flex:0 0 auto;}
 .tbd-switch input{opacity:0; width:0; height:0; position:absolute;}
@@ -131,6 +142,12 @@ a{color:inherit;}
 .tbd-switch input:checked+.tbd-switch-slider{background:var(--tbd-accent);}
 .tbd-switch input:checked+.tbd-switch-slider::before{transform:translateX(15px);}
 .tbd-layout-toggle-label{font-size:11.5px; font-weight:700; color:var(--ink-soft); white-space:nowrap;}
+.tbd-drill-row{cursor:pointer;}
+.tbd-drill-row:hover td{background:color-mix(in srgb, var(--tbd-accent) 10%, transparent);}
+.tbd-drill-hint{color:var(--tbd-accent); font-weight:800; opacity:.55; font-size:10px;}
+.tbd-drill-row:hover .tbd-drill-hint{opacity:1;}
+.tbd-drill-hint-bar{font-size:11.5px; color:var(--ink-faint); margin:0 0 10px;}
+.tbd-drill-total td{border-top:2px solid var(--tbd-accent); font-weight:800; background:var(--surface-2);}
 .tbd-cont-section{padding:26px 0; border-bottom:1px solid var(--border-soft); scroll-margin-top:64px;}
 .tbd-cont-section:first-child{padding-top:2px;}
 .tbd-cont-section:last-child{border-bottom:none;}
@@ -602,7 +619,7 @@ async function boot(fetcher){
 </script>
 <script src="app.js?v=24"></script>
 <script src="tbd_seasonality.js?v=1"></script>
-<script src="tbd_dolo.js?v=9"></script>
+<script src="tbd_dolo.js?v=14"></script>
 <script>
 /* Selector de dashboard: se muestra una vez, apenas termina de cargar la
    data (boot() en el script anterior le agrega .ready a #appPicker), antes

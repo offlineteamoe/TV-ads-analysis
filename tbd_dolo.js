@@ -27,6 +27,19 @@ function tbdDemandIndex(territory, fecha){
 }
 
 /* ---------- filtro de dias: rango de fecha explicito + pais ---------- */
+/* Espejo EXACTO de `has_date_activity` en recomputeCreative() (app.js): un
+   creativo entra al set solo si tuvo al menos UN dia con leads>0 de
+   cualquier marketing_organization. Un creativo que salio al aire pero
+   nunca genero un solo lead en ese pais no entra -- misma regla que el
+   dashboard "TV Ads Performance", para que ambos den el mismo universo de
+   creativos y el mismo gasto total. */
+function tbdHasAnyLeadDay(rawDays){
+  return rawDays.some(function(d){
+    if((d.leads||0) > 0) return true;
+    var bm = d.by_mktorg||{};
+    return Object.keys(bm).some(function(mo){ return (bm[mo].leads||0) > 0; });
+  });
+}
 function tbdDayInRange(fecha, from, to){ return fecha>=from && fecha<=to; }
 function tbdDayPassesPais(topcountry, pais){
   if(topcountry==null) return true; // Brasil: sin desglose de pais
@@ -78,7 +91,12 @@ function tbdAgg(dl){
   if(!dl || !dl.length) return null;
   var tl=0, ts=0, te=0, tc=0, jr=0;
   dl.forEach(function(d){ tl+=d.l; ts+=d.s; te+=d.e; tc+=d.c; jr+=d.jr_l; });
-  if(tl<=0 || ts<=0) return null;
+  // Solo se descarta por gasto 0 (sin gasto no hay nada que medir por $).
+  // NO se descarta por leads=0: un creativo que gasto y no trajo leads es un
+  // dato real -- excluirlo sacaba su gasto del total del portafolio e
+  // inflaba el L/$1k de todo el territorio. Validado contra el dashboard
+  // "TV Ads Performance", que si los incluye (ver Documentacion/).
+  if(ts<=0) return null;
   var n = dl.length;
   var dw=0; dl.forEach(function(d){ dw += d.dem*d.s; });
   var di = ts>0 ? dw/ts : 100; // demand index spend-weighted
@@ -86,8 +104,8 @@ function tbdAgg(dl){
     l: tl, s: ts, e: te, c: tc, jr_l: jr, n: n,
     l1k: tl/ts*1000,
     l1k_adj: tl/ts*1000/(di/100),
-    cpl: ts/tl,
-    cpl_adj: ts/tl*(di/100),
+    cpl: tl>0 ? ts/tl : null,
+    cpl_adj: tl>0 ? ts/tl*(di/100) : null,
     cvr: tl>0 ? te/tl : 0,
     mncc: tc>0 ? (tc-ts)/tc : 0,
     lpd: tl/n,
@@ -120,6 +138,7 @@ function tbdCreativesForPeriod(territory, region, yearKey, pais, adTypeFilter){
       return tbdDayInRange(d.fecha, per.from, per.to) && tbdDayPassesPais(d.topcountry, pais);
     });
     if(!rawDays.length) return;
+    if(!tbdHasAnyLeadDay(rawDays)) return; // paridad con has_date_activity de app.js
     var dailyItems = rawDays.map(function(d){ return tbdDailyItemFromRaw(d, territory, region); });
     var adName = row.ad_name || row.nombre;
     (byAdName[adName] = byAdName[adName] || []).push({ row: row, rawDays: rawDays, dailyItems: dailyItems });
@@ -177,6 +196,7 @@ function tbdVideoRowsForPeriod(territory, region, yearKey, pais, adTypeFilter){
       return tbdDayInRange(d.fecha, per.from, per.to) && tbdDayPassesPais(d.topcountry, pais);
     });
     if(!rawDays.length) return;
+    if(!tbdHasAnyLeadDay(rawDays)) return; // paridad con has_date_activity de app.js
     var dailyItems = rawDays.map(function(d){ return tbdDailyItemFromRaw(d, territory, region); });
     var a = tbdAgg(dailyItems);
     if(!a) return;
@@ -235,7 +255,7 @@ function tbdDimensionRollup(items, keyFn){
     if(b.ts<=0) return;
     var l1k = b.tl/b.ts*1000;
     var di = b.dws>0 ? b.dw/b.dws : 100;
-    out.push({ label:k, l1k:l1k, l1k_adj:l1k/(di/100), cpl:b.ts/b.tl, cpl_adj:(b.ts/b.tl)*(di/100),
+    out.push({ label:k, l1k:l1k, l1k_adj:l1k/(di/100), cpl: b.tl>0?b.ts/b.tl:null, cpl_adj: b.tl>0?(b.ts/b.tl)*(di/100):null,
       cvr: b.tl>0? b.te/b.tl:0, mncc: b.tc>0 ? (b.tc-b.ts)/b.tc : 0, n:b.n, days:b.days, s:b.ts,
       jr_l1k_adj: b.ts>0?(b.jr/b.ts*1000)/(di/100):0, dem:di });
   });
@@ -374,10 +394,10 @@ var TBD_STR = {
   col_oe_ref: {en:'OE L/$1k adj (ref)', es:'OE L/$1k adj (ref)', pt:'OE L/$1k adj (ref)'},
   title_launch: {en:'Launch Week — first 7 calendar days from launch', es:'Semana de Lanzamiento — primeros 7 días calendario desde el lanzamiento', pt:'Semana de Lançamento — primeiros 7 dias corridos desde o lançamento'},
   col_tvon_days: {en:'TV-on days', es:'Días TV-on', pt:'Dias TV-on'},
-  title_wearout: {en:'Wear-Out — first half (H1) vs second half (H2) of the flight, by day count', es:'Desgaste — primera mitad (H1) vs segunda mitad (H2) del flight, por conteo de días', pt:'Desgaste — primeira metade (H1) vs segunda metade (H2) do flight, por contagem de dias'},
-  sub_wearout: {en:'A drop >20% in demand-adjusted L/$1k from H1 to H2 = real wear-out signal (already seasonality-adjusted).', es:'Caída >20% en L/$1k adj. de H1 a H2 = señal de desgaste real (ya ajustado por estacionalidad).', pt:'Queda >20% em L/$1k adj. de H1 para H2 = sinal real de desgaste (já ajustado por estacionalidade).'},
-  col_h1: {en:'H1 adj', es:'H1 adj', pt:'H1 adj'},
-  col_h2: {en:'H2 adj', es:'H2 adj', pt:'H2 adj'},
+  title_wearout: {en:'Wear-Out — each creative\'s first half on air vs. its second half', es:'Desgaste — primera mitad al aire de cada creativo vs. su segunda mitad', pt:'Desgaste — primeira metade no ar de cada criativo vs. sua segunda metade'},
+  sub_wearout: {en:'Each creative\'s own active days are split in half by count. A drop of more than 20% in demand-adjusted L/$1k from its first half to its second half = a real wear-out signal (seasonality is already removed).', es:'Los días activos de cada creativo se parten por la mitad por conteo. Una caída de más de 20% en L/$1k ajustado de su primera mitad a su segunda mitad = señal de desgaste real (la estacionalidad ya está descontada).', pt:'Os dias ativos de cada criativo são divididos ao meio por contagem. Uma queda de mais de 20% no L/$1k ajustado da primeira metade para a segunda metade = sinal real de desgaste (a sazonalidade já foi removida).'},
+  col_h1: {en:'1st half (adj)', es:'1ª mitad (adj)', pt:'1ª metade (adj)'},
+  col_h2: {en:'2nd half (adj)', es:'2ª mitad (adj)', pt:'2ª metade (adj)'},
   col_delta: {en:'Δ%', es:'Δ%', pt:'Δ%'},
   title_seasonality: {en:'Seasonality Index (Ahrefs)', es:'Índice de Estacionalidad (Ahrefs)', pt:'Índice de Estacionalidade (Ahrefs)'},
   sub_seasonality: {en:'100 = average monthly search volume for "open english" + "cursos de ingles" since January 2023. A month with index 130 has 30% more natural demand than average, regardless of TV spend.', es:'100 = promedio del volumen de búsqueda mensual de "open english" + "cursos de ingles" desde enero 2023. Un mes con índice 130 tiene 30% más demanda natural que el promedio, independiente de cuánto se invierta en TV.', pt:'100 = média do volume de busca mensal de "open english" + "cursos de ingles" desde janeiro de 2023. Um mês com índice 130 tem 30% mais demanda natural que a média, independente de quanto se invista em TV.'},
@@ -396,7 +416,12 @@ var TBD_STR = {
 function tbdS(key){ return tbdT(TBD_STR[key] || {en:key,es:key,pt:key}); }
 
 function tbdApplyBrandTheme(){
-  document.getElementById('tbdShell').classList.toggle('brand-jr', TBD_STATE.org==='Open English Junior');
+  var isJr = TBD_STATE.org==='Open English Junior';
+  document.getElementById('tbdShell').classList.toggle('brand-jr', isJr);
+  // el acento se marca en <html> para que tambien lo hereden el tooltip del
+  // tour y el modal, que se renderizan fuera de #tbdShell
+  if(isJr) document.documentElement.setAttribute('data-tbd-brand','jr');
+  else document.documentElement.removeAttribute('data-tbd-brand');
 }
 function tbdBoot(){
   TBD_TERRITORIES = ['Brazil'].concat((COUNTRIES||[]).filter(function(c){ return c!=='TV LATAM Excl Arg Mex'; }).sort());
@@ -529,6 +554,9 @@ function tbdRenderNav(){
 function tbdScrollToSection(tabId, instant){
   var sec = document.getElementById('tbd-sec-'+tabId);
   if(!sec) return;
+  // mientras dura el scroll programatico el spy no debe reescribir la
+  // seccion activa con las secciones por las que va pasando
+  TBD_SPY_SUPPRESS_UNTIL = Date.now() + (instant ? 150 : 900);
   sec.scrollIntoView({ behavior: instant?'auto':'smooth', block:'start' });
 }
 function tbdRenderLayoutToggle(){
@@ -561,6 +589,7 @@ var TBD_LAST_DATA = null;
 function tbdRenderTab(){
   var data = tbdCurrentData();
   TBD_LAST_DATA = data;
+  TBD_DRILL = {}; // el DOM anterior se descarta entero: los ids viejos ya no existen
   if(TBD_STATE.viewLayout==='continuous'){ tbdRenderContinuousPage(data); return; }
   document.getElementById('tbd-page').scrollTop = 0;
   var fn = TBD_RENDERERS[TBD_STATE.tab] || TBD_RENDERERS.portfolio;
@@ -590,7 +619,62 @@ function tbdRenderContinuousPage(data){
   Array.from(el.querySelectorAll('[data-tbd-jump]')).forEach(function(a){
     a.addEventListener('click', function(){ TBD_STATE.tab = a.dataset.tbdJump; tbdSetHashSilent(); tbdRenderNav(); tbdScrollToSection(TBD_STATE.tab, false); });
   });
-  tbdScrollToSection(TBD_STATE.tab, true);
+  // Al re-renderizar por un toggle local, hay que volver a la seccion donde
+  // estaba el usuario (la del toggle), no a TBD_STATE.tab -- si no, la pagina
+  // "salta" a otra seccion al cambiar Ad Name/Video Name.
+  var target = TBD_RESTORE_SECTION || TBD_STATE.tab;
+  TBD_RESTORE_SECTION = null;
+  tbdScrollToSection(target, true);
+  tbdWireScrollSpy();
+}
+/* ---------- scroll spy (solo vista continua) ----------
+   Mantiene el menu izquierdo sincronizado con la seccion que el usuario
+   realmente esta viendo. Sin esto, TBD_STATE.tab se queda con la ultima
+   seccion clicada y cualquier re-render (ej. un toggle local) devuelve el
+   scroll a esa seccion vieja. */
+var TBD_RESTORE_SECTION = null;
+var TBD_SPY_WIRED = false;
+var TBD_SPY_SUPPRESS_UNTIL = 0;
+function tbdSectionInView(){
+  var main = document.getElementById('tbd-main');
+  if(!main) return null;
+  var secs = document.querySelectorAll('.tbd-cont-section');
+  if(!secs.length) return null;
+  var mainTop = main.getBoundingClientRect().top;
+  var best = null, bestTop = -Infinity;
+  for(var i=0;i<secs.length;i++){
+    var top = secs[i].getBoundingClientRect().top - mainTop;
+    if(top <= 90 && top > bestTop){ bestTop = top; best = secs[i]; }
+  }
+  if(!best) best = secs[0];
+  return best.id.replace('tbd-sec-','');
+}
+function tbdHighlightNav(tabId){
+  Array.from(document.querySelectorAll('.tbd-nav-link')).forEach(function(a){
+    a.classList.toggle('active', a.dataset.tab===tabId);
+  });
+}
+function tbdWireScrollSpy(){
+  if(TBD_SPY_WIRED) return;
+  TBD_SPY_WIRED = true;
+  var main = document.getElementById('tbd-main');
+  if(!main) return;
+  var pending = false;
+  main.addEventListener('scroll', function(){
+    if(TBD_STATE.viewLayout!=='continuous') return;
+    if(pending) return;
+    pending = true;
+    requestAnimationFrame(function(){
+      pending = false;
+      // ignora el scroll programatico inmediato tras un clic de nav/ancla
+      if(Date.now() < TBD_SPY_SUPPRESS_UNTIL) return;
+      var id = tbdSectionInView();
+      if(!id || id===TBD_STATE.tab) return;
+      TBD_STATE.tab = id;
+      tbdHighlightNav(id);
+      tbdSetHashSilent();
+    });
+  }, {passive:true});
 }
 /* Delegacion de click para nombres de creativo (nunca cambian de referencia
    en el DOM porque #tbd-page se reemplaza entero en cada render -- por eso
@@ -598,7 +682,25 @@ function tbdRenderContinuousPage(data){
 function tbdWireCreativeClicks(){
   document.getElementById('tbd-page').addEventListener('click', function(e){
     var vt = e.target.closest('[data-tbd-viewtoggle]');
-    if(vt){ TBD_STATE.viewMode[vt.dataset.tbdViewtoggle] = vt.dataset.mode; tbdRenderTab(); return; }
+    if(vt){
+      var tabOfToggle = vt.dataset.tbdViewtoggle;
+      TBD_STATE.viewMode[tabOfToggle] = vt.dataset.mode;
+      if(TBD_STATE.viewLayout==='continuous'){
+        // el usuario esta parado en la seccion de ese toggle: no lo muevas
+        TBD_STATE.tab = tabOfToggle;
+        TBD_RESTORE_SECTION = tabOfToggle;
+        tbdHighlightNav(tabOfToggle);
+      }
+      tbdRenderTab();
+      return;
+    }
+    var a = e.target.closest('[data-tbd-creative]');
+    if(a){ tbdOpenCreativeModal(a.dataset.tbdCreative, a.dataset.tbdYear); return; }
+    var dr = e.target.closest('[data-tbd-drill]');
+    if(dr){ tbdOpenDimDrillModal(dr.dataset.tbdDrill, dr.dataset.tbdCat); }
+  });
+  // dentro del modal de desglose, el nombre del creativo abre su propia ficha
+  document.getElementById('modal-body').addEventListener('click', function(e){
     var a = e.target.closest('[data-tbd-creative]');
     if(!a) return;
     tbdOpenCreativeModal(a.dataset.tbdCreative, a.dataset.tbdYear);
@@ -640,8 +742,12 @@ function tbdCreativeNameLinkHTML(r, year, showPain){
 function tbdRankColor(items, valFn, higherBetter){
   var vals = items.map(valFn).filter(function(v){ return v!=null && isFinite(v); });
   var uniq = Array.from(new Set(vals));
-  if(uniq.length<5) return function(){ return ''; };
-  var top = Math.min(3, Math.floor(uniq.length/3)||1), bot = Math.min(2, Math.floor(uniq.length/3)||1);
+  // Con 2+ valores distintos ya tiene sentido marcar mejor/peor. El numero de
+  // celdas marcadas escala con el tamano de la tabla (top 3 / bottom 2 en
+  // tablas grandes, 1 y 1 en tablas chicas) para que el color siga siendo una
+  // senal y no pinte la tabla entera.
+  if(uniq.length<2) return function(){ return ''; };
+  var top = uniq.length>=5 ? 3 : 1, bot = uniq.length>=5 ? 2 : 1;
   var asc = uniq.slice().sort(function(a,b){return a-b;}), desc = asc.slice().reverse();
   var bestSet = new Set((higherBetter?desc:asc).slice(0,top));
   var worstSet = new Set((higherBetter?asc:desc).slice(0,bot));
@@ -660,7 +766,7 @@ function tbdCreativeRowsHTML(items, year){
   var cMncc = tbdRankColor(items, function(r){return r.mncc;}, true);
   return items.map(function(r, i){
     return '<tr><td>'+(i+1)+'</td><td>'+tbdCreativeNameLinkHTML(r, year, true)+
-      '</td><td><span class="tbd-badge">'+esc(r.ad_type||'—')+'</span></td><td>'+fmtNum(r.l,0)+'</td><td class="tbd-adj" style="'+cL1k(r.l1k)+'">'+fmtNum(r.l1k,1)+'</td>'+
+      '</td><td><span class="tbd-badge">'+esc(r.ad_type||'—')+'</span></td><td>'+fmtNum(r.l,0)+'</td><td style="'+cL1k(r.l1k)+'">'+fmtNum(r.l1k,1)+'</td>'+
       '<td class="tbd-adj" style="'+cL1kAdj(r.l1k_adj)+'"><b>'+fmtNum(r.l1k_adj,1)+'</b></td><td class="tbd-adj" style="'+cCpl(r.cpl_adj)+'">'+fmt$(r.cpl_adj,2)+'</td><td>'+r.n+'</td><td>'+fmt$(r.s,0)+'</td><td style="'+cCvr(r.cvr)+'">'+fmtPct(r.cvr,1)+'</td><td style="'+cMncc(r.mncc)+'">'+fmtPct(r.mncc,1)+'</td></tr>';
   }).join('') || '<tr><td colspan="10" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>';
 }
@@ -669,11 +775,76 @@ function tbdCreativeTableHTML(items, yearLabel, year){
     '<div style="overflow-x:auto;"><table class="tbd-table"><thead><tr><th>'+esc(tbdS('col_hash'))+'</th><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdS('col_type'))+'</th><th>'+esc(tbdS('col_leads'))+'</th><th>'+esc(tbdS('col_l1k'))+'</th><th>'+esc(tbdS('col_l1k_adj'))+'</th><th>'+esc(tbdS('col_cpl_adj'))+'</th><th>'+esc(tbdS('col_days'))+'</th><th>'+esc(tbdS('col_spend'))+'</th><th>'+esc(tbdS('col_cvr'))+'</th><th>'+esc(tbdS('col_mncc'))+'</th></tr></thead>'+
     '<tbody>'+tbdCreativeRowsHTML(items, year)+'</tbody></table></div></div>';
 }
-function tbdDimTableHTML(rollup, title){
+/* ---------- drill-down de dimensiones: registro por render ----------
+   Cada tabla de dimension registra aqui los creativos crudos que la componen,
+   para que un clic en una fila pueda abrir el desglose y mostrar de donde
+   sale la matematica. Se limpia en cada tbdRenderTab() porque #tbd-page se
+   reemplaza entero (los ids viejos dejarian de existir en el DOM). */
+var TBD_DRILL = {};
+var TBD_DRILL_SEQ = 0;
+function tbdRegisterDrill(items, keyFn, title, yearLabel, year){
+  var id = 'd'+(++TBD_DRILL_SEQ);
+  TBD_DRILL[id] = { items:items, keyFn:keyFn, title:title, yearLabel:yearLabel, year:year };
+  return id;
+}
+function tbdDimTableHTML(rollup, title, items, keyFn, yearLabel, year){
+  var drillId = (items && keyFn) ? tbdRegisterDrill(items, keyFn, title, yearLabel, year) : null;
+  var cL1kAdj = tbdRankColor(rollup, function(r){return r.l1k_adj;}, true);
+  var cCpl = tbdRankColor(rollup, function(r){return r.cpl_adj;}, false);
+  var cCvr = tbdRankColor(rollup, function(r){return r.cvr;}, true);
   var rows = rollup.map(function(r){
-    return '<tr><td>'+esc(r.label)+'</td><td>'+r.n+'</td><td class="tbd-adj"><b>'+fmtNum(r.l1k_adj,1)+'</b></td><td class="tbd-adj">'+fmt$(r.cpl_adj,2)+'</td><td>'+fmtPct(r.cvr,1)+'</td><td>'+fmt$(r.s,0)+'</td></tr>';
+    var attrs = drillId ? ' class="tbd-drill-row" data-tbd-drill="'+drillId+'" data-tbd-cat="'+escAttr(r.label)+'"' : '';
+    return '<tr'+attrs+'><td>'+esc(r.label)+(drillId?' <span class="tbd-drill-hint">▸</span>':'')+'</td><td>'+r.n+'</td>'+
+      '<td class="tbd-adj" style="'+cL1kAdj(r.l1k_adj)+'"><b>'+fmtNum(r.l1k_adj,1)+'</b></td>'+
+      '<td class="tbd-adj" style="'+cCpl(r.cpl_adj)+'">'+fmt$(r.cpl_adj,2)+'</td>'+
+      '<td style="'+cCvr(r.cvr)+'">'+fmtPct(r.cvr,1)+'</td><td>'+fmt$(r.s,0)+'</td></tr>';
   }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>';
   return '<div style="overflow-x:auto;"><table class="tbd-table"><thead><tr><th>'+esc(title)+'</th><th>'+esc(tbdS('col_creatives_n'))+'</th><th>'+esc(tbdS('col_l1k_adj'))+'</th><th>'+esc(tbdS('col_cpl_adj'))+'</th><th>'+esc(tbdS('col_cvr'))+'</th><th>'+esc(tbdS('col_spend'))+'</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+/* Desglose de una categoria: los creativos que la componen + la fila TOTAL
+   (que debe reconciliar exactamente con la fila de la tabla de dimension).
+   El total se recalcula con tbdDimensionRollup sobre el mismo subconjunto,
+   nunca se copia el numero de la tabla -- asi el modal es una verificacion
+   real de la matematica, no un eco de ella. */
+function tbdOpenDimDrillModal(drillId, category){
+  var reg = TBD_DRILL[drillId];
+  if(!reg) return;
+  var members = reg.items.filter(function(r){ return String(reg.keyFn(r))===String(category); });
+  if(!members.length) return;
+  var total = tbdDimensionRollup(members, function(){ return 'TOTAL'; })[0];
+  var L = LANG;
+  var sorted = members.slice().sort(function(a,b){ return b.l1k_adj-a.l1k_adj; });
+  var cL1k = tbdRankColor(sorted, function(r){return r.l1k;}, true);
+  var cL1kAdj = tbdRankColor(sorted, function(r){return r.l1k_adj;}, true);
+  var cCpl = tbdRankColor(sorted, function(r){return r.cpl_adj;}, false);
+  var cCvr = tbdRankColor(sorted, function(r){return r.cvr;}, true);
+  var head = '<tr><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdS('col_leads'))+'</th><th>'+esc(tbdS('col_spend'))+'</th><th>'+esc(tbdS('col_days'))+'</th><th>'+esc(tbdS('col_l1k'))+'</th><th>'+esc(tbdS('col_l1k_adj'))+'</th><th>'+esc(tbdS('col_cpl_adj'))+'</th><th>'+esc(tbdS('col_cvr'))+'</th></tr>';
+  var body = sorted.map(function(r){
+    return '<tr><td>'+tbdCreativeNameLinkHTML(r, reg.year, false)+'</td><td>'+fmtNum(r.l,0)+'</td><td>'+fmt$(r.s,0)+'</td><td>'+r.n+'</td>'+
+      '<td style="'+cL1k(r.l1k)+'">'+fmtNum(r.l1k,1)+'</td>'+
+      '<td class="tbd-adj" style="'+cL1kAdj(r.l1k_adj)+'"><b>'+fmtNum(r.l1k_adj,1)+'</b></td>'+
+      '<td class="tbd-adj" style="'+cCpl(r.cpl_adj)+'">'+fmt$(r.cpl_adj,2)+'</td>'+
+      '<td style="'+cCvr(r.cvr)+'">'+fmtPct(r.cvr,1)+'</td></tr>';
+  }).join('');
+  var totalLabel = L==='en'?'TOTAL (this is the row in the table)':L==='pt'?'TOTAL (é esta a linha da tabela)':'TOTAL (esta es la fila de la tabla)';
+  var totalLeads = members.reduce(function(s,r){return s+r.l;},0);
+  var totalSpend = members.reduce(function(s,r){return s+r.s;},0);
+  var totalDays = members.reduce(function(s,r){return s+r.n;},0);
+  var totalRow = '<tr class="tbd-drill-total"><td>'+esc(totalLabel)+'</td><td>'+fmtNum(totalLeads,0)+'</td><td>'+fmt$(totalSpend,0)+'</td><td>'+totalDays+'</td>'+
+    '<td>'+fmtNum(total.l1k,1)+'</td><td class="tbd-adj"><b>'+fmtNum(total.l1k_adj,1)+'</b></td><td class="tbd-adj">'+fmt$(total.cpl_adj,2)+'</td><td>'+fmtPct(total.cvr,1)+'</td></tr>';
+  var mathNote = L==='en'
+    ? 'The TOTAL row is not an average of the rows above it: leads and spend are summed first, then L/$1k = total leads ÷ total spend × 1,000. That is why a creative with few days can show a high L/$1k of its own and still barely move the total. "Days" adds up each creative\'s own active days, so it can exceed the calendar days of the period when several creatives aired the same day.'
+    : L==='pt'
+    ? 'A linha TOTAL não é uma média das linhas acima: leads e gasto são somados primeiro, e então L/$1k = leads totais ÷ gasto total × 1.000. Por isso um criativo com poucos dias pode ter um L/$1k próprio alto e ainda assim mal mexer no total. "Dias" soma os dias ativos de cada criativo, então pode passar dos dias corridos do período quando vários criativos foram ao ar no mesmo dia.'
+    : 'La fila TOTAL no es un promedio de las filas de arriba: primero se suman leads y gasto, y después L/$1k = leads totales ÷ gasto total × 1.000. Por eso un creativo con pocos días puede tener un L/$1k propio alto y aun así mover muy poco el total. "Días" suma los días activos de cada creativo, así que puede superar los días calendario del período cuando varios creativos salieron al aire el mismo día.';
+  var eyebrow = (reg.yearLabel? reg.yearLabel+' · ':'')+reg.title+' · '+members.length+' '+tbdS('creatives_word');
+  document.getElementById('modal-card').classList.add('tbd-wide');
+  document.getElementById('modal-eyebrow').textContent = eyebrow;
+  document.getElementById('modal-title').textContent = String(category);
+  document.getElementById('modal-body').innerHTML =
+    '<div class="tbd-note">'+esc(mathNote)+'</div>'+
+    '<div style="overflow-x:auto;"><table class="tbd-table"><thead>'+head+'</thead><tbody>'+body+totalRow+'</tbody></table></div>';
+  document.getElementById('modal-backdrop').classList.add('open');
 }
 /* ============================ tarjetas "cómo se lee" + "insight experto" por pestana ============================
    Cada pestana del nav (19 en total) debe traer AMBAS tarjetas: una que explica
@@ -697,7 +868,7 @@ var TBD_HOWTO = {
   ai_vs_real: {en:'Splits creatives by PRODUCTION METHOD (type_of_production: FILMED / B-ROLL / AI-GENERATED / ZOOM RECORDING) — not by the hook\'s theme. This is scoped to the brand currently selected (top left): if a bucket looks empty, switch brands before assuming a data error — e.g. today, AI-generated production only exists for Open English Junior, not adult Open English.', es:'Divide los creativos por MÉTODO DE PRODUCCIÓN (type_of_production: FILMED / B-ROLL / AI-GENERATED / ZOOM RECORDING) — no por el tema del hook. Esto está limitado a la marca seleccionada actualmente (arriba a la izquierda): si un grupo se ve vacío, cambia de marca antes de asumir un error de datos — por ejemplo, hoy la producción con IA solo existe en Open English Junior, no en Open English adulto.', pt:'Divide os criativos por MÉTODO DE PRODUÇÃO (type_of_production: FILMED / B-ROLL / AI-GENERATED / ZOOM RECORDING) — não pelo tema do hook. Isso está restrito à marca selecionada atualmente (acima à esquerda): se um grupo parecer vazio, mude de marca antes de assumir um erro de dados — por exemplo, hoje a produção com IA só existe na Open English Junior, não na Open English adulta.'},
   jrhalo: {en:'"JR Leads" are REAL Open English Junior leads (from Junior\'s own deck) tagged as generated by Open English\'s spend, prorated per creative-day. Compare "JR L/$1k adj" against "OE L/$1k adj (ref)" on the same row to see which creatives punch above their own weight once you count their cross-brand halo too.', es:'"Leads JR" son leads REALES de Open English Junior (de su propio deck) etiquetados como generados por la inversión de Open English, prorrateados por día de creativo. Compara "JR L/$1k adj" contra "OE L/$1k adj (ref)" en la misma fila para ver qué creativos rinden más de lo que parecen una vez que cuentas también su halo entre marcas.', pt:'"Leads JR" são leads REAIS de Open English Junior (do próprio deck da Junior) marcados como gerados pelo investimento da Open English, prorrateados por dia de criativo. Compare "JR L/$1k adj" com "OE L/$1k adj (ref)" na mesma linha para ver quais criativos rendem mais do que parecem quando você conta também o halo entre marcas.'},
   launch: {en:'"TV-on days" here is capped at the creative\'s first 7 calendar days on air, not its whole flight — this isolates first-impression performance from how it holds up later (see Wear-Out for that).', es:'"Días TV-on" aquí queda limitado a los primeros 7 días calendario del creativo al aire, no todo su flight — esto aísla el desempeño de primera impresión de cómo se sostiene después (ver Desgaste para eso).', pt:'"Dias TV-on" aqui fica limitado aos primeiros 7 dias corridos do criativo no ar, não o flight inteiro — isso isola a performance de primeira impressão de como ele se sustenta depois (ver Desgaste para isso).'},
-  wearout: {en:'H1/H2 split each creative\'s own flight in half by day count (not calendar week), each half independently demand-adjusted — a real drop >20% from H1 to H2 (flagged "⚠ pull") means the creative itself is tiring out, not that a slow month made it look worse.', es:'H1/H2 divide el flight de cada creativo por la mitad por conteo de días (no semana calendario), cada mitad ajustada por demanda de forma independiente — una caída real >20% de H1 a H2 (marcada "⚠ pull") significa que el creativo en sí se está desgastando, no que un mes flojo lo hizo ver peor.', pt:'H1/H2 divide o flight de cada criativo ao meio por contagem de dias (não semana corrida), cada metade ajustada por demanda de forma independente — uma queda real >20% de H1 para H2 (marcada "⚠ pull") significa que o criativo em si está se desgastando, não que um mês fraco o fez parecer pior.'},
+  wearout: {en:'Each creative\'s own run is split in half by day count (not calendar week), each half independently demand-adjusted — a real drop of more than 20% from its first half on air to its second half (flagged "⚠ pull") means the creative itself is tiring out, not that a slow month made it look worse.', es:'El recorrido de cada creativo se parte por la mitad por conteo de días (no semana calendario), cada mitad ajustada por demanda de forma independiente — una caída real de más de 20% de su primera mitad al aire a su segunda mitad (marcada "⚠ pull") significa que el creativo en sí se está desgastando, no que un mes flojo lo hizo ver peor.', pt:'O percurso de cada criativo é dividido ao meio por contagem de dias (não semana corrida), cada metade ajustada por demanda de forma independente — uma queda real de mais de 20% da primeira metade no ar para a segunda metade (marcada "⚠ pull") significa que o criativo em si está se desgastando, não que um mês fraco o fez parecer pior.'},
   seasonality: {en:'This is NOT TV performance — it is pure organic search interest, independent of any ad spend. It is the input used to compute every "adj." metric elsewhere in the app; read it to understand WHY a given month\'s raw numbers were inflated or deflated.', es:'Esto NO es performance de TV — es puro interés de búsqueda orgánica, independiente de cualquier inversión publicitaria. Es el insumo que se usa para calcular cada métrica "adj." del resto de la app; léelo para entender POR QUÉ los números crudos de un mes dado salieron inflados o desinflados.', pt:'Isto NÃO é performance de TV — é puro interesse de busca orgânica, independente de qualquer investimento publicitário. É o insumo usado para calcular cada métrica "adj." do resto do app; leia para entender POR QUE os números brutos de um determinado mês saíram inflados ou desinflados.'},
   insights: {en:'Every card below crosses at least two signals and only appears when the effect is large enough to act on — sorted strongest-first. This is the closest thing to an automated "what should I actually do differently" page in the whole app.', es:'Cada tarjeta de abajo cruza al menos dos señales y solo aparece cuando el efecto es lo bastante grande para actuar sobre él — ordenadas de más a menos fuerte. Es lo más cercano a una página automática de "qué debería hacer distinto de verdad" en toda la app.', pt:'Cada cartão abaixo cruza pelo menos dois sinais e só aparece quando o efeito é grande o suficiente para agir — ordenados do mais forte para o mais fraco. É o mais próximo de uma página automática de "o que eu deveria realmente fazer diferente" em todo o app.'},
   direction: {en:'The 4 cards translate the data into a creative direction (keep/stop/untested/rules); the "Brief" box below turns that into plain-language instructions you can hand directly to a creative team, split by Generic vs. Promo since the winning formula differs between them.', es:'Las 4 tarjetas traducen los datos en una dirección creativa (mantener/parar/sin probar/reglas); la caja de "Brief" de abajo convierte eso en instrucciones en lenguaje simple que puedes entregarle directo a un equipo creativo, separadas por Generic vs. Promo porque la fórmula ganadora es distinta entre los dos.', pt:'Os 4 cartões traduzem os dados numa direção criativa (manter/parar/não testado/regras); a caixa de "Brief" abaixo transforma isso em instruções em linguagem simples que você pode entregar direto a uma equipe criativa, separadas por Generic vs. Promo porque a fórmula vencedora é diferente entre os dois.'},
@@ -729,17 +900,25 @@ function tbdDimensionTakeaway(r25, r26, title){
     ? '<b>Takeaway:</b> "'+best.label+'" supera "'+worst.label+'" em '+fmtNum(gap,0)+'% em 2026 (L/$1k adj. '+fmtNum(best.l1k_adj,1)+' vs '+fmtNum(worst.l1k_adj,1)+', '+best.n+' vs '+worst.n+' criativos). '+(consistent?'Também liderou em 2025 — é um padrão durável que vale a pena usar como padrão de briefing, não um resultado isolado.':(prior?'Em 2025 o líder foi outro ("'+r25[0].label+'") — trate isso como um sinal emergente, ainda não uma regra comprovada.':'Não há dados de 2025 para confirmar consistência, trate com cautela.'))
     : '<b>Takeaway:</b> "'+best.label+'" rinde '+fmtNum(gap,0)+'% mejor que "'+worst.label+'" en 2026 (L/$1k adj. '+fmtNum(best.l1k_adj,1)+' vs '+fmtNum(worst.l1k_adj,1)+', '+best.n+' vs '+worst.n+' creativos). '+(consistent?'También lideró en 2025 — es un patrón durable, vale la pena briefearlo como default, no como resultado aislado.':(prior?'En 2025 el líder fue distinto ("'+r25[0].label+'") — trata esto como una señal emergente, todavía no una regla comprobada.':'No hay datos de 2025 para confirmar que sea consistente, trátalo con cautela.'));
 }
+function tbdDrillHintHTML(){
+  var L = LANG;
+  var txt = L==='en'?'Click any row in the tables below to see the individual creatives behind that number and how they add up to the total.'
+    : L==='pt'?'Clique em qualquer linha das tabelas abaixo para ver os criativos individuais por trás daquele número e como eles somam o total.'
+    : 'Haz clic en cualquier fila de las tablas de abajo para ver los creativos individuales detrás de ese número y cómo suman el total.';
+  return '<div class="tbd-drill-hint-bar">🖱 '+esc(txt)+'</div>';
+}
 function tbdSafeDetect(fn){
   var args = Array.prototype.slice.call(arguments,1);
   try{ return fn.apply(null,args); }catch(e){ return null; }
 }
 function tbdDimensionPage(data, keyFn, title, subtitle, tabId, items25, items26, extraFindings){
-  var r25 = tbdDimensionRollup(items25||data.y25, keyFn), r26 = tbdDimensionRollup(items26||data.y26, keyFn);
+  var src25 = items25||data.y25, src26 = items26||data.y26;
+  var r25 = tbdDimensionRollup(src25, keyFn), r26 = tbdDimensionRollup(src26, keyFn);
   var extraHtml = (extraFindings||[]).map(function(f){ return f ? tbdTakeawayBox(f.body) : ''; }).join('');
   return '<h2 class="tbd-section-title">'+esc(title)+'</h2><p style="font-size:12px;color:var(--ink-faint);margin-top:-8px;">'+esc(subtitle)+'</p>'+
-    tbdHowToCard(tabId)+
-    '<div class="tbd-two-col"><div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y25_label'))+'</div>'+tbdDimTableHTML(r25,title)+'</div>'+
-    '<div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y26_label'))+'</div>'+tbdDimTableHTML(r26,title)+'</div></div>'+
+    tbdHowToCard(tabId)+tbdDrillHintHTML()+
+    '<div class="tbd-two-col"><div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y25_label'))+'</div>'+tbdDimTableHTML(r25,title,src25,keyFn,tbdS('y25_label'),'2025')+'</div>'+
+    '<div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y26_label'))+'</div>'+tbdDimTableHTML(r26,title,src26,keyFn,tbdS('y26_label'),'2026')+'</div></div>'+
     tbdTakeawayBox(tbdDimensionTakeaway(r25, r26, title))+extraHtml;
 }
 
@@ -807,9 +986,13 @@ var TBD_RENDERERS = {
   jrhalo: function(data){
     var r25 = data.y25.slice().sort(function(a,b){return b.jr_l1k_adj-a.jr_l1k_adj;});
     var r26 = data.y26.slice().sort(function(a,b){return b.jr_l1k_adj-a.jr_l1k_adj;});
-    var rows = function(items, year){ return items.map(function(r){
-      return '<tr><td>'+tbdCreativeNameLinkHTML(r,year)+'</td><td>'+fmtNum(r.jr_l,0)+'</td><td class="tbd-adj"><b>'+fmtNum(r.jr_l1k_adj,1)+'</b></td><td>'+fmtNum(r.l1k_adj,1)+'</td></tr>';
-    }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>'; };
+    var rows = function(items, year){
+      var cJrL = tbdRankColor(items, function(r){return r.jr_l;}, true);
+      var cJrAdj = tbdRankColor(items, function(r){return r.jr_l1k_adj;}, true);
+      var cOe = tbdRankColor(items, function(r){return r.l1k_adj;}, true);
+      return items.map(function(r){
+      return '<tr><td>'+tbdCreativeNameLinkHTML(r,year)+'</td><td style="'+cJrL(r.jr_l)+'">'+fmtNum(r.jr_l,0)+'</td><td class="tbd-adj" style="'+cJrAdj(r.jr_l1k_adj)+'"><b>'+fmtNum(r.jr_l1k_adj,1)+'</b></td><td class="tbd-adj" style="'+cOe(r.l1k_adj)+'">'+fmtNum(r.l1k_adj,1)+'</td></tr>';
+      }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>'; };
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_jrhalo'))+'</h2>'+
       '<p style="font-size:12px;color:var(--ink-faint);margin-top:-8px;">'+esc(tbdS('sub_jrhalo'))+'</p>'+
       tbdHowToCard('jrhalo')+
@@ -819,9 +1002,12 @@ var TBD_RENDERERS = {
   },
   launch: function(data){
     var build = function(items){ return items.map(function(r){ var lw = tbdLaunchWeek(r); return {row:r, nombre:r.nombre, lw:lw}; }).filter(function(x){return x.lw;}).sort(function(a,b){return b.lw.l1k_adj-a.lw.l1k_adj;}); };
-    var rows = function(list, year){ return list.map(function(x){
-      return '<tr><td>'+tbdCreativeNameLinkHTML(x.row,year)+'</td><td>'+x.lw.n+'</td><td class="tbd-adj"><b>'+fmtNum(x.lw.l1k_adj,1)+'</b></td><td>'+fmt$(x.lw.cpl_adj,2)+'</td></tr>';
-    }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>'; };
+    var rows = function(list, year){
+      var cAdj = tbdRankColor(list, function(x){return x.lw.l1k_adj;}, true);
+      var cCpl = tbdRankColor(list, function(x){return x.lw.cpl_adj;}, false);
+      return list.map(function(x){
+      return '<tr><td>'+tbdCreativeNameLinkHTML(x.row,year)+'</td><td>'+x.lw.n+'</td><td class="tbd-adj" style="'+cAdj(x.lw.l1k_adj)+'"><b>'+fmtNum(x.lw.l1k_adj,1)+'</b></td><td class="tbd-adj" style="'+cCpl(x.lw.cpl_adj)+'">'+fmt$(x.lw.cpl_adj,2)+'</td></tr>';
+      }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>'; };
     var head = '<tr><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdS('col_tvon_days'))+'</th><th>'+esc(tbdS('col_l1k_adj'))+'</th><th>'+esc(tbdS('col_cpl_adj'))+'</th></tr>';
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_launch'))+'</h2>'+
       tbdHowToCard('launch')+
@@ -831,10 +1017,17 @@ var TBD_RENDERERS = {
   },
   wearout: function(data){
     var build = function(items){ return items.map(function(r){ var w = tbdWearout(r); return {row:r, nombre:r.nombre, w:w}; }).filter(function(x){return x.w.pct!=null;}).sort(function(a,b){return a.w.pct-b.w.pct;}); };
-    var rows = function(list, year){ return list.map(function(x){
+    // El delta NO es una columna "adj" (no lleva fondo azul) y su color es
+    // semantico, no por ranking: crecer es bueno, caer >20% es la senal de
+    // desgaste real que la pestana existe para detectar.
+    var rows = function(list, year){
+      var cH1 = tbdRankColor(list, function(x){return x.w.h1.l1k_adj;}, true);
+      var cH2 = tbdRankColor(list, function(x){return x.w.h2.l1k_adj;}, true);
+      return list.map(function(x){
       var flag = x.w.pct<-20 ? ' <span style="color:var(--bad);font-weight:800;">⚠ pull</span>' : '';
-      return '<tr><td>'+tbdCreativeNameLinkHTML(x.row,year)+'</td><td>'+fmtNum(x.w.h1.l1k_adj,1)+'</td><td>'+fmtNum(x.w.h2.l1k_adj,1)+'</td><td class="tbd-adj"><b>'+fmtPct(x.w.pct/100,1)+'</b>'+flag+'</td></tr>';
-    }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>'; };
+      var deltaStyle = x.w.pct<=-20 ? 'color:var(--bad);font-weight:700;' : (x.w.pct>=5 ? 'color:var(--good);font-weight:700;' : '');
+      return '<tr><td>'+tbdCreativeNameLinkHTML(x.row,year)+'</td><td class="tbd-adj" style="'+cH1(x.w.h1.l1k_adj)+'">'+fmtNum(x.w.h1.l1k_adj,1)+'</td><td class="tbd-adj" style="'+cH2(x.w.h2.l1k_adj)+'">'+fmtNum(x.w.h2.l1k_adj,1)+'</td><td style="'+deltaStyle+'"><b>'+fmtPct(x.w.pct/100,1)+'</b>'+flag+'</td></tr>';
+      }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>'; };
     var head = '<tr><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdS('col_h1'))+'</th><th>'+esc(tbdS('col_h2'))+'</th><th>'+esc(tbdS('col_delta'))+'</th></tr>';
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_wearout'))+'</h2>'+
       '<p style="font-size:12px;color:var(--ink-faint);margin-top:-8px;">'+esc(tbdS('sub_wearout'))+'</p>'+
@@ -995,10 +1188,10 @@ function tbdWearoutInsight(data){
   var avg = list.reduce(function(s,x){return s+x.w.pct;},0)/list.length;
   var flagged = list.filter(function(x){ return x.w.pct<-20; });
   return LANG==='en'
-    ? 'Across '+list.length+' creatives with enough days to measure, demand-adjusted L/$1k moves '+fmtNum(avg,1)+'% on average from H1 to H2 of the flight, and '+flagged.length+' ('+fmtNum(flagged.length/list.length*100,0)+'%) show a real wear-out drop (>20%). '+(flagged.length ? 'Prioritize refreshing: '+flagged.slice(0,3).map(function(x){return '"'+x.row.nombre+'"';}).join(', ')+'.' : 'No creative shows a real wear-out signal this period — current flights can keep running as-is.')
+    ? 'Across '+list.length+' creatives with enough days to measure, demand-adjusted L/$1k moves '+fmtNum(avg,1)+'% on average from its first half on air to its second half, and '+flagged.length+' ('+fmtNum(flagged.length/list.length*100,0)+'%) show a real wear-out drop (>20%). '+(flagged.length ? 'Prioritize refreshing: '+flagged.slice(0,3).map(function(x){return '"'+x.row.nombre+'"';}).join(', ')+'.' : 'No creative shows a real wear-out signal this period — current flights can keep running as-is.')
     : LANG==='pt'
-    ? 'Entre '+list.length+' criativos com dias suficientes para medir, o L/$1k ajustado por demanda muda '+fmtNum(avg,1)+'% em média de H1 para H2 do flight, e '+flagged.length+' ('+fmtNum(flagged.length/list.length*100,0)+'%) mostram uma queda real de desgaste (>20%). '+(flagged.length ? 'Priorize renovar: '+flagged.slice(0,3).map(function(x){return '"'+x.row.nombre+'"';}).join(', ')+'.' : 'Nenhum criativo mostra um sinal real de desgaste neste período — os flights atuais podem continuar rodando como estão.')
-    : 'Entre '+list.length+' creativos con suficientes días para medir, el L/$1k ajustado por demanda se mueve '+fmtNum(avg,1)+'% en promedio de H1 a H2 del flight, y '+flagged.length+' ('+fmtNum(flagged.length/list.length*100,0)+'%) muestran una caída real de desgaste (>20%). '+(flagged.length ? 'Prioriza renovar: '+flagged.slice(0,3).map(function(x){return '"'+x.row.nombre+'"';}).join(', ')+'.' : 'Ningún creativo muestra una señal real de desgaste este período — los flights actuales pueden seguir corriendo tal cual.');
+    ? 'Entre '+list.length+' criativos com dias suficientes para medir, o L/$1k ajustado por demanda muda '+fmtNum(avg,1)+'% em média da primeira metade no ar para a segunda metade, e '+flagged.length+' ('+fmtNum(flagged.length/list.length*100,0)+'%) mostram uma queda real de desgaste (>20%). '+(flagged.length ? 'Priorize renovar: '+flagged.slice(0,3).map(function(x){return '"'+x.row.nombre+'"';}).join(', ')+'.' : 'Nenhum criativo mostra um sinal real de desgaste neste período — os flights atuais podem continuar rodando como estão.')
+    : 'Entre '+list.length+' creativos con suficientes días para medir, el L/$1k ajustado por demanda se mueve '+fmtNum(avg,1)+'% en promedio de su primera mitad al aire a su segunda mitad, y '+flagged.length+' ('+fmtNum(flagged.length/list.length*100,0)+'%) muestran una caída real de desgaste (>20%). '+(flagged.length ? 'Prioriza renovar: '+flagged.slice(0,3).map(function(x){return '"'+x.row.nombre+'"';}).join(', ')+'.' : 'Ningún creativo muestra una señal real de desgaste este período — los flights actuales pueden seguir corriendo tal cual.');
 }
 function tbdAdjKpiInsight(data){
   var s = TBD_SEASONALITY[data.territory];
@@ -1030,10 +1223,10 @@ function tbdTestsInsight(data){
   var wo26 = data.y26.map(function(r){return {nombre:r.nombre, w:tbdWearout(r)};}).filter(function(x){return x.w.pct!=null;}).sort(function(a,b){return a.w.pct-b.w.pct;});
   if(!wo26.length || wo26[0].w.pct>=-20) return null;
   return LANG==='en'
-    ? 'Test A2 has the most urgent backing: "'+wo26[0].nombre+'" already dropped '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% from H1 to H2 (demand-adjusted) — this is measured decay, not a hypothesis, so it should be the first thing acted on from this list.'
+    ? 'Test A2 has the most urgent backing: "'+wo26[0].nombre+'" already dropped '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% from its first half on air to its second half (demand-adjusted) — this is measured decay, not a hypothesis, so it should be the first thing acted on from this list.'
     : LANG==='pt'
-    ? 'O Teste A2 tem o respaldo mais urgente: "'+wo26[0].nombre+'" já caiu '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% de H1 para H2 (ajustado por demanda) — isso é decaimento medido, não uma hipótese, então deveria ser a primeira coisa da lista a ser executada.'
-    : 'El Test A2 tiene el respaldo más urgente: "'+wo26[0].nombre+'" ya cayó '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% de H1 a H2 (ajustado por demanda) — eso es desgaste medido, no una hipótesis, así que debería ser lo primero de esta lista en accionarse.';
+    ? 'O Teste A2 tem o respaldo mais urgente: "'+wo26[0].nombre+'" já caiu '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% da sua primeira metade no ar para a segunda metade (ajustado por demanda) — isso é decaimento medido, não uma hipótese, então deveria ser a primeira coisa da lista a ser executada.'
+    : 'El Test A2 tiene el respaldo más urgente: "'+wo26[0].nombre+'" ya cayó '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% de su primera mitad al aire a su segunda mitad (ajustado por demanda) — eso es desgaste medido, no una hipótesis, así que debería ser lo primero de esta lista en accionarse.';
 }
 /* ============================ motor de insights por correlacion ============================
    Cada detector cruza AL MENOS dos senales (nunca "el mejor de X" solo) y solo
@@ -1117,9 +1310,9 @@ function tbdDetectHookWearout(data){
     strength: Math.abs(worst.avg),
     icon:'⚠',
     title: LANG==='en'?'One hook type wears out structurally faster':LANG==='pt'?'Um tipo de hook desgasta estruturalmente mais rápido':'Un tipo de hook se desgasta estructuralmente más rápido',
-    body: (LANG==='en'?'Creatives using "'+worst.label+'" as audio hook lose '+fmtNum(Math.abs(worst.avg),0)+'% of their demand-adjusted L/$1k on average from H1 to H2 of their flight ('+worst.n+' creatives) — vs. "'+best.label+'" which holds up ('+fmtNum(best.avg,0)+'%). This looks like fatigue built into the hook mechanic itself, not into any single creative — worth avoiding for long flights.'
-      :LANG==='pt'?'Criativos que usam "'+worst.label+'" como hook de áudio perdem '+fmtNum(Math.abs(worst.avg),0)+'% do L/$1k ajustado em média de H1 para H2 do flight ('+worst.n+' criativos) — vs. "'+best.label+'" que se sustenta ('+fmtNum(best.avg,0)+'%). Isso parece ser fadiga embutida no próprio mecanismo do hook, não em um criativo específico — vale evitar em flights longos.'
-      :'Los creativos que usan "'+worst.label+'" como hook de audio pierden '+fmtNum(Math.abs(worst.avg),0)+'% de su L/$1k ajustado en promedio de H1 a H2 de su flight ('+worst.n+' creativos) — vs. "'+best.label+'" que se sostiene ('+fmtNum(best.avg,0)+'%). Esto parece ser desgaste propio del mecanismo del hook, no de un creativo puntual — vale la pena evitarlo en flights largos.'),
+    body: (LANG==='en'?'Creatives using "'+worst.label+'" as audio hook lose '+fmtNum(Math.abs(worst.avg),0)+'% of their demand-adjusted L/$1k on average from their first half on air to their second half ('+worst.n+' creatives) — vs. "'+best.label+'" which holds up ('+fmtNum(best.avg,0)+'%). This looks like fatigue built into the hook mechanic itself, not into any single creative — worth avoiding for long flights.'
+      :LANG==='pt'?'Criativos que usam "'+worst.label+'" como hook de áudio perdem '+fmtNum(Math.abs(worst.avg),0)+'% do L/$1k ajustado em média da primeira metade no ar para a segunda metade ('+worst.n+' criativos) — vs. "'+best.label+'" que se sustenta ('+fmtNum(best.avg,0)+'%). Isso parece ser fadiga embutida no próprio mecanismo do hook, não em um criativo específico — vale evitar em flights longos.'
+      :'Los creativos que usan "'+worst.label+'" como hook de audio pierden '+fmtNum(Math.abs(worst.avg),0)+'% de su L/$1k ajustado en promedio de su primera mitad al aire a su segunda mitad ('+worst.n+' creativos) — vs. "'+best.label+'" que se sostiene ('+fmtNum(best.avg,0)+'%). Esto parece ser desgaste propio del mecanismo del hook, no de un creativo puntual — vale la pena evitarlo en flights largos.'),
   };
 }
 function tbdDetectNewVsRecurring(data){
@@ -1649,7 +1842,7 @@ function tbdDirectionCards(data){
 
   var stop = [];
   worstWearout.slice(0,2).forEach(function(x){
-    stop.push(L==='en'?'"'+x.row.nombre+'" — dropped '+fmtNum(Math.abs(x.w.pct),0)+'% (demand-adjusted) from H1 to H2 of its flight — real wear-out, pause before writing a V2.':L==='pt'?'"'+x.row.nombre+'" — caiu '+fmtNum(Math.abs(x.w.pct),0)+'% (ajustado por demanda) de H1 para H2 do flight — desgaste real, pause antes de escrever uma V2.':'"'+x.row.nombre+'" — cayó '+fmtNum(Math.abs(x.w.pct),0)+'% (ajustado por demanda) de H1 a H2 de su flight — desgaste real, pausa antes de escribir una V2.');
+    stop.push(L==='en'?'"'+x.row.nombre+'" — dropped '+fmtNum(Math.abs(x.w.pct),0)+'% (demand-adjusted) from its first half on air to its second half — real wear-out, pause before writing a V2.':L==='pt'?'"'+x.row.nombre+'" — caiu '+fmtNum(Math.abs(x.w.pct),0)+'% (ajustado por demanda) da primeira metade no ar para a segunda metade — desgaste real, pause antes de escrever uma V2.':'"'+x.row.nombre+'" — cayó '+fmtNum(Math.abs(x.w.pct),0)+'% (ajustado por demanda) de su primera mitad al aire a su segunda mitad — desgaste real, pausa antes de escribir una V2.');
   });
   if(toneRoll.length>=2){
     var worstTone = toneRoll[toneRoll.length-1];
@@ -1723,7 +1916,7 @@ function tbdDirectionHTML(data){
   return '<h2 class="tbd-section-title">'+esc(tbdS('title_direction'))+' — '+esc(data.territory)+'</h2>'+tbdHowToCard('direction')+
     '<div class="tbd-cd-grid">'+
     card(titles.keep,'var(--good)',cards.keep)+card(titles.stop,'var(--bad)',cards.stop)+
-    card(titles.upside,'var(--oe)',cards.upside)+card(titles.guide,'#12234f',cards.guide)+
+    card(titles.upside,'var(--oe)',cards.upside)+card(titles.guide,'var(--tbd-deep)',cards.guide)+
     '</div>'+
     '<div class="tbd-brief-box"><div class="tbd-brief-h">'+esc(titles.briefTitle)+'</div>'+
     '<div class="tbd-brief-grid">'+
@@ -1770,7 +1963,7 @@ function tbdComputeTests(data){
   if(wo26.length){
     testsA.push({ t:'A2', color:'var(--oe)',
       title: L==='en'?'Monitor / pause "'+wo26[0].nombre+'"':L==='pt'?'Monitorar / pausar "'+wo26[0].nombre+'"':'Monitorear / pausar "'+wo26[0].nombre+'"',
-      situation: L==='en'?'"'+wo26[0].nombre+'" dropped '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% from H1 to H2 of its 2026 flight (demand-adjusted) — a real wear-out signal, not a seasonal one.':L==='pt'?'"'+wo26[0].nombre+'" caiu '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% de H1 para H2 do seu flight de 2026 (ajustado por demanda) — um sinal real de desgaste, não sazonal.':'"'+wo26[0].nombre+'" cayó '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% de H1 a H2 de su flight 2026 (ajustado por demanda) — una señal real de desgaste, no estacional.',
+      situation: L==='en'?'"'+wo26[0].nombre+'" dropped '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% from its first half on air to its second half of 2026 (demand-adjusted) — a real wear-out signal, not a seasonal one.':L==='pt'?'"'+wo26[0].nombre+'" caiu '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% da sua primeira metade no ar para a segunda metade de 2026 (ajustado por demanda) — um sinal real de desgaste, não sazonal.':'"'+wo26[0].nombre+'" cayó '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% de su primera mitad al aire a su segunda mitad de 2026 (ajustado por demanda) — una señal real de desgaste, no estacional.',
       what: L==='en'?'Cap its remaining flight and watch the next 2 weeks of adj. L/$1k before committing more budget to it.':L==='pt'?'Limite o flight restante e observe as próximas 2 semanas de L/$1k adj. antes de comprometer mais orçamento a ele.':'Limita el flight restante y observa las próximas 2 semanas de L/$1k adj. antes de comprometer más presupuesto en él.',
       hypothesis: L==='en'?'If the decline continues past -20% for another week, pulling it frees budget for a better-performing creative at no lead-volume cost.':L==='pt'?'Se a queda continuar além de -20% por mais uma semana, retirá-lo libera orçamento para um criativo com melhor desempenho sem custo de volume de leads.':'Si la caída sigue por debajo de -20% otra semana, retirarlo libera presupuesto para un creativo con mejor desempeño sin costo en volumen de leads.',
       why: L==='en'?'Catching real wear-out early (vs. seasonal dips) avoids burning spend on a creative past its useful life.':L==='pt'?'Detectar o desgaste real cedo (vs. quedas sazonais) evita queimar orçamento num criativo que já passou de sua vida útil.':'Detectar el desgaste real a tiempo (vs. caídas estacionales) evita quemar presupuesto en un creativo que ya pasó su vida útil.' });
@@ -1823,7 +2016,7 @@ function tbdTestsHTML(data){
   }
   function colB(list, title, intro){
     return '<div><h3 class="tbd-tests-col-title">'+esc(title)+'</h3><div class="tbd-note tbd-note-purple">'+esc(intro)+'</div><div class="tbd-tests-grid">'+list.map(function(x){
-      return tbdTestCardHTML(x.t, '#12234f', x.title, [[LBL_WHATPRODUCE,x.what],[LBL_HYPOTHESIS,x.hypothesis],[LBL_WHY,x.why]]);
+      return tbdTestCardHTML(x.t, 'var(--tbd-deep)', x.title, [[LBL_WHATPRODUCE,x.what],[LBL_HYPOTHESIS,x.hypothesis],[LBL_WHY,x.why]]);
     }).join('')+'</div></div>';
   }
   var introA = L==='en'?'Zero production cost — reshuffle existing creatives/rotation only.':L==='pt'?'Custo de produção zero — apenas reorganiza criativos/rotação existentes.':'Costo de producción cero — solo reordena creativos/rotación ya existentes.';
@@ -1878,9 +2071,9 @@ var TBD_METHODOLOGY_ITEMS = [
   { label:{en:'Launch Week',es:'Launch Week',pt:'Launch Week'},
     text:{en:'First 7 calendar days from each creative\'s first air date (not 5 consecutive days — TV rotation is irregular).', es:'Primeros 7 días calendario desde la primera fecha de aire de cada creativo (no 5 días consecutivos — la rotación de TV es irregular).', pt:'Primeiros 7 dias corridos desde a primeira data de exibição de cada criativo (não 5 dias consecutivos — a rotação de TV é irregular).'} },
   { label:{en:'Wear-Out',es:'Wear-Out',pt:'Wear-Out'},
-    text:{en:'First half (H1) vs second half (H2) of the flight by COUNT of active days (not calendar weeks), each half adjusted by its own demand index. Drop &gt;20% in L/$1k adj. = real wear-out signal.',
-      es:'Primera mitad (H1) vs segunda mitad (H2) del flight por CONTEO de días activos (no semanas calendario), cada mitad ajustada por su propio índice de demanda. Caída &gt;20% en L/$1k adj. = señal de desgaste real.',
-      pt:'Primeira metade (H1) vs segunda metade (H2) do flight por CONTAGEM de dias ativos (não semanas corridas), cada metade ajustada pelo seu próprio índice de demanda. Queda &gt;20% em L/$1k adj. = sinal real de desgaste.'} },
+    text:{en:'Each creative\'s own active days split in half by COUNT (not calendar weeks): its first half on air vs. its second half, each half adjusted by its own demand index. Drop &gt;20% in L/$1k adj. = real wear-out signal.',
+      es:'Los días activos de cada creativo partidos por la mitad por CONTEO (no semanas calendario): su primera mitad al aire vs. su segunda mitad, cada mitad ajustada por su propio índice de demanda. Caída &gt;20% en L/$1k adj. = señal de desgaste real.',
+      pt:'Os dias ativos de cada criativo divididos ao meio por CONTAGEM (não semanas corridas): sua primeira metade no ar vs. sua segunda metade, cada metade ajustada pelo seu próprio índice de demanda. Queda &gt;20% em L/$1k adj. = sinal real de desgaste.'} },
   { label:{en:'Ad Name vs Video Name',es:'Ad Name vs Video Name',pt:'Ad Name vs Video Name'},
     text:{en:'All creative-listing tabs group by Ad Name by default (a V2/V3 minor revision counts as the same creative) — a local toggle in each section switches to Video Name to compete every version separately. The Versions tab always shows Video Name, since that comparison is its entire purpose.',
       es:'Todas las pestañas que listan creativos agrupan por Ad Name por defecto (una revisión menor V2/V3 cuenta como el mismo creativo) — un interruptor local en cada sección cambia a Video Name para hacer competir cada versión por separado. La pestaña Versions siempre muestra Video Name, ya que esa comparación es todo su propósito.',
@@ -2285,8 +2478,16 @@ var TBD_TOUR_STEPS = [
     body:{en:'Creatives with no explicit offer — brand/product messaging.', es:'Creativos sin oferta explícita — mensaje de marca/producto.', pt:'Criativos sem oferta explícita — mensagem de marca/produto.'} },
   { selector:'.tbd-nav-link[data-tab="pvg"]', tab:'pvg', title:{en:'Promo vs Generic',es:'Promo vs Genérico',pt:'Promo vs Genérico'},
     body:{en:'Which style wins overall, plus a takeaway telling you if that pattern held in the prior year too.', es:'Qué estilo gana en general, más un takeaway que dice si ese patrón también se dio el año anterior.', pt:'Qual estilo vence em geral, mais um takeaway dizendo se esse padrão também ocorreu no ano anterior.'} },
+  { selector:'.tbd-viewtoggle', tab:'promo', title:{en:'Ad Name vs. Video Name',es:'Ad Name vs. Video Name',pt:'Ad Name vs. Video Name'},
+    body:{en:'By default creatives are grouped by Ad Name, so a V2/V3 minor revision counts as the same ad. Flip to "Video Name" to break those versions apart and make them compete head to head — the expert insight below the table changes too, because comparing a V2 against its own V1 is a different question from ranking ad names.', es:'Por defecto los creativos se agrupan por Ad Name, así que una revisión menor V2/V3 cuenta como el mismo anuncio. Cambia a "Video Name" para separar esas versiones y hacerlas competir entre sí — el insight experto debajo de la tabla también cambia, porque comparar una V2 contra su propia V1 es una pregunta distinta a rankear ad names.', pt:'Por padrão os criativos são agrupados por Ad Name, então uma revisão menor V2/V3 conta como o mesmo anúncio. Mude para "Video Name" para separar essas versões e fazê-las competir entre si — o insight de especialista abaixo da tabela também muda, porque comparar uma V2 contra sua própria V1 é uma pergunta diferente de rankear ad names.'} },
+  { selector:'.tbd-name-link', tab:'promo', title:{en:'Click a creative name',es:'Haz clic en el nombre de un creativo',pt:'Clique no nome de um criativo'},
+    body:{en:'Opens a 3-step profile: (1) which Video Name versions make it up and how many days each aired, (2) the full chronological rotation — the exact dates, which other creatives shared the screen and at what rotation %, so you can audit the day count yourself, and (3) the qualitative profile: campaign, theme, mechanism, pain point and hooks. Video links live in step 1, one per real version.', es:'Abre una ficha de 3 pasos: (1) qué versiones de Video Name lo componen y cuántos días estuvo cada una al aire, (2) el detalle cronológico completo de rotación — las fechas exactas, con qué otros creativos compartió pantalla y a qué % de rotación, para que puedas auditar tú mismo el conteo de días, y (3) el perfil cualitativo: campaña, tema, mecanismo, pain point y hooks. Los links de video están en el paso 1, uno por cada versión real.', pt:'Abre uma ficha de 3 passos: (1) quais versões de Video Name o compõem e quantos dias cada uma ficou no ar, (2) o detalhe cronológico completo de rotação — as datas exatas, com quais outros criativos dividiu a tela e em que % de rotação, para você auditar a contagem de dias, e (3) o perfil qualitativo: campanha, tema, mecanismo, pain point e hooks. Os links de vídeo estão no passo 1, um por versão real.'} },
   { selector:'.tbd-nav-link[data-tab="tone"]', tab:'tone', title:{en:'Tone',es:'Tono',pt:'Tom'},
     body:{en:'Humor, Motivational, Corporative, Commemorative — ranked by demand-adjusted performance.', es:'Humor, Motivational, Corporative, Commemorative — ordenados por performance ajustado por demanda.', pt:'Humor, Motivational, Corporative, Commemorative — ordenados por performance ajustado por demanda.'} },
+  { selector:'.tbd-drill-row', tab:'tone', title:{en:'Click any category row to see the math',es:'Haz clic en cualquier fila de categoría para ver la matemática',pt:'Clique em qualquer linha de categoria para ver a matemática'},
+    body:{en:'Every dimension table (Tone, Hooks, Versions, Campaigns, Promo Type, Theme, AI vs Real, Promo vs Generic) is clickable row by row. It opens the same table broken down into the individual creatives that make up that category, plus a TOTAL row that reconciles exactly with the number you clicked — so you can always see where a figure comes from. From there you can click a creative name to drill even deeper into its own profile.', es:'Cada tabla de dimensión (Tono, Hooks, Versiones, Campañas, Tipo de Promo, Tema, IA vs Real, Promo vs Genérico) es clicable fila por fila. Abre esa misma tabla desglosada en los creativos individuales que componen esa categoría, más una fila TOTAL que reconcilia exactamente con el número que clicaste — así siempre puedes ver de dónde sale una cifra. Desde ahí puedes hacer clic en el nombre de un creativo para bajar aún más a su propia ficha.', pt:'Cada tabela de dimensão (Tom, Hooks, Versões, Campanhas, Tipo de Promo, Tema, IA vs Real, Promo vs Genérico) é clicável linha por linha. Abre essa mesma tabela detalhada nos criativos individuais que compõem aquela categoria, mais uma linha TOTAL que reconcilia exatamente com o número clicado — assim você sempre vê de onde vem uma cifra. De lá pode clicar no nome de um criativo para descer ainda mais até a ficha dele.'} },
+  { selector:'.tbd-table th:nth-child(6)', tab:'promo', title:{en:'Blue columns = demand-adjusted',es:'Columnas azules = ajustadas por demanda',pt:'Colunas azuis = ajustadas por demanda'},
+    body:{en:'Only the columns marked "adj" carry the light blue background — they are the ones divided by the seasonality index, and the only fair way to compare creatives that aired in different months. Green marks the best performers of each column and red the worst, so you can scan a table without reading every number.', es:'Solo las columnas marcadas "adj" llevan el fondo azul claro — son las que están divididas por el índice de estacionalidad, y la única forma justa de comparar creativos que salieron al aire en meses distintos. El verde marca los mejores de cada columna y el rojo los peores, para que puedas escanear una tabla sin leer cada número.', pt:'Apenas as colunas marcadas "adj" têm o fundo azul claro — são as divididas pelo índice de sazonalidade, e a única forma justa de comparar criativos que foram ao ar em meses diferentes. O verde marca os melhores de cada coluna e o vermelho os piores, para você escanear a tabela sem ler cada número.'} },
   { selector:'.tbd-nav-link[data-tab="hooks"]', tab:'hooks', title:{en:'Hooks',es:'Hooks',pt:'Hooks'},
     body:{en:'Audio hook and visual hook, each ranked separately.', es:'Hook de audio y hook visual, cada uno rankeado por separado.', pt:'Hook de áudio e hook visual, cada um ranqueado separadamente.'} },
   { selector:'.tbd-nav-link[data-tab="versions"]', tab:'versions', title:{en:'Versions',es:'Versiones',pt:'Versões'},
@@ -2315,8 +2516,14 @@ var TBD_TOUR_STEPS = [
     body:{en:'Concrete next steps: column A needs zero production (reactivate/reuse), column B needs new creative.', es:'Próximos pasos concretos: la columna A no necesita producción (reactivar/reusar), la columna B necesita creativo nuevo.', pt:'Próximos passos concretos: a coluna A não precisa de produção (reativar/reusar), a coluna B precisa de criativo novo.'} },
   { selector:'.tbd-nav-link[data-tab="methodology"]', tab:'methodology', title:{en:'How it was built',es:'Cómo se construyó',pt:'Como foi construído'},
     body:{en:'The full data sources and formulas behind every number in TBD Dolo.', es:'Todas las fuentes de datos y fórmulas detrás de cada número de TBD Dolo.', pt:'Todas as fontes de dados e fórmulas por trás de cada número do TBD Dolo.'} },
-  { selector:'#tbd-btn-ppt', title:{en:'Download PowerPoint',es:'Descargar PowerPoint',pt:'Baixar PowerPoint'},
-    body:{en:'Generates an executive .pptx for the country currently selected.', es:'Genera un .pptx ejecutivo para el país seleccionado actualmente.', pt:'Gera um .pptx executivo para o país selecionado atualmente.'} },
+  { selector:'#tbd-filters-toggle', tab:'portfolio', title:{en:'Collapse the filters',es:'Colapsar los filtros',pt:'Recolher os filtros'},
+    body:{en:'Hides the brand and country selectors to free up screen space. When collapsed it still shows which brand and country are active, and one click brings the full controls back.', es:'Oculta los selectores de marca y país para ganar espacio en pantalla. Cuando está colapsado sigue mostrando qué marca y país están activos, y con un clic vuelven los controles completos.', pt:'Oculta os seletores de marca e país para ganhar espaço na tela. Quando recolhido ainda mostra qual marca e país estão ativos, e com um clique os controles voltam por completo.'} },
+  { selector:'.tbd-nav-sbgroup .sb-group-head', tab:'portfolio', title:{en:'Collapse nav groups',es:'Colapsar grupos del menú',pt:'Recolher grupos do menu'},
+    body:{en:'Every group in the left menu (Overview, Creatives, Dimensions, Lifecycle…) folds away with a click on its header. Collapse the ones you are not using so only the dimensions you care about stay on screen.', es:'Cada grupo del menú izquierdo (Resumen, Creativos, Dimensiones, Ciclo de vida…) se pliega con un clic en su encabezado. Colapsa los que no estés usando para dejar en pantalla solo las dimensiones que te interesan.', pt:'Cada grupo do menu esquerdo (Resumo, Criativos, Dimensões, Ciclo de vida…) se recolhe com um clique no seu cabeçalho. Recolha os que não estiver usando para deixar na tela apenas as dimensões que te interessam.'} },
+  { selector:'#tbd-layout-toggle-wrap', title:{en:'Isolated view vs. continuous view',es:'Vista aislada vs. vista continua',pt:'Vista isolada vs. vista contínua'},
+    body:{en:'Two ways to read the report. "Isolated view" (default) shows one section at a time — clicking a menu item replaces the content. "Continuous view" stacks EVERY section into one long scrolling page, and the menu items become anchors that smooth-scroll you to that section without reloading anything. Use continuous view when you want to read the whole report end to end.', es:'Dos formas de leer el reporte. "Vista aislada" (por defecto) muestra una sección a la vez — al hacer clic en el menú se reemplaza el contenido. "Vista continua" apila TODAS las secciones en una sola página larga, y los ítems del menú se vuelven anclas que te hacen scroll suave hasta esa sección sin recargar nada. Usa la vista continua cuando quieras leer el reporte completo de principio a fin.', pt:'Duas formas de ler o relatório. "Vista isolada" (padrão) mostra uma seção por vez — ao clicar no menu o conteúdo é substituído. "Vista contínua" empilha TODAS as seções numa única página longa, e os itens do menu viram âncoras que fazem scroll suave até aquela seção sem recarregar nada. Use a vista contínua quando quiser ler o relatório inteiro do início ao fim.'} },
+  { selector:'#tbd-btn-ppt', title:{en:'Download PowerPoint (3 languages)',es:'Descargar PowerPoint (3 idiomas)',pt:'Baixar PowerPoint (3 idiomas)'},
+    body:{en:'Opens a dialog to pick the brand first (it can be a different brand from the one on screen), then generates THREE decks — Spanish, English and Portuguese — each with a corporate cover, one divider slide per country, and 5 content slides per country covering every territory that has data.', es:'Abre un diálogo para elegir primero la marca (puede ser distinta a la que tienes en pantalla), y luego genera TRES presentaciones — español, inglés y portugués — cada una con portada corporativa, una diapositiva divisoria por país, y 5 láminas de contenido por país, cubriendo todos los territorios con datos.', pt:'Abre um diálogo para escolher primeiro a marca (pode ser diferente da que está na tela), e então gera TRÊS apresentações — espanhol, inglês e português — cada uma com capa corporativa, uma lâmina divisória por país, e 5 lâminas de conteúdo por país, cobrindo todos os territórios com dados.'} },
   { selector:'#tbd-lang-btns', title:{en:'Language',es:'Idioma',pt:'Idioma'},
     body:{en:'Switch between English, Spanish and Portuguese at any time.', es:'Cambia entre inglés, español y portugués cuando quieras.', pt:'Alterne entre inglês, espanhol e português quando quiser.'} },
   { selector:'#tbd-btn-theme', title:{en:'Light / dark mode',es:'Modo claro / oscuro',pt:'Modo claro / escuro'},
