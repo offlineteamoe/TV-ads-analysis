@@ -117,10 +117,23 @@ a{color:inherit;}
 .tbd-name-link{color:var(--ink); font-weight:700; cursor:pointer; text-decoration:none; border-bottom:1px dashed var(--ink-faint);}
 .tbd-pain{color:var(--ink-faint); font-size:10.5px; font-weight:400;}
 .tbd-viewtoggle{margin:2px 0 12px;}
+.tbd-nav-sbgroup{padding:8px 8px 8px 2px;}
+.tbd-nav-sbgroup .sb-group-body{gap:1px; margin-top:4px;}
 .tbd-topbar-divider{width:1px; height:20px; background:var(--border); flex:0 0 auto;}
 .tbd-select{padding:5px 9px; border-radius:7px; border:1px solid var(--border); background:var(--surface); font-size:11.5px; font-weight:700; color:var(--ink); cursor:pointer;}
 .tbd-period-label{font-size:11px; color:var(--ink-faint); white-space:nowrap;}
 .tbd-ppt-btn{background:var(--tbd-accent); color:#fff; border-color:var(--tbd-accent);}
+.tbd-layout-toggle{display:flex; align-items:center; gap:7px;}
+.tbd-switch{position:relative; display:inline-block; width:34px; height:19px; flex:0 0 auto;}
+.tbd-switch input{opacity:0; width:0; height:0; position:absolute;}
+.tbd-switch-slider{position:absolute; cursor:pointer; inset:0; background:var(--border); transition:.15s; border-radius:20px;}
+.tbd-switch-slider::before{content:""; position:absolute; height:13px; width:13px; left:3px; top:3px; background:#fff; transition:.15s; border-radius:50%;}
+.tbd-switch input:checked+.tbd-switch-slider{background:var(--tbd-accent);}
+.tbd-switch input:checked+.tbd-switch-slider::before{transform:translateX(15px);}
+.tbd-layout-toggle-label{font-size:11.5px; font-weight:700; color:var(--ink-soft); white-space:nowrap;}
+.tbd-cont-section{padding:26px 0; border-bottom:1px solid var(--border-soft); scroll-margin-top:64px;}
+.tbd-cont-section:first-child{padding-top:2px;}
+.tbd-cont-section:last-child{border-bottom:none;}
 .tbd-note{background:var(--warn-soft); border:1px solid var(--warn-border); border-radius:8px; padding:8px 12px; font-size:11px; color:var(--ink-soft); margin-bottom:12px;}
 .tbd-note-purple{background:var(--surface-2); border-color:var(--border);}
 .tbd-tests-col-title{font-size:13px; font-weight:800; margin-bottom:8px;}
@@ -408,6 +421,8 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
       <div id="tbd-filters"></div>
       <div style="flex:1"></div>
       <div class="iconbtns">
+        <div id="tbd-layout-toggle-wrap"></div>
+        <div class="tbd-topbar-divider"></div>
         <button class="iconbtn tbd-ppt-btn" id="tbd-btn-ppt">⬇ PPT</button>
         <div class="tbd-topbar-divider"></div>
         <div id="app-switcher-tbd"></div>
@@ -587,7 +602,7 @@ async function boot(fetcher){
 </script>
 <script src="app.js?v=24"></script>
 <script src="tbd_seasonality.js?v=1"></script>
-<script src="tbd_dolo.js?v=5"></script>
+<script src="tbd_dolo.js?v=9"></script>
 <script>
 /* Selector de dashboard: se muestra una vez, apenas termina de cargar la
    data (boot() en el script anterior le agrega .ready a #appPicker), antes

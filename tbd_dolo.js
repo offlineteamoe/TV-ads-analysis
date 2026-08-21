@@ -225,9 +225,9 @@ function tbdDimensionRollup(items, keyFn){
   items.forEach(function(r){
     var k = keyFn(r);
     if(k==null) return;
-    if(!buckets[k]) buckets[k] = {tl:0, ts:0, te:0, jr:0, n:0, days:0, dw:0, dws:0};
+    if(!buckets[k]) buckets[k] = {tl:0, ts:0, te:0, jr:0, tc:0, n:0, days:0, dw:0, dws:0};
     var b = buckets[k];
-    b.tl += r.l; b.ts += r.s; b.te += r.e; b.jr += r.jr_l; b.n++; b.days += r.n; b.dw += r.dem*r.s; b.dws += r.s;
+    b.tl += r.l; b.ts += r.s; b.te += r.e; b.jr += r.jr_l; b.tc += (r.c||0); b.n++; b.days += r.n; b.dw += r.dem*r.s; b.dws += r.s;
   });
   var out = [];
   Object.keys(buckets).forEach(function(k){
@@ -236,10 +236,27 @@ function tbdDimensionRollup(items, keyFn){
     var l1k = b.tl/b.ts*1000;
     var di = b.dws>0 ? b.dw/b.dws : 100;
     out.push({ label:k, l1k:l1k, l1k_adj:l1k/(di/100), cpl:b.ts/b.tl, cpl_adj:(b.ts/b.tl)*(di/100),
-      cvr: b.tl>0? b.te/b.tl:0, n:b.n, s:b.ts, jr_l1k_adj: b.ts>0?(b.jr/b.ts*1000)/(di/100):0, dem:di });
+      cvr: b.tl>0? b.te/b.tl:0, mncc: b.tc>0 ? (b.tc-b.ts)/b.tc : 0, n:b.n, days:b.days, s:b.ts,
+      jr_l1k_adj: b.ts>0?(b.jr/b.ts*1000)/(di/100):0, dem:di });
   });
   return out.sort(function(a,b){ return b.l1k_adj-a.l1k_adj; });
 }
+/* ---------- registro de dimensiones + helpers compartidos por los 15
+   detectores del panel de expertos (ver especificacion sintetizada) ---------- */
+var TBD_DIM_DEFS = {
+  tone_category: { keyFn:function(r){return r.tone_category||null;}, label:{en:'Tone',es:'Tono',pt:'Tom'} },
+  theme_mechanism_code: { keyFn:function(r){return r.theme_mechanism_code||null;}, label:{en:'theme mechanism',es:'mecanismo temático',pt:'mecanismo temático'} },
+  pain_point: { keyFn:function(r){return r.pain_point||null;}, label:{en:'pain point',es:'pain point',pt:'pain point'} },
+  hook_audio_type_code: { keyFn:function(r){return r.hook_audio_type_code||null;}, label:{en:'audio hook',es:'hook de audio',pt:'hook de áudio'} },
+  hook_visual_type_code: { keyFn:function(r){return r.hook_visual_type_code||null;}, label:{en:'visual hook',es:'hook visual',pt:'hook visual'} },
+  ad_type: { keyFn:function(r){return r.ad_type||null;}, label:{en:'ad type',es:'tipo de anuncio',pt:'tipo de anúncio'} },
+  type_of_production: { keyFn:function(r){return r.type_of_production||null;}, label:{en:'production method',es:'método de producción',pt:'método de produção'} },
+  cta_type_code: { keyFn:function(r){return r.cta_type_code||null;}, label:{en:'CTA type',es:'tipo de CTA',pt:'tipo de CTA'} },
+};
+function tbdDimLabel(dimKey){ return tbdT(TBD_DIM_DEFS[dimKey].label); }
+function tbdPainPrefix(r){ var c=r.pain_point_code||''; var i=c.indexOf('-'); return i===-1?c:c.slice(0,i); }
+function tbdIsFearPain(r){ return (r.pain_point_code||'').indexOf('Fear')!==-1; }
+function tbdLaunchDateOf(r){ return (r.launch_dates&&r.launch_dates[0]) || (r._dailyItems&&r._dailyItems.length?r._dailyItems.slice().sort(function(a,b){return a.date<b.date?-1:1;})[0].date:null); }
 
 /* ---------- portfolio: agregado de TODOS los creativos de un periodo (no por creativo) ---------- */
 function tbdPortfolio(items){
@@ -256,20 +273,20 @@ function tbdPortfolio(items){
    completamente separado de STATE (el del dashboard original). Nunca
    escroleable: cada click de pestana reemplaza #tbd-page por completo.
    ============================================================ */
-var TBD_STATE = { territory:'Brazil', tab:'portfolio', org:'Open English', viewMode:{} };
+var TBD_STATE = { territory:'Brazil', tab:'portfolio', org:'Open English', viewMode:{}, viewLayout:'isolated' };
 var TBD_ORGS = ['Open English', 'Open English Junior'];
 var TBD_TERRITORIES = null; // se llena en tbdBoot() con COUNTRIES (menos el contenedor no-pais)
 var TBD_NAV = [
-  { group:{en:'Overview',es:'Resumen',pt:'Resumo'}, items:[
+  { key:'overview', group:{en:'Overview',es:'Resumen',pt:'Resumo'}, items:[
     {id:'adjkpi', label:{en:'★ Adj. KPI',es:'★ KPI Ajustado',pt:'★ KPI Ajustado'}},
     {id:'portfolio', label:{en:'Portfolio',es:'Portfolio',pt:'Portfólio'}},
   ]},
-  { group:{en:'Creatives',es:'Creativos',pt:'Criativos'}, items:[
+  { key:'creatives', group:{en:'Creatives',es:'Creativos',pt:'Criativos'}, items:[
     {id:'promo', label:{en:'Promo',es:'Promo',pt:'Promo'}},
     {id:'generic', label:{en:'Generic',es:'Genérico',pt:'Genérico'}},
     {id:'pvg', label:{en:'Promo vs Generic',es:'Promo vs Genérico',pt:'Promo vs Genérico'}},
   ]},
-  { group:{en:'Dimensions',es:'Dimensiones',pt:'Dimensões'}, items:[
+  { key:'dimensions', group:{en:'Dimensions',es:'Dimensiones',pt:'Dimensões'}, items:[
     {id:'tone', label:{en:'Tone',es:'Tono',pt:'Tom'}},
     {id:'hooks', label:{en:'Hooks',es:'Hooks',pt:'Hooks'}},
     {id:'versions', label:{en:'Versions',es:'Versiones',pt:'Versões'}},
@@ -278,22 +295,22 @@ var TBD_NAV = [
     {id:'theme', label:{en:'Theme',es:'Tema',pt:'Tema'}},
     {id:'ai_vs_real', label:{en:'AI vs Real',es:'IA vs Real',pt:'IA vs Real'}},
   ]},
-  { group:{en:'Cross-brand',es:'Cruce de marca',pt:'Cruzamento de marca'}, oeOnly:true, items:[
+  { key:'crossbrand', group:{en:'Cross-brand',es:'Cruce de marca',pt:'Cruzamento de marca'}, oeOnly:true, items:[
     {id:'jrhalo', label:{en:'JR Halo',es:'JR Halo',pt:'JR Halo'}},
   ]},
-  { group:{en:'Lifecycle',es:'Ciclo de vida',pt:'Ciclo de vida'}, items:[
+  { key:'lifecycle', group:{en:'Lifecycle',es:'Ciclo de vida',pt:'Ciclo de vida'}, items:[
     {id:'launch', label:{en:'Launch Week',es:'Semana de Lanzamiento',pt:'Semana de Lançamento'}},
     {id:'wearout', label:{en:'Wear-Out',es:'Desgaste',pt:'Desgaste'}},
   ]},
-  { group:{en:'Demand',es:'Demanda',pt:'Demanda'}, items:[
+  { key:'demand', group:{en:'Demand',es:'Demanda',pt:'Demanda'}, items:[
     {id:'seasonality', label:{en:'Seasonality Index',es:'Índice de Estacionalidad',pt:'Índice de Estacionalidade'}},
   ]},
-  { group:{en:'Conclusions',es:'Conclusiones',pt:'Conclusões'}, items:[
+  { key:'conclusions', group:{en:'Conclusions',es:'Conclusiones',pt:'Conclusões'}, items:[
     {id:'insights', label:{en:'Insights',es:'Insights',pt:'Insights'}},
     {id:'direction', label:{en:'Direction + Brief',es:'Dirección + Brief',pt:'Direção + Brief'}},
     {id:'tests', label:{en:'Recommended Tests',es:'Tests Recomendados',pt:'Testes Recomendados'}},
   ]},
-  { group:{en:'Reference',es:'Referencia',pt:'Referência'}, items:[
+  { key:'reference', group:{en:'Reference',es:'Referencia',pt:'Referência'}, items:[
     {id:'methodology', label:{en:'How it was built',es:'Cómo se construyó',pt:'Como foi construído'}},
   ]},
 ];
@@ -393,6 +410,7 @@ function tbdBoot(){
   tbdApplyBrandTheme();
   tbdRenderShell();
   tbdRenderLangBtns();
+  tbdRenderLayoutToggle();
   tbdRenderNav();
   tbdRenderTab();
   if(!window.__TBD_PPT_WIRED__){ window.__TBD_PPT_WIRED__ = true; document.getElementById('tbd-btn-ppt').addEventListener('click', tbdDownloadPPT); tbdWireCreativeClicks(); tbdWireModalCleanup(); tbdWireTour(); }
@@ -403,8 +421,17 @@ function tbdParseHash(){
   if(!m) return {};
   return { tab: m[1], territory: m[2] ? decodeURIComponent(m[2]) : null, org: m[3] ? decodeURIComponent(m[3]) : null };
 }
+function tbdHashString(){
+  return '#/tbd/'+TBD_STATE.tab+'/'+encodeURIComponent(TBD_STATE.territory)+'/'+encodeURIComponent(TBD_STATE.org);
+}
 function tbdSetHash(){
-  location.hash = '#/tbd/'+TBD_STATE.tab+'/'+encodeURIComponent(TBD_STATE.territory)+'/'+encodeURIComponent(TBD_STATE.org);
+  location.hash = tbdHashString();
+}
+/* Actualiza la URL para que quede marcable (bookmarkeable) SIN disparar
+   hashchange -- usado por el modo "vista continua" para que un clic de nav
+   solo haga scroll a la seccion (nunca re-renderiza toda la pagina). */
+function tbdSetHashSilent(){
+  history.replaceState(null, '', tbdHashString());
 }
 function tbdOnHashChange(){
   if(!document.getElementById('tbdShell').classList.contains('ready')) return;
@@ -423,7 +450,19 @@ function tbdRenderShell(){
 }
 function tbdRenderFilters(){
   var el = document.getElementById('tbd-filters');
-  el.innerHTML = '<div class="tbd-seg" id="tbd-sel-org">'+TBD_ORGS.map(function(o){
+  var collapsed = !!TBD_STATE.filtersCollapsed;
+  var toggleTitle = collapsed
+    ? (LANG==='en'?'Show filters':LANG==='pt'?'Mostrar filtros':'Mostrar filtros')
+    : (LANG==='en'?'Hide filters':LANG==='pt'?'Ocultar filtros':'Ocultar filtros');
+  var toggleBtn = '<button class="iconbtn" id="tbd-filters-toggle" title="'+escAttr(toggleTitle)+'">'+(collapsed?'▸':'◂')+'</button>';
+  if(collapsed){
+    var shortOrg = TBD_STATE.org==='Open English Junior' ? 'OE Jr' : 'OE';
+    el.innerHTML = toggleBtn+'<div class="tbd-period-label" style="margin-left:8px;font-weight:700;color:var(--ink);">'+esc(shortOrg)+' · '+esc(TBD_STATE.territory)+'</div>';
+    el.querySelector('#tbd-filters-toggle').addEventListener('click', function(){ TBD_STATE.filtersCollapsed = false; tbdRenderFilters(); });
+    return;
+  }
+  el.innerHTML = toggleBtn+
+    '<div class="tbd-seg" id="tbd-sel-org">'+TBD_ORGS.map(function(o){
     var short = o==='Open English Junior' ? 'Open English Junior' : 'Open English';
     return '<button data-o="'+escAttr(o)+'" class="'+(o===TBD_STATE.org?'active':'')+'">'+esc(short)+'</button>';
   }).join('')+'</div>'+
@@ -432,6 +471,7 @@ function tbdRenderFilters(){
     return '<option value="'+escAttr(t)+'"'+(t===TBD_STATE.territory?' selected':'')+'>'+esc(t)+'</option>';
   }).join('')+'</select>'+
     '<div class="tbd-period-label">'+esc(tbdS('period_label'))+'</div>';
+  el.querySelector('#tbd-filters-toggle').addEventListener('click', function(){ TBD_STATE.filtersCollapsed = true; tbdRenderFilters(); });
   Array.from(el.querySelectorAll('#tbd-sel-org button')).forEach(function(b){
     b.addEventListener('click', function(){
       TBD_STATE.org = b.dataset.o;
@@ -446,19 +486,67 @@ function tbdRenderLangBtns(){
   if(!el) return;
   el.innerHTML = ['en','es','pt'].map(function(l){ return '<button class="iconbtn'+(LANG===l?' active':'')+'" data-lang="'+l+'">'+l.toUpperCase()+'</button>'; }).join('');
   Array.from(el.querySelectorAll('button')).forEach(function(b){
-    b.addEventListener('click', function(){ LANG=b.dataset.lang; localStorage.setItem('tvads_lang',LANG); tbdRenderNav(); tbdRenderFilters(); tbdRenderTab(); });
+    b.addEventListener('click', function(){ LANG=b.dataset.lang; localStorage.setItem('tvads_lang',LANG); tbdRenderLangBtns(); tbdRenderLayoutToggle(); tbdRenderNav(); tbdRenderFilters(); tbdRenderTab(); });
   });
 }
+/* grupos colapsables del nav -- mismo patron que SB_COLLAPSED/sbGroup() del
+   dashboard principal (reusa esas mismas clases CSS .sb-group*), asi el
+   usuario puede plegar dimensiones que no le interesan por ahora y quedarse
+   solo con las que si. */
+var TBD_NAV_COLLAPSED = {};
 function tbdRenderNav(){
   var el = document.getElementById('tbd-nav');
   var groups = TBD_NAV.filter(function(g){ return !g.oeOnly || TBD_STATE.org!=='Open English Junior'; });
   el.innerHTML = groups.map(function(g){
-    return '<div class="tbd-nav-group">'+esc(tbdT(g.group))+'</div>'+g.items.map(function(it){
+    var collapsed = !!TBD_NAV_COLLAPSED[g.key];
+    var body = g.items.map(function(it){
       return '<a class="tbd-nav-link'+(it.id===TBD_STATE.tab?' active':'')+'" data-tab="'+it.id+'">'+esc(tbdT(it.label))+'</a>';
     }).join('');
+    return '<div class="sb-group tbd-nav-sbgroup'+(collapsed?' collapsed':'')+'">'+
+      '<div class="sb-group-head" data-tbdnavtoggle="'+escAttr(g.key)+'"><span>'+esc(tbdT(g.group))+'</span><span class="sb-group-chevron">▾</span></div>'+
+      '<div class="sb-group-body">'+body+'</div>'+
+    '</div>';
   }).join('');
+  Array.from(el.querySelectorAll('[data-tbdnavtoggle]')).forEach(function(h){
+    h.addEventListener('click', function(){ var k=h.dataset.tbdnavtoggle; TBD_NAV_COLLAPSED[k]=!TBD_NAV_COLLAPSED[k]; tbdRenderNav(); });
+  });
   Array.from(el.querySelectorAll('.tbd-nav-link')).forEach(function(a){
-    a.addEventListener('click', function(){ TBD_STATE.tab = a.dataset.tab; tbdSetHash(); });
+    a.addEventListener('click', function(){
+      TBD_STATE.tab = a.dataset.tab;
+      // en vista continua todo el contenido ya esta en el DOM -- un clic de
+      // nav solo tiene que desplazar hacia esa seccion (ancla), nunca
+      // re-renderizar toda la pagina de nuevo.
+      if(TBD_STATE.viewLayout==='continuous' && document.getElementById('tbd-sec-'+TBD_STATE.tab)){
+        tbdSetHashSilent();
+        tbdRenderNav();
+        tbdScrollToSection(TBD_STATE.tab, false);
+      } else {
+        tbdSetHash();
+      }
+    });
+  });
+}
+function tbdScrollToSection(tabId, instant){
+  var sec = document.getElementById('tbd-sec-'+tabId);
+  if(!sec) return;
+  sec.scrollIntoView({ behavior: instant?'auto':'smooth', block:'start' });
+}
+function tbdRenderLayoutToggle(){
+  var el = document.getElementById('tbd-layout-toggle-wrap');
+  if(!el) return;
+  var L = LANG;
+  var checked = TBD_STATE.viewLayout==='continuous';
+  var label = checked
+    ? (L==='en'?'Continuous view':L==='pt'?'Vista contínua':'Vista continua')
+    : (L==='en'?'Isolated view':L==='pt'?'Vista isolada':'Vista aislada');
+  el.className = 'tbd-layout-toggle';
+  el.innerHTML = '<label class="tbd-switch" title="'+escAttr(L==='en'?'Switch between isolated tabs and one continuous scrolling page':L==='pt'?'Alterna entre abas isoladas e uma página contínua com scroll':'Alterna entre pestañas aisladas y una página continua con scroll')+'">'+
+    '<input type="checkbox" id="tbd-layout-toggle"'+(checked?' checked':'')+'><span class="tbd-switch-slider"></span></label>'+
+    '<span class="tbd-layout-toggle-label" id="tbd-layout-label">'+esc(label)+'</span>';
+  document.getElementById('tbd-layout-toggle').addEventListener('change', function(e){
+    TBD_STATE.viewLayout = e.target.checked ? 'continuous' : 'isolated';
+    tbdRenderLayoutToggle();
+    tbdRenderTab();
   });
 }
 function tbdCurrentData(){
@@ -471,14 +559,38 @@ function tbdCurrentData(){
 }
 var TBD_LAST_DATA = null;
 function tbdRenderTab(){
-  document.getElementById('tbd-page').scrollTop = 0;
   var data = tbdCurrentData();
   TBD_LAST_DATA = data;
+  if(TBD_STATE.viewLayout==='continuous'){ tbdRenderContinuousPage(data); return; }
+  document.getElementById('tbd-page').scrollTop = 0;
   var fn = TBD_RENDERERS[TBD_STATE.tab] || TBD_RENDERERS.portfolio;
   document.getElementById('tbd-page').innerHTML = fn(data);
   Array.from(document.querySelectorAll('[data-tbd-jump]')).forEach(function(a){
     a.addEventListener('click', function(){ TBD_STATE.tab = a.dataset.tbdJump; tbdSetHash(); });
   });
+}
+/* "Vista continua": todas las pestanas concatenadas en una sola pagina
+   larga, cada una en su propia <section id="tbd-sec-{id}">. Los links de
+   nav (ver tbdRenderNav) y los [data-tbd-jump] internos hacen scroll suave
+   a la seccion en vez de reemplazar el contenido. */
+function tbdRenderContinuousPage(data){
+  var el = document.getElementById('tbd-page');
+  var groups = TBD_NAV.filter(function(g){ return !g.oeOnly || TBD_STATE.org!=='Open English Junior'; });
+  var html = '';
+  groups.forEach(function(g){
+    g.items.forEach(function(it){
+      var fn = TBD_RENDERERS[it.id];
+      if(!fn) return;
+      var body;
+      try{ body = fn(data); }catch(e){ body = '<p style="color:var(--bad);">'+esc(it.id)+': '+esc(e.message)+'</p>'; }
+      html += '<section id="tbd-sec-'+it.id+'" class="tbd-cont-section">'+body+'</section>';
+    });
+  });
+  el.innerHTML = html;
+  Array.from(el.querySelectorAll('[data-tbd-jump]')).forEach(function(a){
+    a.addEventListener('click', function(){ TBD_STATE.tab = a.dataset.tbdJump; tbdSetHashSilent(); tbdRenderNav(); tbdScrollToSection(TBD_STATE.tab, false); });
+  });
+  tbdScrollToSection(TBD_STATE.tab, true);
 }
 /* Delegacion de click para nombres de creativo (nunca cambian de referencia
    en el DOM porque #tbd-page se reemplaza entero en cada render -- por eso
@@ -617,13 +729,18 @@ function tbdDimensionTakeaway(r25, r26, title){
     ? '<b>Takeaway:</b> "'+best.label+'" supera "'+worst.label+'" em '+fmtNum(gap,0)+'% em 2026 (L/$1k adj. '+fmtNum(best.l1k_adj,1)+' vs '+fmtNum(worst.l1k_adj,1)+', '+best.n+' vs '+worst.n+' criativos). '+(consistent?'Também liderou em 2025 — é um padrão durável que vale a pena usar como padrão de briefing, não um resultado isolado.':(prior?'Em 2025 o líder foi outro ("'+r25[0].label+'") — trate isso como um sinal emergente, ainda não uma regra comprovada.':'Não há dados de 2025 para confirmar consistência, trate com cautela.'))
     : '<b>Takeaway:</b> "'+best.label+'" rinde '+fmtNum(gap,0)+'% mejor que "'+worst.label+'" en 2026 (L/$1k adj. '+fmtNum(best.l1k_adj,1)+' vs '+fmtNum(worst.l1k_adj,1)+', '+best.n+' vs '+worst.n+' creativos). '+(consistent?'También lideró en 2025 — es un patrón durable, vale la pena briefearlo como default, no como resultado aislado.':(prior?'En 2025 el líder fue distinto ("'+r25[0].label+'") — trata esto como una señal emergente, todavía no una regla comprobada.':'No hay datos de 2025 para confirmar que sea consistente, trátalo con cautela.'));
 }
-function tbdDimensionPage(data, keyFn, title, subtitle, tabId, items25, items26){
+function tbdSafeDetect(fn){
+  var args = Array.prototype.slice.call(arguments,1);
+  try{ return fn.apply(null,args); }catch(e){ return null; }
+}
+function tbdDimensionPage(data, keyFn, title, subtitle, tabId, items25, items26, extraFindings){
   var r25 = tbdDimensionRollup(items25||data.y25, keyFn), r26 = tbdDimensionRollup(items26||data.y26, keyFn);
+  var extraHtml = (extraFindings||[]).map(function(f){ return f ? tbdTakeawayBox(f.body) : ''; }).join('');
   return '<h2 class="tbd-section-title">'+esc(title)+'</h2><p style="font-size:12px;color:var(--ink-faint);margin-top:-8px;">'+esc(subtitle)+'</p>'+
     tbdHowToCard(tabId)+
     '<div class="tbd-two-col"><div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y25_label'))+'</div>'+tbdDimTableHTML(r25,title)+'</div>'+
     '<div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y26_label'))+'</div>'+tbdDimTableHTML(r26,title)+'</div></div>'+
-    tbdTakeawayBox(tbdDimensionTakeaway(r25, r26, title));
+    tbdTakeawayBox(tbdDimensionTakeaway(r25, r26, title))+extraHtml;
 }
 
 /* ============================ render por pestana ============================ */
@@ -646,6 +763,7 @@ var TBD_RENDERERS = {
       tbdKpiCard(tbdS('kpi_creatives'), p25.num_creatives, p26.num_creatives, function(v){return fmtNum(v,0);}, true)+
       '</div>'+
       tbdTakeawayBox(insight)+
+      (mode==='video' ? '' : tbdTakeawayBox((tbdSafeDetect(tbdDetectSpendConcentrationRisk,data)||{}).body))+
       tbdViewToggleHTML('portfolio')+
       '<div class="tbd-two-col"><div>'+tbdCreativeTableHTML(top25, tbdS('top10')+' · 2025', '2025')+'</div><div>'+tbdCreativeTableHTML(top26, tbdS('top10')+' · 2026', '2026')+'</div></div>';
   },
@@ -671,20 +789,21 @@ var TBD_RENDERERS = {
       '<div class="tbd-two-col"><div>'+tbdCreativeTableHTML(f25, 'Generic · 2025', '2025')+'</div><div>'+tbdCreativeTableHTML(f26, 'Generic · 2026', '2026')+'</div></div>'+
       tbdTakeawayBox(insight);
   },
-  pvg: function(data){ return tbdDimensionPage(data, function(r){ return r.ad_type==='PROMO'?'Promo Ads':'Generic Ads'; }, tbdS('title_pvg'), tbdS('sub_pvg'), 'pvg'); },
-  tone: function(data){ return tbdDimensionPage(data, function(r){ return r.tone_category||'—'; }, tbdS('title_tone'), tbdS('sub_tone'), 'tone'); },
+  pvg: function(data){ return tbdDimensionPage(data, function(r){ return r.ad_type==='PROMO'?'Promo Ads':'Generic Ads'; }, tbdS('title_pvg'), tbdS('sub_pvg'), 'pvg', null, null, [tbdSafeDetect(tbdDetectPainPointAdTypeMismatch,data)]); },
+  tone: function(data){ return tbdDimensionPage(data, function(r){ return r.tone_category||'—'; }, tbdS('title_tone'), tbdS('sub_tone'), 'tone', null, null, [tbdSafeDetect(tbdDetectFearNeedsHumor,data), tbdSafeDetect(tbdDetectVolumeMarginDecouple,data,['tone_category'])]); },
   hooks: function(data){
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_hooks'))+'</h2>'+
       tbdHowToCard('hooks')+
       tbdDimensionPage(data, function(r){ return r.hook_audio_type_code||'—'; }, tbdS('title_hook_audio'), tbdS('sub_hook_audio'), null)+
       '<div style="height:18px;"></div>'+
-      tbdDimensionPage(data, function(r){ return r.hook_visual_type_code||'—'; }, tbdS('title_hook_visual'), tbdS('sub_hook_visual'), null);
+      tbdDimensionPage(data, function(r){ return r.hook_visual_type_code||'—'; }, tbdS('title_hook_visual'), tbdS('sub_hook_visual'), null)+
+      tbdTakeawayBox((tbdSafeDetect(tbdDetectHookPairInteraction,data)||{}).body);
   },
   versions: function(data){ return tbdDimensionPage(data, function(r){ return r.version ? ('V'+r.version) : 'V1'; }, tbdS('title_versions'), tbdS('sub_versions'), 'versions', data.v25, data.v26); },
-  campaigns: function(data){ return tbdDimensionPage(data, function(r){ return r.campaign_name||'—'; }, tbdS('title_campaigns'), tbdS('sub_campaigns'), 'campaigns'); },
-  promo_type: function(data){ return tbdDimensionPage(data, function(r){ return r.ad_type==='PROMO' ? (r.pain_point||'—') : null; }, tbdS('title_promo_type'), tbdS('sub_promo_type'), 'promo_type'); },
-  theme: function(data){ return tbdDimensionPage(data, function(r){ return r.theme||'—'; }, tbdS('title_theme'), tbdS('sub_theme'), 'theme'); },
-  ai_vs_real: function(data){ return tbdDimensionPage(data, function(r){ return r.type_of_production||'—'; }, tbdS('title_ai_vs_real'), tbdS('sub_ai_vs_real'), 'ai_vs_real'); },
+  campaigns: function(data){ return tbdDimensionPage(data, function(r){ return r.campaign_name||'—'; }, tbdS('title_campaigns'), tbdS('sub_campaigns'), 'campaigns', null, null, [tbdSafeDetect(tbdDetectCampaignHiddenStar,data), tbdSafeDetect(tbdDetectCampaignZombie,data)]); },
+  promo_type: function(data){ return tbdDimensionPage(data, function(r){ return r.ad_type==='PROMO' ? (r.pain_point||'—') : null; }, tbdS('title_promo_type'), tbdS('sub_promo_type'), 'promo_type', null, null, [tbdSafeDetect(tbdDetectCtaEmotionalMismatch,data)]); },
+  theme: function(data){ return tbdDimensionPage(data, function(r){ return r.theme||'—'; }, tbdS('title_theme'), tbdS('sub_theme'), 'theme', null, null, [tbdSafeDetect(tbdDetectMechanismFatigue,data), tbdSafeDetect(tbdDetectMechanismPainPointFit,data)]); },
+  ai_vs_real: function(data){ return tbdDimensionPage(data, function(r){ return r.type_of_production||'—'; }, tbdS('title_ai_vs_real'), tbdS('sub_ai_vs_real'), 'ai_vs_real', null, null, [tbdSafeDetect(tbdDetectCheapFormatMarginLeak,data)]); },
   jrhalo: function(data){
     var r25 = data.y25.slice().sort(function(a,b){return b.jr_l1k_adj-a.jr_l1k_adj;});
     var r26 = data.y26.slice().sort(function(a,b){return b.jr_l1k_adj-a.jr_l1k_adj;});
@@ -1085,9 +1204,394 @@ function tbdDetectCvrDivergence(data){
       :'"'+topLeadGen.nombre+'" es el creativo #1 por L/$1k adj. ('+fmtNum(topLeadGen.l1k_adj,1)+') pero su tasa de conversión ('+fmtPct(topLeadGen.cvr,1)+') está '+fmtNum(Math.abs(cvrGap),0)+'% por debajo del promedio del portafolio ('+fmtPct(avgCvr,1)+'). Está ganando en VOLUMEN de leads por dólar, no en CALIDAD — vale la pena revisar si está atrayendo prospectos menos calificados antes de escalarlo más.'),
   };
 }
+/* ============================ panel de expertos: 15 detectores nuevos ============================
+   Disenados por un flujo de 4 personas (CMO/Big Data, Psicologia del consumidor,
+   Diseno audiovisual, Copywriting/Comunicacion) en paralelo + una sintesis que
+   fusiono duplicados y descarto lo que no cruzaba dos senales reales. Mismo
+   contrato que los detectores anteriores: cruzan >=2 senales, umbral de tamano
+   de efecto explicito, null si no hay patron real. Los que reciben `dims`
+   evaluan TODAS las dimensiones de esa lista con el MISMO umbral y devuelven
+   solo el hallazgo mas fuerte -- si se les pasa un `dims` de un solo elemento
+   (ver wiring por pestana mas abajo) quedan restringidos a esa dimension. */
+function tbdDetectSpendConcentrationRisk(data){
+  var items = data.y26.filter(function(r){ return r.n>=3; });
+  if(items.length<6) return null;
+  var totalS = items.reduce(function(s,r){return s+r.s;},0);
+  if(totalS<=0) return null;
+  var top1 = items.slice().sort(function(a,b){return b.s-a.s;})[0];
+  var share = top1.s/totalS;
+  if(share<0.30) return null;
+  var totalC = items.reduce(function(s,r){return s+(r.c||0);},0);
+  var mnccPortfolio = totalC>0 ? (totalC-totalS)/totalC : 0;
+  if(!(top1.mncc<=mnccPortfolio-0.05 || top1.mncc<0)) return null;
+  var L=LANG;
+  return { strength: share*100, icon:'⚠',
+    title: L==='en'?'The portfolio depends on a single creative':L==='pt'?'O portfólio depende de um único criativo':'El portafolio depende de un solo creativo',
+    body: L==='en'?fmtNum(share*100,0)+'% of TV spend this period is concentrated in a single creative ("'+top1.nombre+'"), vs. '+items.length+' active creatives in the portfolio. Its margin (mncc) is '+fmtPct(top1.mncc,1)+' vs. '+fmtPct(mnccPortfolio,1)+' for the aggregate portfolio — if this creative fatigues, gets pulled, or loses channel approval, the whole period result is disproportionately exposed. Worth diversifying spend before scaling this single bet further.'
+      :L==='pt'?fmtNum(share*100,0)+'% do gasto de TV neste período está concentrado num único criativo ("'+top1.nombre+'"), vs. '+items.length+' criativos ativos no portfólio. Sua margem (mncc) é de '+fmtPct(top1.mncc,1)+' vs. '+fmtPct(mnccPortfolio,1)+' do portfólio agregado — se esse criativo perder força, for retirado ou perder aprovação de canal, o resultado do período fica desproporcionalmente exposto. Vale diversificar o gasto antes de escalar ainda mais essa única aposta.'
+      :fmtNum(share*100,0)+'% del gasto de TV en este período está concentrado en un solo creativo ("'+top1.nombre+'"), frente a '+items.length+' creativos activos en el portafolio. Su margen (mncc) es de '+fmtPct(top1.mncc,1)+' frente a '+fmtPct(mnccPortfolio,1)+' del portafolio agregado — si este creativo pierde fuerza, se retira o pierde aprobación de canal, el resultado del período se ve comprometido de forma desproporcionada. Vale la pena diversificar el gasto antes de seguir escalando esta única pieza.' };
+}
+function tbdDetectVolumeMarginDecouple(data, dims){
+  dims = dims || ['tone_category','theme_mechanism_code','pain_point','hook_audio_type_code','hook_visual_type_code'];
+  var best = null;
+  dims.forEach(function(dimKey){
+    var rollup = tbdDimensionRollup(data.y26, TBD_DIM_DEFS[dimKey].keyFn).filter(function(x){ return x.days>=5 && x.n>=3; });
+    if(rollup.length<2) return;
+    var byLeads = rollup.slice().sort(function(a,b){return b.l1k_adj-a.l1k_adj;})[0];
+    var byMargin = rollup.slice().sort(function(a,b){return b.mncc-a.mncc;})[0];
+    if(byLeads.label===byMargin.label) return;
+    var gapMncc = byMargin.mncc-byLeads.mncc;
+    if(gapMncc<0.08) return;
+    if(!best || gapMncc>best.gapMncc) best = {dimKey:dimKey, byLeads:byLeads, byMargin:byMargin, gapMncc:gapMncc};
+  });
+  if(!best) return null;
+  var L=LANG, dl=tbdDimLabel(best.dimKey);
+  return { strength: best.gapMncc*100, icon:'⇄',
+    title: L==='en'?'The '+dl+' generating the most leads isn\'t the most profitable':L==='pt'?'O '+dl+' que mais gera leads não é o mais rentável':'El '+dl+' que más leads genera no es el más rentable',
+    body: L==='en'?'"'+best.byLeads.label+'" is the '+dl+' generating the most leads (L/$1k adj. '+fmtNum(best.byLeads.l1k_adj,1)+') but its margin is only '+fmtPct(best.byLeads.mncc,1)+', vs. '+fmtPct(best.byMargin.mncc,1)+' for "'+best.byMargin.label+'" (L/$1k adj. '+fmtNum(best.byMargin.l1k_adj,1)+') — a '+fmtNum(best.gapMncc*100,0)+'pp gap. Scaling "'+best.byLeads.label+'" without revisiting offer/pricing may be buying volume at the expense of profitability.'
+      :L==='pt'?'"'+best.byLeads.label+'" é o '+dl+' que mais gera leads (L/$1k adj. '+fmtNum(best.byLeads.l1k_adj,1)+') mas sua margem é de apenas '+fmtPct(best.byLeads.mncc,1)+', vs. '+fmtPct(best.byMargin.mncc,1)+' de "'+best.byMargin.label+'" (L/$1k adj. '+fmtNum(best.byMargin.l1k_adj,1)+') — uma diferença de '+fmtNum(best.gapMncc*100,0)+'pp. Escalar "'+best.byLeads.label+'" sem revisar oferta/preço pode estar comprando volume às custas de rentabilidade.'
+      :'"'+best.byLeads.label+'" es el '+dl+' que más leads genera (L/$1k adj. '+fmtNum(best.byLeads.l1k_adj,1)+') pero su margen es de solo '+fmtPct(best.byLeads.mncc,1)+', frente a '+fmtPct(best.byMargin.mncc,1)+' de "'+best.byMargin.label+'" (L/$1k adj. '+fmtNum(best.byMargin.l1k_adj,1)+') — una brecha de '+fmtNum(best.gapMncc*100,0)+'pp. Escalar "'+best.byLeads.label+'" sin revisar oferta/precio puede estar comprando volumen a costa de rentabilidad.' };
+}
+function tbdDetectCostPerSaleReversal(data, dims){
+  dims = dims || ['ad_type','type_of_production','theme_mechanism_code','hook_visual_type_code','cta_type_code'];
+  var best = null;
+  dims.forEach(function(dimKey){
+    var rollup = tbdDimensionRollup(data.y26, TBD_DIM_DEFS[dimKey].keyFn).filter(function(x){ return x.days>=5 && x.cvr>0; });
+    if(rollup.length<2) return;
+    rollup.forEach(function(x){ x._costSale = x.cpl_adj/x.cvr; });
+    var byCpl = rollup.slice().sort(function(a,b){return a.cpl_adj-b.cpl_adj;})[0];
+    var bySale = rollup.slice().sort(function(a,b){return a._costSale-b._costSale;})[0];
+    if(byCpl.label===bySale.label) return;
+    var gapPct = (byCpl._costSale-bySale._costSale)/bySale._costSale*100;
+    if(gapPct<25) return;
+    if(!best || gapPct>best.gapPct) best = {dimKey:dimKey, byCpl:byCpl, bySale:bySale, gapPct:gapPct};
+  });
+  if(!best) return null;
+  var L=LANG, dl=tbdDimLabel(best.dimKey);
+  return { strength: best.gapPct, icon:'⇌',
+    title: L==='en'?'The "cheap" lead isn\'t the cheapest once it converts':L==='pt'?'O lead "barato" não é o mais barato até a venda':'El lead "barato" no es el más barato hasta la venta',
+    body: L==='en'?'"'+best.byCpl.label+'" ('+dl+') looks like the most cost-efficient option by CPL adj. ('+fmt$(best.byCpl.cpl_adj,2)+') but its '+fmtPct(best.byCpl.cvr,1)+' conversion means a real cost per enrollment of '+fmt$(best.byCpl._costSale,2)+' — '+fmtNum(best.gapPct,0)+'% more expensive than "'+best.bySale.label+'" (CPL adj. '+fmt$(best.bySale.cpl_adj,2)+', CVR '+fmtPct(best.bySale.cvr,1)+', cost per enrollment '+fmt$(best.bySale._costSale,2)+').'
+      :L==='pt'?'"'+best.byCpl.label+'" ('+dl+') parece a opção mais eficiente em CPL adj. ('+fmt$(best.byCpl.cpl_adj,2)+') mas sua conversão de '+fmtPct(best.byCpl.cvr,1)+' implica um custo real por matrícula de '+fmt$(best.byCpl._costSale,2)+' — '+fmtNum(best.gapPct,0)+'% mais caro que "'+best.bySale.label+'" (CPL adj. '+fmt$(best.bySale.cpl_adj,2)+', CVR '+fmtPct(best.bySale.cvr,1)+', custo por matrícula '+fmt$(best.bySale._costSale,2)+').'
+      :'"'+best.byCpl.label+'" ('+dl+') parece la opción más eficiente en CPL adj. ('+fmt$(best.byCpl.cpl_adj,2)+') pero su conversión de '+fmtPct(best.byCpl.cvr,1)+' implica un costo real por matrícula de '+fmt$(best.byCpl._costSale,2)+' — '+fmtNum(best.gapPct,0)+'% más caro que "'+best.bySale.label+'" (CPL adj. '+fmt$(best.bySale.cpl_adj,2)+', CVR '+fmtPct(best.bySale.cvr,1)+', costo por matrícula '+fmt$(best.bySale._costSale,2)+').' };
+}
+function tbdDetectGrowthWithoutQuality(data, dims){
+  dims = dims || ['pain_point','theme_mechanism_code','tone_category'];
+  var best = null;
+  dims.forEach(function(dimKey){
+    var r25 = tbdDimensionRollup(data.y25, TBD_DIM_DEFS[dimKey].keyFn).filter(function(x){return x.days>=5;});
+    var r26 = tbdDimensionRollup(data.y26, TBD_DIM_DEFS[dimKey].keyFn).filter(function(x){return x.days>=5;});
+    var map25 = {}; r25.forEach(function(x){map25[x.label]=x;});
+    r26.forEach(function(x26){
+      var x25 = map25[x26.label];
+      if(!x25 || x25.l1k_adj<=0) return;
+      var deltaL1k = (x26.l1k_adj-x25.l1k_adj)/x25.l1k_adj*100;
+      var deltaCvr = (x26.cvr-x25.cvr)*100, deltaMncc = (x26.mncc-x25.mncc)*100;
+      if(deltaL1k<20) return;
+      if(!(deltaCvr<=-3 || deltaMncc<=-5)) return;
+      if(!best || deltaL1k>best.deltaL1k) best = {dimKey:dimKey, label:x26.label, x25:x25, x26:x26, deltaL1k:deltaL1k, deltaCvr:deltaCvr, deltaMncc:deltaMncc};
+    });
+  });
+  if(!best) return null;
+  var L=LANG, dl=tbdDimLabel(best.dimKey);
+  var cvrDir = best.deltaCvr<0 ? (L==='en'?'dropped':L==='pt'?'caiu':'cayó') : (L==='en'?'rose':L==='pt'?'subiu':'subió');
+  var mnccDir = best.deltaMncc<0 ? (L==='en'?'dropped':L==='pt'?'caiu':'cayó') : (L==='en'?'rose':L==='pt'?'subiu':'subió');
+  return { strength: best.deltaL1k, icon:'▲⚠',
+    title: L==='en'?'More leads isn\'t more business':L==='pt'?'Mais leads não é mais negócio':'Más leads no es más negocio',
+    body: L==='en'?'In '+dl+' "'+best.label+'", adjusted leads grew '+fmtNum(best.deltaL1k,0)+'% from 2025 to 2026 ('+fmtNum(best.x25.l1k_adj,1)+' → '+fmtNum(best.x26.l1k_adj,1)+'), but conversion '+cvrDir+' '+fmtNum(Math.abs(best.deltaCvr),1)+'pp ('+fmtPct(best.x25.cvr,1)+' → '+fmtPct(best.x26.cvr,1)+') and margin '+mnccDir+' '+fmtNum(Math.abs(best.deltaMncc),1)+'pp ('+fmtPct(best.x25.mncc,1)+' → '+fmtPct(best.x26.mncc,1)+'). More leads here isn\'t proportionally generating more real business.'
+      :L==='pt'?'Em '+dl+' "'+best.label+'", os leads ajustados cresceram '+fmtNum(best.deltaL1k,0)+'% de 2025 para 2026 ('+fmtNum(best.x25.l1k_adj,1)+' → '+fmtNum(best.x26.l1k_adj,1)+'), mas a conversão '+cvrDir+' '+fmtNum(Math.abs(best.deltaCvr),1)+'pp ('+fmtPct(best.x25.cvr,1)+' → '+fmtPct(best.x26.cvr,1)+') e a margem '+mnccDir+' '+fmtNum(Math.abs(best.deltaMncc),1)+'pp ('+fmtPct(best.x25.mncc,1)+' → '+fmtPct(best.x26.mncc,1)+'). Mais leads aqui não está gerando proporcionalmente mais negócio real.'
+      :'En '+dl+' "'+best.label+'", los leads ajustados crecieron '+fmtNum(best.deltaL1k,0)+'% de 2025 a 2026 ('+fmtNum(best.x25.l1k_adj,1)+' → '+fmtNum(best.x26.l1k_adj,1)+'), pero la conversión '+cvrDir+' '+fmtNum(Math.abs(best.deltaCvr),1)+'pp ('+fmtPct(best.x25.cvr,1)+' → '+fmtPct(best.x26.cvr,1)+') y el margen '+mnccDir+' '+fmtNum(Math.abs(best.deltaMncc),1)+'pp ('+fmtPct(best.x25.mncc,1)+' → '+fmtPct(best.x26.mncc,1)+'). Más leads en esta línea no está generando proporcionalmente más negocio real.' };
+}
+function tbdDetectFragileLeader(data, dims){
+  dims = dims || ['tone_category','hook_audio_type_code','hook_visual_type_code','theme_mechanism_code','cta_type_code'];
+  var best = null;
+  dims.forEach(function(dimKey){
+    var rollup = tbdDimensionRollup(data.y26, TBD_DIM_DEFS[dimKey].keyFn).filter(function(x){return x.days>=3;});
+    if(rollup.length<3) return;
+    var sorted = rollup.slice().sort(function(a,b){return b.l1k_adj-a.l1k_adj;});
+    var v1=sorted[0], v2=sorted[1];
+    if(v2.l1k_adj<=0 || v2.days<=0) return;
+    var brecha = (v1.l1k_adj-v2.l1k_adj)/v2.l1k_adj*100;
+    var ratio = v1.days/v2.days;
+    if(brecha>10 || ratio>0.4) return;
+    var strength = (1-ratio)*100;
+    if(!best || strength>best.strength) best = {dimKey:dimKey, v1:v1, v2:v2, brecha:brecha, strength:strength};
+  });
+  if(!best) return null;
+  var L=LANG, dl=tbdDimLabel(best.dimKey);
+  return { strength: best.strength, icon:'≈',
+    title: L==='en'?'The current leader has little evidence behind it':L==='pt'?'O líder atual tem pouca evidência por trás':'El líder actual tiene poca evidencia detrás',
+    body: L==='en'?'"'+best.v1.label+'" tops the '+dl+' ranking with L/$1k adj. '+fmtNum(best.v1.l1k_adj,1)+', barely '+fmtNum(best.brecha,0)+'% above "'+best.v2.label+'" ('+fmtNum(best.v2.l1k_adj,1)+') — but "'+best.v1.label+'" has only '+best.v1.days+' days on air vs. '+best.v2.days+' for "'+best.v2.label+'". It\'s a lead with very little evidence behind it; give it more test days before scaling it.'
+      :L==='pt'?'"'+best.v1.label+'" lidera o ranking de '+dl+' com L/$1k adj. '+fmtNum(best.v1.l1k_adj,1)+', apenas '+fmtNum(best.brecha,0)+'% acima de "'+best.v2.label+'" ('+fmtNum(best.v2.l1k_adj,1)+') — mas "'+best.v1.label+'" tem apenas '+best.v1.days+' dias no ar vs. '+best.v2.days+' de "'+best.v2.label+'". É uma liderança com pouquíssima evidência; dê mais dias de teste antes de escalar.'
+      :'"'+best.v1.label+'" encabeza el ranking de '+dl+' con L/$1k adj. '+fmtNum(best.v1.l1k_adj,1)+', apenas '+fmtNum(best.brecha,0)+'% arriba de "'+best.v2.label+'" ('+fmtNum(best.v2.l1k_adj,1)+') — pero "'+best.v1.label+'" tiene solo '+best.v1.days+' días de pantalla frente a los '+best.v2.days+' de "'+best.v2.label+'". Es un liderazgo con muy poca evidencia; antes de escalarlo conviene darle más días de prueba.' };
+}
+function tbdDetectSeasonalSpendMismatch(data){
+  var items = data.y26.filter(function(r){return r.n>=3;});
+  if(items.length<4) return null;
+  var totalS = items.reduce(function(s,r){return s+r.s;},0);
+  var totalDays = items.reduce(function(s,r){return s+r.n;},0);
+  if(totalS<=0 || totalDays<=0) return null;
+  var demBySpend = items.reduce(function(s,r){return s+r.dem*r.s;},0)/totalS;
+  var demByDays = items.reduce(function(s,r){return s+r.dem*r.n;},0)/totalDays;
+  var brechaDem = demByDays-demBySpend;
+  var l1kAdjW = items.reduce(function(s,r){return s+r.l1k_adj*r.s;},0)/totalS;
+  var l1kW = items.reduce(function(s,r){return s+r.l1k*r.s;},0)/totalS;
+  if(l1kW<=0) return null;
+  var gapAjuste = (l1kAdjW/l1kW-1)*100;
+  if(brechaDem<8 || gapAjuste<10) return null;
+  var L=LANG;
+  return { strength: gapAjuste, icon:'◐',
+    title: L==='en'?'Spend didn\'t follow demand':L==='pt'?'O gasto não seguiu a demanda':'El gasto no siguió a la demanda',
+    body: L==='en'?'TV spend this period skewed toward weaker-demand weeks: the spend-weighted demand index was '+fmtNum(demBySpend,0)+' vs. '+fmtNum(demByDays,0)+' if spend had followed the same split as days on air — a '+fmtNum(brechaDem,0)+'-point gap. This lines up with adjusted L/$1k ('+fmtNum(l1kAdjW,1)+') beating raw ('+fmtNum(l1kW,1)+') by '+fmtNum(gapAjuste,0)+'%, a sign seasonality hid real efficiency. Reallocating budget toward high-demand weeks could capture that gap without spending more.'
+      :L==='pt'?'O gasto de TV neste período ficou enviesado para semanas de demanda mais fraca: o índice de demanda ponderado pelo gasto foi '+fmtNum(demBySpend,0)+' vs. '+fmtNum(demByDays,0)+' se o gasto tivesse seguido a mesma divisão dos dias no ar — uma diferença de '+fmtNum(brechaDem,0)+' pontos. Isso combina com o L/$1k ajustado ('+fmtNum(l1kAdjW,1)+') superando o bruto ('+fmtNum(l1kW,1)+') em '+fmtNum(gapAjuste,0)+'%, sinal de que a sazonalidade escondeu eficiência real. Realocar orçamento para semanas de alta demanda poderia capturar essa diferença sem gastar mais.'
+      :'El gasto de TV en este período estuvo sesgado hacia semanas de demanda débil: el índice de demanda ponderado por gasto fue '+fmtNum(demBySpend,0)+' vs. '+fmtNum(demByDays,0)+' si el gasto se hubiera repartido igual que los días en pantalla — una brecha de '+fmtNum(brechaDem,0)+' puntos. Esto coincide con que L/$1k ajustado ('+fmtNum(l1kAdjW,1)+') supera al crudo ('+fmtNum(l1kW,1)+') en '+fmtNum(gapAjuste,0)+'%, señal de que la estacionalidad escondió eficiencia real. Reasignar presupuesto hacia semanas de alta demanda podría capturar esa brecha sin gastar más.' };
+}
+function tbdDetectCampaignHiddenStar(data){
+  var byCampaign = {};
+  data.y26.forEach(function(r){ if(!r.campaign_name) return; (byCampaign[r.campaign_name]=byCampaign[r.campaign_name]||[]).push(r); });
+  var best = null;
+  Object.keys(byCampaign).forEach(function(camp){
+    var arr = byCampaign[camp];
+    var totalDays = arr.reduce(function(s,r){return s+r.n;},0);
+    if(arr.length<4 || totalDays<10) return;
+    var qualified = arr.filter(function(r){return r.n>=3;});
+    if(!qualified.length) return;
+    var m = qualified.slice().sort(function(a,b){return b.l1k_adj-a.l1k_adj;})[0];
+    var rest = arr.filter(function(r){return r!==m;});
+    var restS = rest.reduce(function(s,r){return s+r.s;},0);
+    if(restS<=0) return;
+    var restAvg = rest.reduce(function(s,r){return s+r.l1k_adj*r.s;},0)/restS;
+    if(restAvg<=0) return;
+    var gapPct = (m.l1k_adj-restAvg)/restAvg*100;
+    var totalS = arr.reduce(function(s,r){return s+r.s;},0);
+    var spendShare = totalS>0 ? m.s/totalS : 0;
+    if(gapPct<50 || spendShare>0.25) return;
+    if(!best || gapPct>best.gapPct) best = {camp:camp, m:m, restAvg:restAvg, gapPct:gapPct, spendShare:spendShare, n:arr.length};
+  });
+  if(!best) return null;
+  var L=LANG;
+  return { strength: best.gapPct, icon:'★',
+    title: L==='en'?'A clear winner is underfunded within its own campaign':L==='pt'?'Um vencedor claro está subfinanciado dentro da própria campanha':'Un ganador claro está subfinanciado dentro de su propia campaña',
+    body: L==='en'?'Within campaign "'+best.camp+'" ('+best.n+' creatives), "'+best.m.nombre+'" outperforms the rest of the campaign by '+fmtNum(best.gapPct,0)+'% (L/$1k adj. '+fmtNum(best.m.l1k_adj,1)+' vs. '+fmtNum(best.restAvg,1)+') but only gets '+fmtNum(best.spendShare*100,0)+'% of the campaign\'s spend. Worth reallocating budget within the same campaign before asking for a new creative.'
+      :L==='pt'?'Dentro da campanha "'+best.camp+'" ('+best.n+' criativos), "'+best.m.nombre+'" rende '+fmtNum(best.gapPct,0)+'% acima do resto da campanha (L/$1k adj. '+fmtNum(best.m.l1k_adj,1)+' vs. '+fmtNum(best.restAvg,1)+') mas recebe apenas '+fmtNum(best.spendShare*100,0)+'% do gasto da campanha. Vale realocar orçamento dentro da mesma campanha antes de pedir um criativo novo.'
+      :'Dentro de la campaña "'+best.camp+'" ('+best.n+' creativos), "'+best.m.nombre+'" rinde '+fmtNum(best.gapPct,0)+'% por encima del resto de la campaña (L/$1k adj. '+fmtNum(best.m.l1k_adj,1)+' vs. '+fmtNum(best.restAvg,1)+') pero solo recibe '+fmtNum(best.spendShare*100,0)+'% del gasto de la campaña. Conviene reasignar presupuesto dentro de la misma campaña antes de pedir un creativo nuevo.' };
+}
+function tbdDetectCampaignZombie(data){
+  var byCampaign = {};
+  data.y26.forEach(function(r){ if(!r.campaign_name) return; (byCampaign[r.campaign_name]=byCampaign[r.campaign_name]||[]).push(r); });
+  var best = null;
+  Object.keys(byCampaign).forEach(function(camp){
+    var arr = byCampaign[camp];
+    var totalDays = arr.reduce(function(s,r){return s+r.n;},0);
+    if(arr.length<4 || totalDays<10) return;
+    var qualified = arr.filter(function(r){return r.n>=3;});
+    if(!qualified.length) return;
+    var w = qualified.slice().sort(function(a,b){return a.l1k_adj-b.l1k_adj;})[0];
+    var rest = arr.filter(function(r){return r!==w;});
+    var restC = rest.reduce(function(s,r){return s+(r.c||0);},0);
+    var restS = rest.reduce(function(s,r){return s+r.s;},0);
+    var mnccRest = restC>0 ? (restC-restS)/restC : 0;
+    var totalS = arr.reduce(function(s,r){return s+r.s;},0);
+    var spendShare = totalS>0 ? w.s/totalS : 0;
+    if(spendShare<0.30 || !(w.mncc<=mnccRest-0.20)) return;
+    var gapPts = (mnccRest-w.mncc)*100;
+    if(!best || gapPts>best.gapPts) best = {camp:camp, w:w, mnccRest:mnccRest, spendShare:spendShare, gapPts:gapPts};
+  });
+  if(!best) return null;
+  var L=LANG;
+  return { strength: best.gapPts, icon:'⊘',
+    title: L==='en'?'Zombie creative: spend concentrated in the campaign\'s worst margin':L==='pt'?'Criativo zumbi: gasto concentrado na pior margem da campanha':'Creativo zombie: gasto concentrado en el peor margen de la campaña',
+    body: L==='en'?'In campaign "'+best.camp+'", "'+best.w.nombre+'" absorbs '+fmtNum(best.spendShare*100,0)+'% of the campaign\'s spend but its margin (mncc '+fmtPct(best.w.mncc,1)+') is '+fmtNum(best.gapPts,0)+' points below the rest ('+fmtPct(best.mnccRest,1)+'). It\'s a candidate for immediate pause, not "give it more time".'
+      :L==='pt'?'Na campanha "'+best.camp+'", "'+best.w.nombre+'" absorve '+fmtNum(best.spendShare*100,0)+'% do gasto da campanha mas sua margem (mncc '+fmtPct(best.w.mncc,1)+') está '+fmtNum(best.gapPts,0)+' pontos abaixo do resto ('+fmtPct(best.mnccRest,1)+'). É candidato a pausa imediata, não a "dar mais tempo".'
+      :'En la campaña "'+best.camp+'", "'+best.w.nombre+'" concentra '+fmtNum(best.spendShare*100,0)+'% del gasto de la campaña pero su margen (mncc '+fmtPct(best.w.mncc,1)+') está '+fmtNum(best.gapPts,0)+' puntos por debajo del resto ('+fmtPct(best.mnccRest,1)+'). Es candidato a pausa inmediata, no a "darle más tiempo".' };
+}
+function tbdDetectFearNeedsHumor(data){
+  var fearItems = data.y26.filter(tbdIsFearPain);
+  if(!fearItems.length) return null;
+  var roll = tbdDimensionRollup(fearItems, function(r){return r.tone_category||null;}).filter(function(x){return x.days>=8;});
+  var humor = roll.filter(function(x){return x.label==='HUMOR';})[0];
+  var serious = roll.filter(function(x){return x.label==='MOTIVATIONAL'||x.label==='CORPORATIVE';}).sort(function(a,b){return b.days-a.days;})[0];
+  if(!humor || !serious || serious.l1k_adj<=0) return null;
+  var gap = (humor.l1k_adj-serious.l1k_adj)/serious.l1k_adj*100;
+  if(gap<20) return null;
+  var painLabel = fearItems[0].pain_point || 'Fear';
+  var L=LANG;
+  return { strength: gap, icon:'◐',
+    title: L==='en'?'Humor cuts the tension better than a serious tone on fear pain points':L==='pt'?'O humor quebra a tensão melhor que o tom sério em pain points de medo':'El humor rompe la tensión mejor que el tono serio en pain points de miedo',
+    body: L==='en'?'For fear-based pain points like "'+painLabel+'", humor cuts through better than a serious tone: "'+humor.label+'" reaches '+fmtNum(humor.l1k_adj,1)+' L/$1k adj. vs. only '+fmtNum(serious.l1k_adj,1)+' for "'+serious.label+'" — a '+fmtNum(gap,0)+'% edge. Fear without an escape valve may be triggering avoidance, not action.'
+      :L==='pt'?'Para pain points de medo como "'+painLabel+'", o humor quebra a tensão melhor que o tom sério: "'+humor.label+'" alcança '+fmtNum(humor.l1k_adj,1)+' L/$1k adj. vs. apenas '+fmtNum(serious.l1k_adj,1)+' de "'+serious.label+'" — uma vantagem de '+fmtNum(gap,0)+'%. O medo sem válvula de escape pode estar gerando rejeição, não ação.'
+      :'Para pain points de amenaza como "'+painLabel+'", el humor rompe la tensión mejor que el tono serio: "'+humor.label+'" logra '+fmtNum(humor.l1k_adj,1)+' L/$1k adj. vs. solo '+fmtNum(serious.l1k_adj,1)+' en "'+serious.label+'" — una ventaja de '+fmtNum(gap,0)+'%. El miedo sin válvula de escape puede estar generando rechazo, no acción.' };
+}
+function tbdDetectCheapFormatMarginLeak(data){
+  var roll = tbdDimensionRollup(data.y26, function(r){return r.type_of_production||null;}).filter(function(x){return x.days>=8;});
+  var filmed = roll.filter(function(x){return x.label==='FILMED';})[0];
+  if(!filmed || filmed.l1k_adj<=0) return null;
+  var best = null;
+  roll.filter(function(x){return x.label!=='FILMED';}).forEach(function(x){
+    var gapL1k = (x.l1k_adj-filmed.l1k_adj)/filmed.l1k_adj*100;
+    var gapMncc = (x.mncc-filmed.mncc)*100;
+    if(Math.abs(gapL1k)>10 || gapMncc>-8) return;
+    if(!best || Math.abs(gapMncc)>Math.abs(best.gapMncc)) best = {x:x, gapL1k:gapL1k, gapMncc:gapMncc};
+  });
+  if(!best) return null;
+  var L=LANG;
+  return { strength: Math.abs(best.gapMncc), icon:'▽',
+    title: L==='en'?'Production savings are being paid for with margin':L==='pt'?'A economia de produção está sendo paga com margem':'El ahorro en producción se financia con margen',
+    body: L==='en'?'"'+best.x.label+'" matches Filmed on lead volume (L/$1k adj. '+fmtNum(best.x.l1k_adj,1)+' vs. '+fmtNum(filmed.l1k_adj,1)+', only '+fmtNum(Math.abs(best.gapL1k),0)+'% apart) but its margin is '+fmtPct(best.x.mncc,1)+' vs. '+fmtPct(filmed.mncc,1)+' for Filmed — '+fmtNum(Math.abs(best.gapMncc),0)+' points less (n='+best.x.days+' days). The production savings are leaking into lead quality: it isn\'t reaching the business result.'
+      :L==='pt'?'"'+best.x.label+'" iguala Filmado em volume de leads (L/$1k adj. '+fmtNum(best.x.l1k_adj,1)+' vs. '+fmtNum(filmed.l1k_adj,1)+', apenas '+fmtNum(Math.abs(best.gapL1k),0)+'% de diferença) mas sua margem é '+fmtPct(best.x.mncc,1)+' vs. '+fmtPct(filmed.mncc,1)+' de Filmado — '+fmtNum(Math.abs(best.gapMncc),0)+' pontos a menos (n='+best.x.days+' dias). A economia de produção está vazando na qualidade do lead: não chega ao resultado de negócio.'
+      :'"'+best.x.label+'" iguala a Filmado en volumen de leads (L/$1k adj. '+fmtNum(best.x.l1k_adj,1)+' vs. '+fmtNum(filmed.l1k_adj,1)+', solo '+fmtNum(Math.abs(best.gapL1k),0)+'% de diferencia) pero su margen es '+fmtPct(best.x.mncc,1)+' vs. '+fmtPct(filmed.mncc,1)+' de Filmado — '+fmtNum(Math.abs(best.gapMncc),0)+' puntos menos (n='+best.x.days+' días). El ahorro en producción se está filtrando en la calidad del lead: no llega al resultado de negocio.' };
+}
+function tbdDetectMechanismFatigue(data){
+  var byMech = {};
+  data.y26.forEach(function(r){ if(!r.theme_mechanism_code || r.n<3) return; (byMech[r.theme_mechanism_code]=byMech[r.theme_mechanism_code]||[]).push(r); });
+  var best = null;
+  Object.keys(byMech).forEach(function(mech){
+    var arr = byMech[mech];
+    if(arr.length<3) return;
+    arr = arr.slice().sort(function(a,b){ var da=tbdLaunchDateOf(a), db=tbdLaunchDateOf(b); return (da||'')<(db||'')?-1:1; });
+    var first = arr[0], reps = arr.slice(1);
+    var repsDays = reps.reduce(function(s,r){return s+r.n;},0);
+    if(repsDays<10 || first.l1k_adj<=0) return;
+    var repsS = reps.reduce(function(s,r){return s+r.s;},0);
+    if(repsS<=0) return;
+    var repsAvg = reps.reduce(function(s,r){return s+r.l1k_adj*r.s;},0)/repsS;
+    if(repsAvg>first.l1k_adj*0.80) return;
+    var drop = (1-repsAvg/first.l1k_adj)*100;
+    if(!best || drop>best.drop) best = {mech:mech, first:first, reps:reps, repsAvg:repsAvg, drop:drop};
+  });
+  if(!best) return null;
+  var L=LANG;
+  return { strength: best.drop, icon:'♻',
+    title: L==='en'?'The mechanism wears out, not the creative':L==='pt'?'O mecanismo se desgasta, não o criativo':'El mecanismo se desgasta, no el creativo',
+    body: L==='en'?'The "'+best.mech+'" mechanism has been recycled across '+(best.reps.length+1)+' distinct Ad Names. The first time it was used it hit '+fmtNum(best.first.l1k_adj,1)+' L/$1k adj.; across the '+best.reps.length+' repeats since, the average drops to '+fmtNum(best.repsAvg,1)+' ('+fmtNum(best.drop,0)+'% less). Even if the commercial "looks new," the audience already learned the trick, not the video.'
+      :L==='pt'?'O mecanismo "'+best.mech+'" foi reciclado em '+(best.reps.length+1)+' Ad Names distintos. Na primeira vez que foi usado, rendeu '+fmtNum(best.first.l1k_adj,1)+' L/$1k adj.; nas '+best.reps.length+' repetições seguintes, a média cai para '+fmtNum(best.repsAvg,1)+' ('+fmtNum(best.drop,0)+'% menos). Mesmo que o comercial "pareça novo", a audiência já se habituou ao truque, não ao vídeo.'
+      :'El mecanismo "'+best.mech+'" se ha reciclado en '+(best.reps.length+1)+' Ad Names distintos. La primera vez que se usó rindió '+fmtNum(best.first.l1k_adj,1)+' L/$1k adj.; en las '+best.reps.length+' repeticiones siguientes el promedio cae a '+fmtNum(best.repsAvg,1)+' ('+fmtNum(best.drop,0)+'% menos). Aunque el comercial "se vea nuevo", la audiencia ya se habituó al truco psicológico, no al video.' };
+}
+function tbdDetectCtaEmotionalMismatch(data){
+  function cvrFor(items, ctaCode){
+    var arr = items.filter(function(r){return r.cta_type_code===ctaCode;});
+    var days = arr.reduce(function(s,r){return s+r.n;},0);
+    if(days<5 || arr.length<3) return null;
+    var totalL = arr.reduce(function(s,r){return s+r.l;},0), totalE = arr.reduce(function(s,r){return s+r.e;},0);
+    if(totalL<=0) return null;
+    return { cvr: totalE/totalL };
+  }
+  var procItems = data.y26.filter(function(r){ return tbdPainPrefix(r)==='PROC'; });
+  var nonProcItems = data.y26.filter(function(r){ var p=tbdPainPrefix(r); return p==='EXC'||p==='MOV'; });
+  var procWa = cvrFor(procItems,'qr_whatsapp_contact'), procDi = cvrFor(procItems,'qr_only_enrollment');
+  var nonWa = cvrFor(nonProcItems,'qr_whatsapp_contact'), nonDi = cvrFor(nonProcItems,'qr_only_enrollment');
+  if(!procWa||!procDi||!nonWa||!nonDi||procDi.cvr<=0||nonDi.cvr<=0) return null;
+  var whatsappIdx = procWa.cvr/procDi.cvr, nonProcIdx = nonWa.cvr/nonDi.cvr;
+  if(!(whatsappIdx>=1.25 && nonProcIdx<=0.90)) return null;
+  var L=LANG;
+  return { strength: (whatsappIdx/nonProcIdx-1)*100, icon:'◇',
+    title: L==='en'?'The CTA should be briefed together with the pain point':L==='pt'?'O CTA deve ser briefado junto com o pain point':'El CTA debe briefearse junto con el pain point',
+    body: L==='en'?'When the pain point is fear/skill-based (PROC), the "qr_whatsapp_contact" CTA converts '+fmtNum(whatsappIdx,2)+'x better than "qr_only_enrollment" (CVR '+fmtPct(procWa.cvr,1)+' vs. '+fmtPct(procDi.cvr,1)+'). But on offer/urgency pain points, that edge disappears or flips (CVR '+fmtPct(nonWa.cvr,1)+' vs. '+fmtPct(nonDi.cvr,1)+'). The CTA should be briefed together with the pain point, not generically.'
+      :L==='pt'?'Quando o pain point é de medo/habilidade (PROC), o CTA "qr_whatsapp_contact" converte '+fmtNum(whatsappIdx,2)+'x melhor que "qr_only_enrollment" (CVR '+fmtPct(procWa.cvr,1)+' vs. '+fmtPct(procDi.cvr,1)+'). Mas em pain points de oferta/urgência, essa vantagem desaparece ou se inverte (CVR '+fmtPct(nonWa.cvr,1)+' vs. '+fmtPct(nonDi.cvr,1)+'). O CTA deveria ser briefado junto com o pain point, não de forma genérica.'
+      :'Cuando el pain point es de miedo/habilidad (PROC), el CTA "qr_whatsapp_contact" convierte '+fmtNum(whatsappIdx,2)+'x más que "qr_only_enrollment" (CVR '+fmtPct(procWa.cvr,1)+' vs. '+fmtPct(procDi.cvr,1)+'). Pero en pain points de oferta/urgencia, esa ventaja desaparece o se invierte (CVR '+fmtPct(nonWa.cvr,1)+' vs. '+fmtPct(nonDi.cvr,1)+'). El CTA debería briefearse junto con el pain point, no de forma genérica.' };
+}
+function tbdDetectPainPointAdTypeMismatch(data){
+  function l1kFor(items, fam, adType){
+    var arr = items.filter(function(r){ return tbdPainPrefix(r)===fam && r.ad_type===adType; });
+    var days = arr.reduce(function(s,r){return s+r.n;},0);
+    if(days<5 || arr.length<3) return null;
+    var roll = tbdDimensionRollup(arr, function(){return 'x';})[0];
+    return roll ? roll.l1k_adj : null;
+  }
+  var excPromo = l1kFor(data.y26,'EXC','PROMO'), procPromo = l1kFor(data.y26,'PROC','PROMO');
+  var excGeneric = l1kFor(data.y26,'EXC','GENERIC'), procGeneric = l1kFor(data.y26,'PROC','GENERIC');
+  if(!excPromo||!procPromo||!excGeneric||!procGeneric||procPromo<=0||excGeneric<=0) return null;
+  var excPromoIdx = excPromo/procPromo, excGenericIdx = excGeneric/procGeneric;
+  var confirmed = excPromoIdx>=1.20 && excGenericIdx<=0.83;
+  var inverted = excPromoIdx<=0.83 && excGenericIdx>=1.20;
+  if(!confirmed && !inverted) return null;
+  var L=LANG;
+  var title = confirmed
+    ? (L==='en'?'The pain point should change by ad type':L==='pt'?'O pain point deve mudar conforme o tipo de anúncio':'El pain point debe cambiar según el tipo de anuncio')
+    : (L==='en'?'The pain-point casting intuition is backwards':L==='pt'?'A intuição de casting do pain point está invertida':'La intuición de casting de pain point está al revés');
+  return { strength: (Math.abs(excPromoIdx-1)+Math.abs(excGenericIdx-1))*50, icon:'⇌', title: title,
+    body: L==='en'?'In Promo, cost/urgency pain points (EXC) perform '+fmtNum(excPromoIdx,2)+'x vs. skill/trust ones (PROC): L/$1k adj. '+fmtNum(excPromo,1)+' vs. '+fmtNum(procPromo,1)+'. In Generic the relationship flips: PROC performs '+fmtNum(1/excGenericIdx,2)+'x more than EXC ('+fmtNum(procGeneric,1)+' vs. '+fmtNum(excGeneric,1)+'). The pain point should change by ad type, not repeat by default.'
+      :L==='pt'?'Em Promo, os pain points de custo/urgência (EXC) rendem '+fmtNum(excPromoIdx,2)+'x vs. os de habilidade/confiança (PROC): L/$1k adj. '+fmtNum(excPromo,1)+' vs. '+fmtNum(procPromo,1)+'. Em Generic a relação se inverte: PROC rende '+fmtNum(1/excGenericIdx,2)+'x mais que EXC ('+fmtNum(procGeneric,1)+' vs. '+fmtNum(excGeneric,1)+'). O pain point deve mudar conforme o tipo de anúncio, não se repetir por padrão.'
+      :'En Promo, los pain points de urgencia/costo (EXC) rinden '+fmtNum(excPromoIdx,2)+'x lo que rinden los de habilidad/confianza (PROC): L/$1k adj. '+fmtNum(excPromo,1)+' vs. '+fmtNum(procPromo,1)+'. En Generic la relación se invierte: PROC rinde '+fmtNum(1/excGenericIdx,2)+'x más que EXC ('+fmtNum(procGeneric,1)+' vs. '+fmtNum(excGeneric,1)+'). El pain point debe cambiar según el tipo de anuncio, no repetirse por default.' };
+}
+function tbdDetectHookPairInteraction(data){
+  var items = data.y26.filter(function(r){ return r.hook_audio_type_code && r.hook_visual_type_code; });
+  var combos = {};
+  items.forEach(function(r){ var k=r.hook_audio_type_code+'|||'+r.hook_visual_type_code; (combos[k]=combos[k]||[]).push(r); });
+  function pooledL1k(arr){ var roll = tbdDimensionRollup(arr, function(){return 'x';})[0]; return roll?roll.l1k_adj:null; }
+  var best = null;
+  Object.keys(combos).forEach(function(k){
+    var arr = combos[k];
+    var days = arr.reduce(function(s,r){return s+r.n;},0);
+    if(days<5) return;
+    var parts = k.split('|||'), audio=parts[0], visual=parts[1];
+    var comboL1k = pooledL1k(arr);
+    if(comboL1k==null) return;
+    var audioSoloArr = items.filter(function(r){return r.hook_audio_type_code===audio && r.hook_visual_type_code!==visual;});
+    var visualSoloArr = items.filter(function(r){return r.hook_visual_type_code===visual && r.hook_audio_type_code!==audio;});
+    var audioSolo = audioSoloArr.length ? pooledL1k(audioSoloArr) : null;
+    var visualSolo = visualSoloArr.length ? pooledL1k(visualSoloArr) : null;
+    if(audioSolo==null || visualSolo==null) return;
+    var maxSolo = Math.max(audioSolo, visualSolo), minSolo = Math.min(audioSolo, visualSolo);
+    if(maxSolo>0 && comboL1k>=1.20*maxSolo){
+      var synergyPct = (comboL1k/maxSolo-1)*100;
+      if(!best || synergyPct>best.strength) best = {type:'synergy', audio:audio, visual:visual, comboL1k:comboL1k, audioSolo:audioSolo, visualSolo:visualSolo, days:days, strength:synergyPct};
+    } else if(minSolo>0 && comboL1k<=0.80*minSolo){
+      var conflictPct = (1-comboL1k/minSolo)*100;
+      var weakLabel = audioSolo<visualSolo ? audio : visual, weakVal = Math.min(audioSolo,visualSolo);
+      if(!best || conflictPct>best.strength) best = {type:'clash', audio:audio, visual:visual, comboL1k:comboL1k, weakLabel:weakLabel, weakVal:weakVal, days:days, strength:conflictPct};
+    }
+  });
+  if(!best) return null;
+  var L=LANG;
+  if(best.type==='synergy'){
+    return { strength: best.strength, icon:'⨯', type:'synergy',
+      title: L==='en'?'The effect belongs to the pairing, not a single ingredient':L==='pt'?'O efeito é da dupla, não de um ingrediente isolado':'El efecto es de la pareja, no de un ingrediente suelto',
+      body: L==='en'?'The pairing "'+best.audio+'" + "'+best.visual+'" reaches '+fmtNum(best.comboL1k,1)+' L/$1k adj. — '+fmtNum(best.strength,0)+'% more than "'+best.audio+'" with other visuals ('+fmtNum(best.audioSolo,1)+') and than "'+best.visual+'" with other audio ('+fmtNum(best.visualSolo,1)+') (n='+best.days+' days). Brief this exact combination, not just the hook type on its own.'
+        :L==='pt'?'A dupla "'+best.audio+'" + "'+best.visual+'" rende '+fmtNum(best.comboL1k,1)+' L/$1k adj. — '+fmtNum(best.strength,0)+'% a mais que "'+best.audio+'" com outros visuais ('+fmtNum(best.audioSolo,1)+') e que "'+best.visual+'" com outro áudio ('+fmtNum(best.visualSolo,1)+') (n='+best.days+' dias). Faça o brief dessa combinação exata, não só do tipo de hook isolado.'
+        :'La pareja "'+best.audio+'" + "'+best.visual+'" rinde '+fmtNum(best.comboL1k,1)+' en L/$1k adj. — un '+fmtNum(best.strength,0)+'% más que "'+best.audio+'" con otros visuales ('+fmtNum(best.audioSolo,1)+') y que "'+best.visual+'" con otro audio ('+fmtNum(best.visualSolo,1)+') (n='+best.days+' días). Briefear esta combinación exacta, no solo el tipo de hook por separado.' };
+  }
+  return { strength: best.strength, icon:'⨯', type:'clash',
+    title: L==='en'?'This hook pairing cancels itself out':L==='pt'?'Essa dupla de hooks se anula ao se combinar':'Esta pareja de hooks se anula al combinarse',
+    body: L==='en'?'The combination "'+best.audio+'" + "'+best.visual+'" reaches only '+fmtNum(best.comboL1k,1)+' L/$1k adj. — '+fmtNum(best.strength,0)+'% below its weakest ingredient on its own ("'+best.weakLabel+'": '+fmtNum(best.weakVal,1)+') (n='+best.days+' days). Each element works fine with other pairings; together they cancel out. Avoid briefing this specific combination even though both resources test well individually.'
+      :L==='pt'?'A combinação "'+best.audio+'" + "'+best.visual+'" rende apenas '+fmtNum(best.comboL1k,1)+' L/$1k adj. — '+fmtNum(best.strength,0)+'% abaixo do seu ingrediente mais fraco isolado ("'+best.weakLabel+'": '+fmtNum(best.weakVal,1)+') (n='+best.days+' dias). Cada elemento funciona bem com outras duplas; juntos se anulam. Evite fazer o brief dessa combinação específica mesmo que os dois recursos testem bem individualmente.'
+      :'La combinación "'+best.audio+'" + "'+best.visual+'" rinde solo '+fmtNum(best.comboL1k,1)+' en L/$1k adj. — un '+fmtNum(best.strength,0)+'% por debajo de su ingrediente más débil por separado ("'+best.weakLabel+'": '+fmtNum(best.weakVal,1)+') (n='+best.days+' días). Cada elemento funciona bien con otras parejas; juntos se anulan. Evitar briefear esta combinación específica aunque ambos recursos prueben bien por su cuenta.' };
+}
+function tbdDetectMechanismPainPointFit(data){
+  var portfolioRoll = tbdDimensionRollup(data.y26, function(r){return r.pain_point||null;}).filter(function(x){return x.days>=3;});
+  if(!portfolioRoll.length) return null;
+  var portfolioBest = portfolioRoll[0];
+  var byMech = {};
+  data.y26.forEach(function(r){ if(!r.theme_mechanism_code) return; (byMech[r.theme_mechanism_code]=byMech[r.theme_mechanism_code]||[]).push(r); });
+  var best = null;
+  Object.keys(byMech).forEach(function(mech){
+    var arr = byMech[mech];
+    var distinctPains = new Set(arr.map(function(r){return r.pain_point;}).filter(Boolean));
+    if(arr.length<3 || distinctPains.size<2) return;
+    var roll = tbdDimensionRollup(arr, function(r){return r.pain_point||null;}).filter(function(x){return x.days>=3;});
+    if(roll.length<2) return;
+    var mechBest = roll[0];
+    var mechDefault = roll.filter(function(x){return x.label===portfolioBest.label;})[0];
+    if(!mechDefault || mechBest.label===portfolioBest.label || mechDefault.l1k_adj<=0) return;
+    var gap = (mechBest.l1k_adj-mechDefault.l1k_adj)/mechDefault.l1k_adj*100;
+    if(gap<20) return;
+    if(!best || gap>best.gap) best = {mech:mech, mechBest:mechBest, mechDefault:mechDefault, gap:gap};
+  });
+  if(!best) return null;
+  var L=LANG;
+  return { strength: best.gap, icon:'◆',
+    title: L==='en'?'Each narrative mechanism has its own winning pain point':L==='pt'?'Cada mecanismo narrativo tem seu próprio pain point vencedor':'Cada mecanismo tiene su propio pain point ganador',
+    body: L==='en'?'The best-performing pain point isn\'t the same for every narrative mechanism: "'+best.mech+'" performs better with "'+best.mechBest.label+'" ('+fmtNum(best.mechBest.l1k_adj,1)+' L/$1k adj.) than with "'+best.mechDefault.label+'" ('+fmtNum(best.mechDefault.l1k_adj,1)+'), the portfolio\'s overall "champion" pain point — a '+fmtNum(best.gap,0)+'% difference. Briefing this mechanism with the default pain point leaves performance on the table.'
+      :L==='pt'?'O pain point que melhor funciona não é o mesmo para todos os mecanismos narrativos: "'+best.mech+'" rende melhor com "'+best.mechBest.label+'" ('+fmtNum(best.mechBest.l1k_adj,1)+' L/$1k adj.) do que com "'+best.mechDefault.label+'" ('+fmtNum(best.mechDefault.l1k_adj,1)+'), o pain point "campeão geral" do portfólio — uma diferença de '+fmtNum(best.gap,0)+'%. Fazer o brief desse mecanismo com o pain point padrão deixa performance na mesa.'
+      :'El pain point que mejor funciona no es el mismo para todos los mecanismos narrativos: "'+best.mech+'" rinde mejor con "'+best.mechBest.label+'" ('+fmtNum(best.mechBest.l1k_adj,1)+' L/$1k adj.) que con "'+best.mechDefault.label+'" ('+fmtNum(best.mechDefault.l1k_adj,1)+'), el pain point "campeón general" del portafolio — una diferencia de '+fmtNum(best.gap,0)+'%. Briefear este mecanismo con el pain point por defecto deja rendimiento sobre la mesa.' };
+}
 function tbdDeepInsights(data){
   var detectors = [tbdDetectRankReversal, tbdDetectToneByAdType, tbdDetectHookWearout, tbdDetectNewVsRecurring, tbdDetectJrHaloShare, tbdDetectCvrDivergence,
-    function(d){ return tbdDetectSpendVsDemandTiming(d,'2026'); }, function(d){ return tbdDetectSpendVsDemandTiming(d,'2025'); }];
+    function(d){ return tbdDetectSpendVsDemandTiming(d,'2026'); }, function(d){ return tbdDetectSpendVsDemandTiming(d,'2025'); },
+    // panel de expertos (CMO/Big Data, Psicologia del consumidor, Audiovisual, Copywriting) -- ver especificacion sintetizada
+    tbdDetectSpendConcentrationRisk, tbdDetectVolumeMarginDecouple, tbdDetectCostPerSaleReversal, tbdDetectGrowthWithoutQuality,
+    tbdDetectFragileLeader, tbdDetectSeasonalSpendMismatch, tbdDetectCampaignHiddenStar, tbdDetectCampaignZombie,
+    tbdDetectFearNeedsHumor, tbdDetectCheapFormatMarginLeak, tbdDetectMechanismFatigue, tbdDetectCtaEmotionalMismatch,
+    tbdDetectPainPointAdTypeMismatch, tbdDetectHookPairInteraction, tbdDetectMechanismPainPointFit];
   var found = [];
   detectors.forEach(function(fn){ try{ var r = fn(data); if(r) found.push(r); }catch(e){} });
   return found.sort(function(a,b){ return b.strength-a.strength; });
@@ -1116,12 +1620,31 @@ function tbdDirectionCards(data){
   var timing = tbdDetectSpendVsDemandTiming(data,'2026');
   var smallNHigh = data.y26.filter(function(r){ return r.n>=2 && r.n<5; }).sort(function(a,b){ return b.l1k_adj-a.l1k_adj; })[0];
   var rankRev = tbdDetectRankReversal(data);
+  // panel de expertos -- ver especificacion sintetizada
+  var hiddenStar = tbdDetectCampaignHiddenStar(data);
+  var zombie = tbdDetectCampaignZombie(data);
+  var concentration = tbdDetectSpendConcentrationRisk(data);
+  var marginLeak = tbdDetectCheapFormatMarginLeak(data);
+  var mechPainFit = tbdDetectMechanismPainPointFit(data);
+  var hookPair = tbdDetectHookPairInteraction(data);
+  var costSale = tbdDetectCostPerSaleReversal(data);
+  var volMargin = tbdDetectVolumeMarginDecouple(data);
+  var seasonMismatch = tbdDetectSeasonalSpendMismatch(data);
+  var ctaMismatch = tbdDetectCtaEmotionalMismatch(data);
+  var painAdType = tbdDetectPainPointAdTypeMismatch(data);
+  var fearHumor = tbdDetectFearNeedsHumor(data);
+  var mechFatigue = tbdDetectMechanismFatigue(data);
+  var growthNoQuality = tbdDetectGrowthWithoutQuality(data);
+  var fragileLeader = tbdDetectFragileLeader(data);
 
   var keep = [];
   if(sorted26[0]) keep.push(L==='en'?'"'+sorted26[0].nombre+'" — top adj. L/$1k ('+fmtNum(sorted26[0].l1k_adj,1)+') with '+sorted26[0].n+' TV-on days behind it — extend its next flight before writing anything new.':L==='pt'?'"'+sorted26[0].nombre+'" — maior L/$1k adj. ('+fmtNum(sorted26[0].l1k_adj,1)+') com '+sorted26[0].n+' dias de TV-on por trás — estenda o próximo flight antes de escrever qualquer coisa nova.':'"'+sorted26[0].nombre+'" — mayor L/$1k adj. ('+fmtNum(sorted26[0].l1k_adj,1)+') con '+sorted26[0].n+' días de TV-on detrás — extiende su próximo flight antes de escribir algo nuevo.');
   if(toneRoll[0] && toneRoll[0].n>=2) keep.push(L==='en'?'"'+toneRoll[0].label+'" tone — best adj. L/$1k across '+toneRoll[0].n+' creatives ('+fmtNum(toneRoll[0].l1k_adj,1)+') — default to this tone for new briefs unless there\'s a specific reason not to.':L==='pt'?'Tom "'+toneRoll[0].label+'" — melhor L/$1k adj. entre '+toneRoll[0].n+' criativos ('+fmtNum(toneRoll[0].l1k_adj,1)+') — use este tom como padrão em novos briefs, salvo razão específica em contrário.':'Tono "'+toneRoll[0].label+'" — mejor L/$1k adj. entre '+toneRoll[0].n+' creativos ('+fmtNum(toneRoll[0].l1k_adj,1)+') — usa este tono como default en briefs nuevos salvo razón específica en contra.');
   if(hookRoll[0] && hookRoll[0].n>=2) keep.push(L==='en'?'"'+hookRoll[0].label+'" audio hook — the strongest opening mechanic this period ('+fmtNum(hookRoll[0].l1k_adj,1)+' adj.) — reuse it across formats, not just the creative that popularized it.':L==='pt'?'Hook de áudio "'+hookRoll[0].label+'" — o mecanismo de abertura mais forte do período ('+fmtNum(hookRoll[0].l1k_adj,1)+' adj.) — reutilize em vários formatos, não só no criativo que o popularizou.':'Hook de audio "'+hookRoll[0].label+'" — el mecanismo de apertura más fuerte del período ('+fmtNum(hookRoll[0].l1k_adj,1)+' adj.) — reutilízalo en varios formatos, no solo en el creativo que lo popularizó.');
   if(jh) keep.push(jh.body);
+  if(hiddenStar) keep.push(hiddenStar.body);
+  if(mechPainFit) keep.push(mechPainFit.body);
+  if(hookPair && hookPair.type==='synergy') keep.push(hookPair.body);
   if(!keep.length) keep.push(L==='en'?'No creative or dimension cleared the bar for a confident "scale this" call this period — treat the current portfolio as still in testing.':L==='pt'?'Nenhum criativo ou dimensão passou da régua para um "escale isso" com confiança neste período — trate o portfólio atual como ainda em teste.':'Ningún creativo o dimensión pasó la vara para un "escala esto" con confianza este período — trata el portafolio actual como todavía en prueba.');
 
   var stop = [];
@@ -1135,16 +1658,29 @@ function tbdDirectionCards(data){
     }
   }
   if(rankRev && rankRev.icon==='⚠') stop.push(rankRev.body);
+  if(zombie) stop.push(zombie.body);
+  if(concentration) stop.push(concentration.body);
+  if(marginLeak) stop.push(marginLeak.body);
+  if(mechFatigue) stop.push(mechFatigue.body);
+  if(hookPair && hookPair.type==='clash') stop.push(hookPair.body);
   if(!stop.length) stop.push(L==='en'?'No creative shows a real (non-seasonal) decline this period — nothing needs to be pulled right now.':L==='pt'?'Nenhum criativo mostra uma queda real (não sazonal) neste período — nada precisa ser retirado agora.':'Ningún creativo muestra una caída real (no estacional) este período — no hay nada que haya que retirar ahora.');
 
   var upside = [];
   if(toneByType) upside.push(toneByType.body);
   if(smallNHigh) upside.push(L==='en'?'"'+smallNHigh.nombre+'" — strong adj. L/$1k ('+fmtNum(smallNHigh.l1k_adj,1)+') but only '+smallNHigh.n+' TV-on days — too little data to trust yet, but worth a longer test flight before dismissing or scaling it.':L==='pt'?'"'+smallNHigh.nombre+'" — L/$1k adj. forte ('+fmtNum(smallNHigh.l1k_adj,1)+') mas só '+smallNHigh.n+' dias de TV-on — pouco dado ainda para confiar, mas vale um flight de teste mais longo antes de descartar ou escalar.':'"'+smallNHigh.nombre+'" — L/$1k adj. fuerte ('+fmtNum(smallNHigh.l1k_adj,1)+') pero solo '+smallNHigh.n+' días de TV-on — todavía poco dato para confiar, pero vale un flight de prueba más largo antes de descartarlo o escalarlo.');
   if(jh && jh.strength>6) upside.push(L==='en'?'A creative purpose-built for the OE↔Junior cross-brand halo has never been tried — see Test B3.':L==='pt'?'Um criativo feito de propósito para o halo cruzado OE↔Junior nunca foi testado — ver Teste B3.':'Un creativo hecho a propósito para el halo cruzado OE↔Junior nunca se ha probado — ver Test B3.');
+  if(fearHumor) upside.push(fearHumor.body);
   if(!upside.length) upside.push(L==='en'?'No clear untested gap surfaced this period — the current dimension mix is reasonably well explored.':L==='pt'?'Nenhuma lacuna clara não testada surgiu neste período — a mistura atual de dimensões está razoavelmente bem explorada.':'No surgió ninguna brecha clara sin probar este período — la mezcla actual de dimensiones está razonablemente bien explorada.');
 
   var guide = [];
   if(timing) guide.push(timing.body);
+  if(seasonMismatch) guide.push(seasonMismatch.body);
+  if(costSale) guide.push(costSale.body);
+  if(volMargin) guide.push(volMargin.body);
+  if(ctaMismatch) guide.push(ctaMismatch.body);
+  if(painAdType) guide.push(painAdType.body);
+  if(growthNoQuality) guide.push(growthNoQuality.body);
+  if(fragileLeader) guide.push(fragileLeader.body);
   guide.push(L==='en'?'Judge a new creative by its Launch Week number, but budget for a natural cooldown afterward — see the Launch Week tab.':L==='pt'?'Julgue um criativo novo pelo seu número de Launch Week, mas planeje um resfriamento natural depois — ver a aba Launch Week.':'Juzga un creativo nuevo por su número de Launch Week, pero presupuesta un enfriamiento natural después — ver la pestaña Launch Week.');
   guide.push(L==='en'?'Always compare creatives on the adj. (★) columns when they aired in different months — raw L/$1k rewards timing, not quality.':L==='pt'?'Sempre compare criativos pelas colunas adj. (★) quando foram ao ar em meses diferentes — o L/$1k bruto recompensa o timing, não a qualidade.':'Siempre compara creativos por las columnas adj. (★) cuando salieron al aire en meses distintos — el L/$1k crudo premia el timing, no la calidad.');
 
@@ -1584,31 +2120,46 @@ function tbdPptCoverSlide(pres, brand, territories){
   s.addText(territories.join(' · '), { x:1,y:4.6,w:11.3,h:1.6, fontSize:10, color:'FFFFFF', align:'center', valign:'top', fontFace:'Calibri' });
   s.addText('TBD Dolo — TV Ads Performance', { x:0.35,y:7.15,w:12.6,h:0.3, fontSize:8, color:pal.boxLabel, fontFace:'Calibri' });
 }
+/* Construye y descarga un solo .pptx en el idioma actualmente puesto en LANG
+   (el caller es responsable de fijar/restaurar LANG antes/despues). */
+function tbdBuildOnePpt(brand, byTerritory, territories, langSuffix){
+  var pal = TBD_PPT_PALETTE[brand] || TBD_PPT_PALETTE['Open English'];
+  var pres = new PptxGenJS();
+  pres.defineLayout({ name:'WIDE', width:13.3, height:7.5 });
+  pres.layout = 'WIDE';
+  var footerText = 'TBD Dolo · '+brand+' · Jan–Jul 2025 vs 2026';
+  tbdPptCoverSlide(pres, brand, territories);
+  territories.forEach(function(t){
+    var data = byTerritory[t];
+    var tests = tbdComputeTests(data);
+    tbdPptDividerSlide(pres, pal, t);
+    tbdPptKpiSlide(pres, pal, brand, t, data, footerText);
+    tbdPptCreativeTableSlide(pres, pal, brand, t, data, footerText);
+    tbdPptDirectionSlide(pres, pal, brand, t, data, footerText);
+    tbdPptTestsSlide(pres, pal, brand, t, tests.testsA, true, footerText);
+    tbdPptTestsSlide(pres, pal, brand, t, tests.testsB, false, footerText);
+  });
+  var brandSuffix = brand==='Open English Junior' ? 'OEJunior' : 'OE';
+  return pres.writeFile({ fileName: 'TBD_Dolo_'+brandSuffix+'_'+langSuffix+'_'+territories.length+'territories_2025_vs_2026.pptx' });
+}
+/* Genera 3 .pptx separados (ES, EN, PT) para la marca elegida -- uno por
+   idioma, no un solo archivo mezclado. Se generan en secuencia (no en
+   paralelo) para no disparar 3 descargas simultaneas de golpe. */
 function tbdDownloadPPT(){
   tbdShowPptBrandModal(function(brand){
     tbdEnsurePptxLib(function(){
-      var pal = TBD_PPT_PALETTE[brand] || TBD_PPT_PALETTE['Open English'];
       var byTerritory = {};
       TBD_TERRITORIES.forEach(function(t){ byTerritory[t] = tbdDataForOrgTerritory(brand, t); });
       var territories = TBD_TERRITORIES.filter(function(t){ var d=byTerritory[t]; return d.p25.l1k_adj!=null || d.p26.l1k_adj!=null; });
       if(!territories.length){ showToast(LANG==='en'?'No territory has enough data for this brand to build a PPT.':LANG==='pt'?'Nenhum território tem dados suficientes para esta marca para montar o PPT.':'Ningún territorio tiene suficientes datos para esta marca para armar el PPT.'); return; }
-      var pres = new PptxGenJS();
-      pres.defineLayout({ name:'WIDE', width:13.3, height:7.5 });
-      pres.layout = 'WIDE';
-      var footerText = 'TBD Dolo · '+brand+' · Jan–Jul 2025 vs 2026';
-      tbdPptCoverSlide(pres, brand, territories);
-      territories.forEach(function(t){
-        var data = byTerritory[t];
-        var tests = tbdComputeTests(data);
-        tbdPptDividerSlide(pres, pal, t);
-        tbdPptKpiSlide(pres, pal, brand, t, data, footerText);
-        tbdPptCreativeTableSlide(pres, pal, brand, t, data, footerText);
-        tbdPptDirectionSlide(pres, pal, brand, t, data, footerText);
-        tbdPptTestsSlide(pres, pal, brand, t, tests.testsA, true, footerText);
-        tbdPptTestsSlide(pres, pal, brand, t, tests.testsB, false, footerText);
+      var savedLang = LANG;
+      var order = ['es','en','pt'];
+      var chain = Promise.resolve();
+      order.forEach(function(l){
+        chain = chain.then(function(){ LANG = l; return tbdBuildOnePpt(brand, byTerritory, territories, l.toUpperCase()); });
       });
-      var brandSuffix = brand==='Open English Junior' ? 'OEJunior' : 'OE';
-      pres.writeFile({ fileName: 'TBD_Dolo_'+brandSuffix+'_'+territories.length+'territories_2025_vs_2026.pptx' });
+      chain.then(function(){ LANG = savedLang; })
+        .catch(function(e){ LANG = savedLang; showToast('Error generando PPT: '+e.message); });
     });
   });
 }
