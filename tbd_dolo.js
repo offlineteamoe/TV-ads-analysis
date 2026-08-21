@@ -911,12 +911,13 @@ function tbdSafeDetect(fn){
   var args = Array.prototype.slice.call(arguments,1);
   try{ return fn.apply(null,args); }catch(e){ return null; }
 }
-function tbdDimensionPage(data, keyFn, title, subtitle, tabId, items25, items26, extraFindings){
+function tbdDimensionPage(data, keyFn, title, subtitle, tabId, items25, items26, extraFindings, seasonDimKey){
   var src25 = items25||data.y25, src26 = items26||data.y26;
   var r25 = tbdDimensionRollup(src25, keyFn), r26 = tbdDimensionRollup(src26, keyFn);
   var extraHtml = (extraFindings||[]).map(function(f){ return f ? tbdTakeawayBox(f.body) : ''; }).join('');
+  var seasonHtml = seasonDimKey ? tbdSeasonalityCardFor(data, seasonDimKey) : '';
   return '<h2 class="tbd-section-title">'+esc(title)+'</h2><p style="font-size:12px;color:var(--ink-faint);margin-top:-8px;">'+esc(subtitle)+'</p>'+
-    tbdHowToCard(tabId)+tbdDrillHintHTML()+
+    tbdHowToCard(tabId)+seasonHtml+tbdDrillHintHTML()+
     '<div class="tbd-two-col"><div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y25_label'))+'</div>'+tbdDimTableHTML(r25,title,src25,keyFn,tbdS('y25_label'),'2025')+'</div>'+
     '<div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y26_label'))+'</div>'+tbdDimTableHTML(r26,title,src26,keyFn,tbdS('y26_label'),'2026')+'</div></div>'+
     tbdTakeawayBox(tbdDimensionTakeaway(r25, r26, title))+extraHtml;
@@ -941,8 +942,10 @@ var TBD_RENDERERS = {
       tbdKpiCard(tbdS('kpi_mncc'), p25.mncc, p26.mncc, function(v){return fmtPct(v,1);}, true)+
       tbdKpiCard(tbdS('kpi_creatives'), p25.num_creatives, p26.num_creatives, function(v){return fmtNum(v,0);}, true)+
       '</div>'+
+      tbdSeasonalityCardFor(data, 'ad_type')+
       tbdTakeawayBox(insight)+
       (mode==='video' ? '' : tbdTakeawayBox((tbdSafeDetect(tbdDetectSpendConcentrationRisk,data)||{}).body))+
+      (mode==='video' ? '' : tbdTakeawayBox((tbdSafeDetect(tbdDetectMixShift,data,'ad_type')||{}).body))+
       tbdViewToggleHTML('portfolio')+
       '<div class="tbd-two-col"><div>'+tbdCreativeTableHTML(top25, tbdS('top10')+' · 2025', '2025')+'</div><div>'+tbdCreativeTableHTML(top26, tbdS('top10')+' · 2026', '2026')+'</div></div>';
   },
@@ -953,6 +956,7 @@ var TBD_RENDERERS = {
     var insight = mode==='video' ? tbdVersionSplitInsight(f26) : tbdCreativeTypeInsight(f26, f25, 'PROMO');
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_promo'))+'</h2>'+
       tbdHowToCard('promo')+
+      tbdSeasonalityCardFor(data, 'pain_point')+
       tbdViewToggleHTML('promo')+
       '<div class="tbd-two-col"><div>'+tbdCreativeTableHTML(f25, 'Promo · 2025', '2025')+'</div><div>'+tbdCreativeTableHTML(f26, 'Promo · 2026', '2026')+'</div></div>'+
       tbdTakeawayBox(insight);
@@ -964,25 +968,28 @@ var TBD_RENDERERS = {
     var insight = mode==='video' ? tbdVersionSplitInsight(f26) : tbdCreativeTypeInsight(f26, f25, 'GENERIC');
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_generic'))+'</h2>'+
       tbdHowToCard('generic')+
+      tbdSeasonalityCardFor(data, 'theme_mechanism_code')+
       tbdViewToggleHTML('generic')+
       '<div class="tbd-two-col"><div>'+tbdCreativeTableHTML(f25, 'Generic · 2025', '2025')+'</div><div>'+tbdCreativeTableHTML(f26, 'Generic · 2026', '2026')+'</div></div>'+
       tbdTakeawayBox(insight);
   },
-  pvg: function(data){ return tbdDimensionPage(data, function(r){ return r.ad_type==='PROMO'?'Promo Ads':'Generic Ads'; }, tbdS('title_pvg'), tbdS('sub_pvg'), 'pvg', null, null, [tbdSafeDetect(tbdDetectPainPointAdTypeMismatch,data)]); },
-  tone: function(data){ return tbdDimensionPage(data, function(r){ return r.tone_category||'—'; }, tbdS('title_tone'), tbdS('sub_tone'), 'tone', null, null, [tbdSafeDetect(tbdDetectFearNeedsHumor,data), tbdSafeDetect(tbdDetectVolumeMarginDecouple,data,['tone_category'])]); },
+  pvg: function(data){ return tbdDimensionPage(data, function(r){ return r.ad_type==='PROMO'?'Promo Ads':'Generic Ads'; }, tbdS('title_pvg'), tbdS('sub_pvg'), 'pvg', null, null, [tbdSafeDetect(tbdDetectSimpsonReversal,data), tbdSafeDetect(tbdDetectMixShift,data,'ad_type'), tbdSafeDetect(tbdDetectPainPointAdTypeMismatch,data)], 'ad_type'); },
+  tone: function(data){ return tbdDimensionPage(data, function(r){ return r.tone_category||'—'; }, tbdS('title_tone'), tbdS('sub_tone'), 'tone', null, null, [tbdSafeDetect(tbdDetectFearNeedsHumor,data), tbdSafeDetect(tbdDetectVolumeMarginDecouple,data,['tone_category']), tbdSafeDetect(tbdDetectDimRowFragility,data,['tone_category']), tbdSafeDetect(tbdDetectDimScaleCeiling,data,['tone_category'])], 'tone_category'); },
   hooks: function(data){
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_hooks'))+'</h2>'+
       tbdHowToCard('hooks')+
+      tbdSeasonalityCardFor(data, 'hook_audio_type_code')+
       tbdDimensionPage(data, function(r){ return r.hook_audio_type_code||'—'; }, tbdS('title_hook_audio'), tbdS('sub_hook_audio'), null)+
       '<div style="height:18px;"></div>'+
       tbdDimensionPage(data, function(r){ return r.hook_visual_type_code||'—'; }, tbdS('title_hook_visual'), tbdS('sub_hook_visual'), null)+
-      tbdTakeawayBox((tbdSafeDetect(tbdDetectHookPairInteraction,data)||{}).body);
+      tbdTakeawayBox((tbdSafeDetect(tbdDetectHookPairInteraction,data)||{}).body)+
+      tbdTakeawayBox((tbdSafeDetect(tbdDetectDimRowFragility,data,['hook_audio_type_code','hook_visual_type_code'])||{}).body);
   },
-  versions: function(data){ return tbdDimensionPage(data, function(r){ return r.version ? ('V'+r.version) : 'V1'; }, tbdS('title_versions'), tbdS('sub_versions'), 'versions', data.v25, data.v26); },
-  campaigns: function(data){ return tbdDimensionPage(data, function(r){ return r.campaign_name||'—'; }, tbdS('title_campaigns'), tbdS('sub_campaigns'), 'campaigns', null, null, [tbdSafeDetect(tbdDetectCampaignHiddenStar,data), tbdSafeDetect(tbdDetectCampaignZombie,data)]); },
-  promo_type: function(data){ return tbdDimensionPage(data, function(r){ return r.ad_type==='PROMO' ? (r.pain_point||'—') : null; }, tbdS('title_promo_type'), tbdS('sub_promo_type'), 'promo_type', null, null, [tbdSafeDetect(tbdDetectCtaEmotionalMismatch,data)]); },
-  theme: function(data){ return tbdDimensionPage(data, function(r){ return r.theme||'—'; }, tbdS('title_theme'), tbdS('sub_theme'), 'theme', null, null, [tbdSafeDetect(tbdDetectMechanismFatigue,data), tbdSafeDetect(tbdDetectMechanismPainPointFit,data)]); },
-  ai_vs_real: function(data){ return tbdDimensionPage(data, function(r){ return r.type_of_production||'—'; }, tbdS('title_ai_vs_real'), tbdS('sub_ai_vs_real'), 'ai_vs_real', null, null, [tbdSafeDetect(tbdDetectCheapFormatMarginLeak,data)]); },
+  versions: function(data){ return tbdDimensionPage(data, function(r){ return r.version ? ('V'+r.version) : 'V1'; }, tbdS('title_versions'), tbdS('sub_versions'), 'versions', data.v25, data.v26, [], null); },
+  campaigns: function(data){ return tbdDimensionPage(data, function(r){ return r.campaign_name||'—'; }, tbdS('title_campaigns'), tbdS('sub_campaigns'), 'campaigns', null, null, [tbdSafeDetect(tbdDetectCampaignHiddenStar,data), tbdSafeDetect(tbdDetectCampaignZombie,data)], 'campaign_name'); },
+  promo_type: function(data){ return tbdDimensionPage(data, function(r){ return r.ad_type==='PROMO' ? (r.pain_point||'—') : null; }, tbdS('title_promo_type'), tbdS('sub_promo_type'), 'promo_type', null, null, [tbdSafeDetect(tbdDetectCtaEmotionalMismatch,data), tbdSafeDetect(tbdDetectVolumeMarginDecouple,data,['pain_point'])], 'pain_point'); },
+  theme: function(data){ return tbdDimensionPage(data, function(r){ return r.theme||'—'; }, tbdS('title_theme'), tbdS('sub_theme'), 'theme', null, null, [tbdSafeDetect(tbdDetectMechanismFatigue,data), tbdSafeDetect(tbdDetectMechanismPainPointFit,data), tbdSafeDetect(tbdDetectDimRowFragility,data,['theme_mechanism_code']), tbdSafeDetect(tbdDetectDimScaleCeiling,data,['theme_mechanism_code'])], 'theme_mechanism_code'); },
+  ai_vs_real: function(data){ return tbdDimensionPage(data, function(r){ return r.type_of_production||'—'; }, tbdS('title_ai_vs_real'), tbdS('sub_ai_vs_real'), 'ai_vs_real', null, null, [tbdSafeDetect(tbdDetectCheapFormatMarginLeak,data), tbdSafeDetect(tbdDetectDimRowFragility,data,['type_of_production']), tbdSafeDetect(tbdDetectMixShift,data,'type_of_production')], 'type_of_production'); },
   jrhalo: function(data){
     var r25 = data.y25.slice().sort(function(a,b){return b.jr_l1k_adj-a.jr_l1k_adj;});
     var r26 = data.y26.slice().sort(function(a,b){return b.jr_l1k_adj-a.jr_l1k_adj;});
@@ -995,7 +1002,7 @@ var TBD_RENDERERS = {
       }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>'; };
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_jrhalo'))+'</h2>'+
       '<p style="font-size:12px;color:var(--ink-faint);margin-top:-8px;">'+esc(tbdS('sub_jrhalo'))+'</p>'+
-      tbdHowToCard('jrhalo')+
+      tbdHowToCard('jrhalo')+tbdSeasonalityCardFor(data, 'ad_type')+
       '<div class="tbd-two-col"><div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y25_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead><tr><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdS('col_jr_leads'))+'</th><th>'+esc(tbdS('col_jr_l1k_adj'))+'</th><th>'+esc(tbdS('col_oe_ref'))+'</th></tr></thead><tbody>'+rows(r25,'2025')+'</tbody></table></div></div>'+
       '<div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y26_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead><tr><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdS('col_jr_leads'))+'</th><th>'+esc(tbdS('col_jr_l1k_adj'))+'</th><th>'+esc(tbdS('col_oe_ref'))+'</th></tr></thead><tbody>'+rows(r26,'2026')+'</tbody></table></div></div></div>'+
       tbdTakeawayBox(tbdJrHaloInsight(data));
@@ -1010,7 +1017,7 @@ var TBD_RENDERERS = {
       }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>'; };
     var head = '<tr><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdS('col_tvon_days'))+'</th><th>'+esc(tbdS('col_l1k_adj'))+'</th><th>'+esc(tbdS('col_cpl_adj'))+'</th></tr>';
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_launch'))+'</h2>'+
-      tbdHowToCard('launch')+
+      tbdHowToCard('launch')+tbdSeasonalityCardFor(data, 'ad_type')+
       '<div class="tbd-two-col"><div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y25_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead>'+head+'</thead><tbody>'+rows(build(data.y25),'2025')+'</tbody></table></div></div>'+
       '<div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y26_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead>'+head+'</thead><tbody>'+rows(build(data.y26),'2026')+'</tbody></table></div></div></div>'+
       tbdTakeawayBox(tbdLaunchInsight(data));
@@ -1031,7 +1038,7 @@ var TBD_RENDERERS = {
     var head = '<tr><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdS('col_h1'))+'</th><th>'+esc(tbdS('col_h2'))+'</th><th>'+esc(tbdS('col_delta'))+'</th></tr>';
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_wearout'))+'</h2>'+
       '<p style="font-size:12px;color:var(--ink-faint);margin-top:-8px;">'+esc(tbdS('sub_wearout'))+'</p>'+
-      tbdHowToCard('wearout')+
+      tbdHowToCard('wearout')+tbdSeasonalityCardFor(data, 'theme_mechanism_code')+
       '<div class="tbd-two-col"><div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y25_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead>'+head+'</thead><tbody>'+rows(build(data.y25),'2025')+'</tbody></table></div></div>'+
       '<div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y26_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead>'+head+'</thead><tbody>'+rows(build(data.y26),'2026')+'</tbody></table></div></div></div>'+
       tbdTakeawayBox(tbdWearoutInsight(data));
@@ -1397,6 +1404,369 @@ function tbdDetectCvrDivergence(data){
       :'"'+topLeadGen.nombre+'" es el creativo #1 por L/$1k adj. ('+fmtNum(topLeadGen.l1k_adj,1)+') pero su tasa de conversión ('+fmtPct(topLeadGen.cvr,1)+') está '+fmtNum(Math.abs(cvrGap),0)+'% por debajo del promedio del portafolio ('+fmtPct(avgCvr,1)+'). Está ganando en VOLUMEN de leads por dólar, no en CALIDAD — vale la pena revisar si está atrayendo prospectos menos calificados antes de escalarlo más.'),
   };
 }
+/* ============================================================
+   MOTORES DE ANALISIS PROFUNDO (panel de 5 expertos por pestana)
+   ------------------------------------------------------------
+   Diseñados por un panel de 5 lentes (big data/estadistica, CMO,
+   psicologia del consumidor, audiovisual, comunicacion) que analizo CADA
+   tabla por separado, seguido de un revisor adversarial que endurecio
+   umbrales y descarto 14 detectores por no ser verificables con estos datos.
+
+   Reglas que cumplen TODOS los motores de esta seccion:
+   - Toda razon se calcula pooled sobre sumas crudas (Σl/Σs), NUNCA
+     promediando razones por creativo.
+   - Los gates de muestra se evaluan ANTES de cualquier division.
+   - Si el patron no supera el umbral, devuelven null: el silencio es una
+     respuesta valida y esperada en muchos slices.
+   ============================================================ */
+
+/* Spearman con empates por rango promedio (no Pearson: las metricas por
+   creativo son fuertemente asimetricas y unos pocos vuelos cortos con
+   l1k alto dominarian una correlacion lineal). */
+function tbdRanks(arr){
+  var idx = arr.map(function(v,i){ return {v:v,i:i}; }).sort(function(a,b){ return a.v-b.v; });
+  var ranks = new Array(arr.length);
+  var k=0;
+  while(k<idx.length){
+    var j=k; while(j+1<idx.length && idx[j+1].v===idx[k].v) j++;
+    var avg=(k+j)/2+1;
+    for(var m=k;m<=j;m++) ranks[idx[m].i]=avg;
+    k=j+1;
+  }
+  return ranks;
+}
+function tbdSpearman(xs, ys){
+  var n=xs.length;
+  if(n<4) return null;
+  var rx=tbdRanks(xs), ry=tbdRanks(ys);
+  var mx=rx.reduce(function(a,b){return a+b;},0)/n, my=ry.reduce(function(a,b){return a+b;},0)/n;
+  var num=0, dx=0, dy=0;
+  for(var i=0;i<n;i++){ var a=rx[i]-mx, b=ry[i]-my; num+=a*b; dx+=a*a; dy+=b*b; }
+  if(dx<=0||dy<=0) return null;
+  return num/Math.sqrt(dx*dy);
+}
+/* pooled sobre un subconjunto arbitrario, misma matematica que tbdDimensionRollup */
+function tbdPooled(items){
+  if(!items || !items.length) return null;
+  var tl=0,ts=0,te=0,tc=0,dw=0,days=0;
+  items.forEach(function(r){ tl+=r.l; ts+=r.s; te+=r.e; tc+=(r.c||0); dw+=r.dem*r.s; days+=r.n; });
+  if(ts<=0) return null;
+  var di = dw/ts;
+  return { l:tl, s:ts, e:te, c:tc, days:days, n:items.length, dem:di,
+    l1k: tl/ts*1000, l1k_adj: tl/ts*1000/(di/100),
+    cpl_adj: tl>0 ? ts/tl*(di/100) : null,
+    cvr: tl>0 ? te/tl : 0, mncc: tc>0 ? (tc-ts)/tc : 0 };
+}
+
+/* ---------- G3 · AUDITORIA DEL AJUSTE ----------
+   Pregunta que ninguna pestana hacia: ¿el indice de Ahrefs esta realmente
+   limpiando el calendario? Si la correlacion entre demanda y rendimiento
+   SOBREVIVE al ajuste, el ranking que el usuario lee sigue contaminado por
+   el mes. Se compara rho crudo vs rho ajustado -- mirar solo el ajustado
+   seria el error. rhoCrit se endurece cuando hay menos creativos. */
+function tbdSeasonAdjustmentAudit(items){
+  var u = items.filter(function(r){ return r.n>=5 && r.s>0 && r.l>0; });
+  var N = u.length;
+  if(N<8) return null;
+  var dem = u.map(function(r){return r.dem;});
+  var rhoRaw = tbdSpearman(dem, u.map(function(r){return r.l1k;}));
+  var rhoAdj = tbdSpearman(dem, u.map(function(r){return r.l1k_adj;}));
+  if(rhoRaw==null||rhoAdj==null) return null;
+  var rhoCrit = Math.max(2/Math.sqrt(N-1), 0.55);
+  if(Math.abs(rhoAdj) < rhoCrit) return null;
+  if(Math.abs(rhoRaw)>0 && Math.abs(rhoAdj) < 0.60*Math.abs(rhoRaw)) return null; // el ajuste si funciono
+  var absorbed = Math.abs(rhoRaw)>0 ? Math.max(0,(1-Math.abs(rhoAdj)/Math.abs(rhoRaw))*100) : 0;
+  var under = rhoAdj>0;
+  var L=LANG;
+  return { strength: Math.abs(rhoAdj)*100, icon:'⚖',
+    title: L==='en'?'The demand adjustment isn\'t fully cleaning the calendar here':L==='pt'?'O ajuste por demanda não está limpando o calendário aqui':'El ajuste por demanda no está limpiando del todo el calendario aquí',
+    body: (L==='en'
+      ? 'Across '+N+' creatives, the correlation between the demand index and performance is '+fmtNum(rhoRaw,2)+' on raw L/$1k and still '+fmtNum(rhoAdj,2)+' after adjusting (chance threshold '+fmtNum(rhoCrit,2)+'). The index only absorbed '+fmtNum(absorbed,0)+'% of the seasonal signal, so the order you are reading is still partly calendar. '+(under?'It UNDER-corrects: creatives that aired in high-demand months keep an edge they did not earn.':'It OVER-corrects: creatives that aired in high-demand months are being penalised too hard.')+' Until this is recalibrated, compare creatives within the same demand band, not across the whole list.'
+      : L==='pt'
+      ? 'Entre '+N+' criativos, a correlação entre o índice de demanda e a performance é '+fmtNum(rhoRaw,2)+' no L/$1k bruto e ainda '+fmtNum(rhoAdj,2)+' depois de ajustar (limite de acaso '+fmtNum(rhoCrit,2)+'). O índice só absorveu '+fmtNum(absorbed,0)+'% do sinal sazonal, então a ordem que você lê ainda é em parte calendário. '+(under?'Ele SUB-corrige: criativos que foram ao ar em meses de alta demanda mantêm uma vantagem que não conquistaram.':'Ele SOBRE-corrige: criativos que foram ao ar em meses de alta demanda estão sendo penalizados demais.')+' Até recalibrar, compare criativos dentro da mesma faixa de demanda, não na lista inteira.'
+      : 'Entre '+N+' creativos, la correlación entre el índice de demanda y el rendimiento es '+fmtNum(rhoRaw,2)+' en L/$1k crudo y sigue en '+fmtNum(rhoAdj,2)+' después de ajustar (umbral de azar '+fmtNum(rhoCrit,2)+'). El índice solo absorbió '+fmtNum(absorbed,0)+'% de la señal estacional, así que el orden que estás leyendo sigue siendo en parte calendario. '+(under?'SUB-corrige: los creativos que salieron en meses de alta demanda conservan una ventaja que no se ganaron.':'SOBRE-corrige: los creativos que salieron en meses de alta demanda están siendo castigados de más.')+' Hasta recalibrarlo, compara creativos dentro de la misma banda de demanda, no contra toda la lista.') };
+}
+
+/* ---------- G1 · ELASTICIDAD POR BANDA DE DEMANDA ----------
+   El corazon del "analizar estacionalidad en TODAS las tablas": para cada
+   valor de una dimension, separa sus creativos entre los que volaron en
+   demanda ALTA y en demanda BAJA y compara su rendimiento AJUSTADO en cada
+   banda. Distingue dos perfiles que el ranking plano confunde:
+     - "surfista de ola": solo gana en demanda alta -> su puesto es calendario
+     - "motor de valle": sostiene o mejora en demanda baja -> el mensaje si carga
+   Devuelve una lista de perfiles, no un unico hallazgo. */
+function tbdSeasonBands(items, keyFn, opts){
+  opts = opts || {};
+  var minCre = opts.minCre || 2, minDays = opts.minDays || 6, minSpend = opts.minSpend || 1500;
+  var u = items.filter(function(r){ return r.s>0 && r.n>=3; });
+  if(u.length<6) return null;
+  var dems = u.map(function(r){return r.dem;}).sort(function(a,b){return a-b;});
+  var med = dems[Math.floor(dems.length/2)];
+  var p25 = dems[Math.floor(dems.length*0.25)], p75 = dems[Math.floor(dems.length*0.75)];
+  if((p75-p25) < 6) return null; // sin dispersion real de demanda la pregunta no aplica
+  var buckets = {};
+  u.forEach(function(r){
+    var k = keyFn(r); if(k==null||k==='') return;
+    if(!buckets[k]) buckets[k] = {hi:[], lo:[]};
+    if(r.dem >= med+3) buckets[k].hi.push(r);
+    else if(r.dem <= med-3) buckets[k].lo.push(r);
+  });
+  var out = [];
+  Object.keys(buckets).forEach(function(k){
+    var b = buckets[k];
+    if(b.hi.length<minCre || b.lo.length<minCre) return;
+    var hi = tbdPooled(b.hi), lo = tbdPooled(b.lo);
+    if(!hi||!lo) return;
+    if(hi.days<minDays || lo.days<minDays || hi.s<minSpend || lo.s<minSpend) return;
+    if(lo.l1k_adj<=0) return;
+    out.push({ label:k, hi:hi, lo:lo, gap:(hi.l1k_adj-lo.l1k_adj)/lo.l1k_adj*100 });
+  });
+  if(!out.length) return null;
+  return { median:med, profiles: out.sort(function(a,b){ return Math.abs(b.gap)-Math.abs(a.gap); }) };
+}
+/* ---------- G2 · SESGO DE EXPOSICION ----------
+   ¿Esta dimension fue programada sistematicamente en meses mejores o peores
+   que el resto del portafolio? Un valor puede verse bien solo porque le
+   tocaron los meses buenos -- eso el ranking ajustado corrige en la metrica,
+   pero NO le dice al planner que su calendario esta sesgado. */
+function tbdSeasonExposure(items, keyFn, opts){
+  opts = opts || {};
+  var minDays = opts.minDays || 10, minSpend = opts.minSpend || 3000;
+  var u = items.filter(function(r){ return r.s>0 && r.n>=3; });
+  var all = tbdPooled(u);
+  if(!all) return null;
+  var roll = {};
+  u.forEach(function(r){ var k=keyFn(r); if(k==null||k==='') return; (roll[k]=roll[k]||[]).push(r); });
+  var out = [];
+  Object.keys(roll).forEach(function(k){
+    var p = tbdPooled(roll[k]);
+    if(!p || p.days<minDays || p.s<minSpend) return;
+    out.push({ label:k, dem:p.dem, gap:p.dem-all.dem, share:p.s/all.s, pooled:p });
+  });
+  if(out.length<2) return null;
+  out.sort(function(a,b){ return Math.abs(b.gap)-Math.abs(a.gap); });
+  return { portfolioDem: all.dem, rows: out };
+}
+
+/* ---------- G6 · FRAGILIDAD DE FILA (leave-one-out) ----------
+   ¿El liderazgo de una categoria sobrevive si le quitas su mejor creativo?
+   Si no, la fila no describe una categoria: describe una sola pieza. Es el
+   antidoto directo al error de briefear "usemos mas HUMOR" cuando en
+   realidad habia un solo comercial bueno que resultaba ser HUMOR. */
+function tbdDetectDimRowFragility(data, dims){
+  dims = dims || ['tone_category','theme_mechanism_code','hook_audio_type_code','hook_visual_type_code','type_of_production'];
+  var best=null;
+  dims.forEach(function(dimKey){
+    var keyFn = TBD_DIM_DEFS[dimKey].keyFn;
+    var roll = tbdDimensionRollup(data.y26, keyFn).filter(function(x){ return x.days>=5 && x.n>=3; });
+    if(roll.length<2) return;
+    var leader = roll[0], runner = roll[1];
+    var members = data.y26.filter(function(r){ return String(keyFn(r))===String(leader.label); });
+    if(members.length<3) return;
+    var top = members.slice().sort(function(a,b){ return b.l1k_adj-a.l1k_adj; })[0];
+    var without = tbdPooled(members.filter(function(r){ return r!==top; }));
+    if(!without || without.days<4) return;
+    if(!(without.l1k_adj < runner.l1k_adj)) return; // sigue liderando: no es fragil
+    var drop = (leader.l1k_adj-without.l1k_adj)/leader.l1k_adj*100;
+    if(drop<15) return;
+    var topShare = leader.s>0 ? top.s/leader.s : 0;
+    if(!best || drop>best.drop) best = {dimKey:dimKey, leader:leader, runner:runner, top:top, without:without, drop:drop, topShare:topShare};
+  });
+  if(!best) return null;
+  var L=LANG, dl=tbdDimLabel(best.dimKey);
+  return { strength: best.drop, icon:'🎯',
+    title: L==='en'?'The leading '+dl+' is one creative, not a category':L==='pt'?'O '+dl+' líder é um criativo, não uma categoria':'El '+dl+' líder es un creativo, no una categoría',
+    body: (L==='en'
+      ? '"'+best.leader.label+'" tops the '+dl+' ranking (L/$1k adj. '+fmtNum(best.leader.l1k_adj,1)+' across '+best.leader.n+' creatives), but remove its single best piece ("'+best.top.nombre+'", '+fmtNum(best.topShare*100,0)+'% of the group\'s spend) and the group falls to '+fmtNum(best.without.l1k_adj,1)+' — below "'+best.runner.label+'" ('+fmtNum(best.runner.l1k_adj,1)+'), a '+fmtNum(best.drop,0)+'% drop. Briefing more of this '+dl+' is not the lesson; replicating what that one creative did is.'
+      : L==='pt'
+      ? '"'+best.leader.label+'" lidera o ranking de '+dl+' (L/$1k adj. '+fmtNum(best.leader.l1k_adj,1)+' em '+best.leader.n+' criativos), mas remova sua melhor peça ("'+best.top.nombre+'", '+fmtNum(best.topShare*100,0)+'% do gasto do grupo) e o grupo cai para '+fmtNum(best.without.l1k_adj,1)+' — abaixo de "'+best.runner.label+'" ('+fmtNum(best.runner.l1k_adj,1)+'), uma queda de '+fmtNum(best.drop,0)+'%. Briefar mais desse '+dl+' não é a lição; replicar o que aquele criativo fez, sim.'
+      : '"'+best.leader.label+'" encabeza el ranking de '+dl+' (L/$1k adj. '+fmtNum(best.leader.l1k_adj,1)+' entre '+best.leader.n+' creativos), pero quítale su mejor pieza ("'+best.top.nombre+'", '+fmtNum(best.topShare*100,0)+'% del gasto del grupo) y el grupo cae a '+fmtNum(best.without.l1k_adj,1)+' — por debajo de "'+best.runner.label+'" ('+fmtNum(best.runner.l1k_adj,1)+'), una caída de '+fmtNum(best.drop,0)+'%. La lección no es briefear más de este '+dl+'; es replicar lo que hizo ese creativo puntual.') };
+}
+
+/* ---------- G4 · PARADOJA DE SIMPSON ----------
+   El agregado dice una cosa y TODOS los estratos dicen la contraria. Ocurre
+   cuando un grupo concentro su gasto en los meses buenos. Es el hallazgo
+   mas contraintuitivo posible sobre una tabla y ninguna lectura plana lo ve. */
+function tbdDetectSimpsonReversal(data, splitKeyFn, strataKeyFn, labelFn){
+  splitKeyFn = splitKeyFn || function(r){ return r.ad_type==='PROMO'?'Promo':'Generic'; };
+  strataKeyFn = strataKeyFn || function(r){ return (r._dailyItems&&r._dailyItems.length)? r._dailyItems[0].date.slice(0,7) : null; };
+  var u = data.y26.filter(function(r){ return r.s>0 && r.n>=3; });
+  if(u.length<6) return null;
+  var groups = {};
+  u.forEach(function(r){ var g=splitKeyFn(r); if(g==null) return; (groups[g]=groups[g]||[]).push(r); });
+  var names = Object.keys(groups);
+  if(names.length!==2) return null;
+  var A = tbdPooled(groups[names[0]]), B = tbdPooled(groups[names[1]]);
+  if(!A||!B||A.l1k_adj<=0||B.l1k_adj<=0) return null;
+  var aggWinner = A.l1k_adj>=B.l1k_adj ? names[0] : names[1];
+  // estratos: mes de arranque
+  var strata = {};
+  u.forEach(function(r){ var s=strataKeyFn(r); if(s==null) return; (strata[s]=strata[s]||[]).push(r); });
+  var flipped=0, valid=0;
+  Object.keys(strata).forEach(function(sk){
+    var inS = strata[sk];
+    var a = tbdPooled(inS.filter(function(r){ return splitKeyFn(r)===names[0]; }));
+    var b = tbdPooled(inS.filter(function(r){ return splitKeyFn(r)===names[1]; }));
+    if(!a||!b||a.days<4||b.days<4||a.s<1000||b.s<1000) return;
+    valid++;
+    var winner = a.l1k_adj>=b.l1k_adj ? names[0] : names[1];
+    if(winner!==aggWinner) flipped++;
+  });
+  if(valid<3 || flipped<valid) return null; // exige reversion en TODOS los estratos validos
+  var L=LANG;
+  var loser = aggWinner===names[0]?names[1]:names[0];
+  var lbl = labelFn || function(x){ return x; };
+  return { strength: 60+valid*8, icon:'🔄',
+    title: L==='en'?'Simpson\'s paradox: the aggregate says the opposite of every month':L==='pt'?'Paradoxo de Simpson: o agregado diz o oposto de cada mês':'Paradoja de Simpson: el agregado dice lo contrario que cada mes',
+    body: (L==='en'
+      ? 'Taken as a whole, "'+lbl(aggWinner)+'" beats "'+lbl(loser)+'" (L/$1k adj. '+fmtNum(aggWinner===names[0]?A.l1k_adj:B.l1k_adj,1)+' vs '+fmtNum(aggWinner===names[0]?B.l1k_adj:A.l1k_adj,1)+'). But split the same data by launch month and "'+lbl(loser)+'" wins in ALL '+valid+' comparable months. The aggregate is being driven by WHEN each group aired, not by how it performed: the apparent winner simply concentrated its spend in better months. Trust the monthly reading and stop using the headline number to justify the mix.'
+      : L==='pt'
+      ? 'No agregado, "'+lbl(aggWinner)+'" supera "'+lbl(loser)+'" (L/$1k adj. '+fmtNum(aggWinner===names[0]?A.l1k_adj:B.l1k_adj,1)+' vs '+fmtNum(aggWinner===names[0]?B.l1k_adj:A.l1k_adj,1)+'). Mas separando os mesmos dados por mês de estreia, "'+lbl(loser)+'" vence em TODOS os '+valid+' meses comparáveis. O agregado é dirigido por QUANDO cada grupo foi ao ar, não pelo desempenho: o vencedor aparente apenas concentrou seu gasto nos meses melhores. Confie na leitura mensal e pare de usar o número de manchete para justificar o mix.'
+      : 'Tomado en conjunto, "'+lbl(aggWinner)+'" le gana a "'+lbl(loser)+'" (L/$1k adj. '+fmtNum(aggWinner===names[0]?A.l1k_adj:B.l1k_adj,1)+' vs '+fmtNum(aggWinner===names[0]?B.l1k_adj:A.l1k_adj,1)+'). Pero al separar los MISMOS datos por mes de lanzamiento, "'+lbl(loser)+'" gana en LOS '+valid+' meses comparables. El agregado lo está manejando CUÁNDO salió cada grupo al aire, no su desempeño: el ganador aparente simplemente concentró su gasto en los meses buenos. Hazle caso a la lectura mensual y deja de usar el número de titular para justificar la mezcla.') };
+}
+
+/* ---------- G9 · TECHO DE ESCALA ----------
+   El ganador de la tabla ¿ha demostrado capacidad a volumen, o solo brillo a
+   escala chica? Un lider con una fraccion minima del gasto no ha probado que
+   aguante el presupuesto que se le quiere dar. */
+function tbdDetectDimScaleCeiling(data, dims){
+  dims = dims || ['tone_category','theme_mechanism_code','type_of_production','hook_audio_type_code'];
+  var best=null;
+  dims.forEach(function(dimKey){
+    var roll = tbdDimensionRollup(data.y26, TBD_DIM_DEFS[dimKey].keyFn).filter(function(x){ return x.days>=5; });
+    if(roll.length<3) return;
+    var total = roll.reduce(function(s,x){return s+x.s;},0);
+    if(total<=0) return;
+    var leader = roll[0];
+    var share = leader.s/total;
+    var biggest = roll.slice().sort(function(a,b){ return b.s-a.s; })[0];
+    if(biggest.label===leader.label) return;           // el lider ya es el mas grande: si probo escala
+    if(share>0.15) return;                              // ya tiene volumen relevante
+    var ratio = biggest.s>0 ? leader.s/biggest.s : 0;
+    if(ratio>0.4) return;
+    var lift = biggest.l1k_adj>0 ? (leader.l1k_adj-biggest.l1k_adj)/biggest.l1k_adj*100 : 0;
+    if(lift<15) return;
+    if(!best || share<best.share) best = {dimKey:dimKey, leader:leader, biggest:biggest, share:share, lift:lift};
+  });
+  if(!best) return null;
+  var L=LANG, dl=tbdDimLabel(best.dimKey);
+  return { strength: (0.15-best.share)*400+best.lift, icon:'📐',
+    title: L==='en'?'The winning '+dl+' has never been tested at scale':L==='pt'?'O '+dl+' vencedor nunca foi testado em escala':'El '+dl+' ganador nunca se ha probado a escala',
+    body: (L==='en'
+      ? '"'+best.leader.label+'" leads on L/$1k adj. ('+fmtNum(best.leader.l1k_adj,1)+', '+fmtNum(best.lift,0)+'% above the workhorse "'+best.biggest.label+'") but it only carries '+fmtNum(best.share*100,1)+'% of the '+dl+' spend, against '+fmt$(best.biggest.s,0)+' for the workhorse. Efficiency at small budget is not proof it holds at full weight — reach and frequency effects usually bite as spend grows. Scale it in steps and re-read before rewriting the plan around it.'
+      : L==='pt'
+      ? '"'+best.leader.label+'" lidera em L/$1k adj. ('+fmtNum(best.leader.l1k_adj,1)+', '+fmtNum(best.lift,0)+'% acima do cavalo de batalha "'+best.biggest.label+'") mas carrega apenas '+fmtNum(best.share*100,1)+'% do gasto de '+dl+', contra '+fmt$(best.biggest.s,0)+' do cavalo de batalha. Eficiência com orçamento pequeno não prova que se sustenta em peso total — efeitos de alcance e frequência costumam aparecer conforme o gasto cresce. Escale por etapas e releia antes de reescrever o plano em torno dele.'
+      : '"'+best.leader.label+'" lidera en L/$1k adj. ('+fmtNum(best.leader.l1k_adj,1)+', '+fmtNum(best.lift,0)+'% por encima del caballo de batalla "'+best.biggest.label+'") pero solo carga '+fmtNum(best.share*100,1)+'% del gasto de '+dl+', contra '+fmt$(best.biggest.s,0)+' del caballo de batalla. Ser eficiente con presupuesto chico no prueba que aguante a peso completo — los efectos de alcance y frecuencia suelen aparecer al crecer el gasto. Escálalo por etapas y vuelve a leer antes de reescribir el plan alrededor de él.') };
+}
+
+/* ---------- G5 · DESCOMPOSICION MEZCLA vs TASA ----------
+   El cambio ano contra ano ¿viene de que los creativos rinden distinto
+   (tasa) o de que se repartio el gasto distinto entre categorias (mezcla)?
+   Son dos conversaciones completamente distintas: una es creativa, la otra
+   es de planeacion de medios. */
+function tbdDetectMixShift(data, dimKey){
+  dimKey = dimKey || 'ad_type';
+  var keyFn = TBD_DIM_DEFS[dimKey].keyFn;
+  var a = data.y25.filter(function(r){return r.s>0;}), b = data.y26.filter(function(r){return r.s>0;});
+  var pa = tbdPooled(a), pb = tbdPooled(b);
+  if(!pa||!pb||pa.l1k_adj<=0) return null;
+  var ra = tbdDimensionRollup(a, keyFn), rb = tbdDimensionRollup(b, keyFn);
+  if(ra.length<2||rb.length<2) return null;
+  var ma={}, mb={};
+  ra.forEach(function(x){ ma[x.label]=x; }); rb.forEach(function(x){ mb[x.label]=x; });
+  var labels = Object.keys(ma).filter(function(k){ return mb[k]; });
+  if(labels.length<2) return null;
+  var wa={}, wb={}, maxShift=0, shiftLabel=null;
+  labels.forEach(function(k){ wa[k]=ma[k].s/pa.s; wb[k]=mb[k].s/pb.s; var d=Math.abs(wb[k]-wa[k]); if(d>maxShift){maxShift=d; shiftLabel=k;} });
+  if(maxShift<0.08) return null; // sin recomposicion real de la mezcla
+  // efecto mezcla: pesos nuevos con tasas viejas; efecto tasa: pesos viejos con tasas nuevas
+  var base=0, mixOnly=0, rateOnly=0;
+  labels.forEach(function(k){ base+=wa[k]*ma[k].l1k_adj; mixOnly+=wb[k]*ma[k].l1k_adj; rateOnly+=wa[k]*mb[k].l1k_adj; });
+  if(base<=0) return null;
+  var mixEff=(mixOnly-base)/base*100, rateEff=(rateOnly-base)/base*100;
+  var totalEff=(pb.l1k_adj-pa.l1k_adj)/pa.l1k_adj*100;
+  if(Math.abs(mixEff)<5 && Math.abs(rateEff)<5) return null;
+  var mixDominates = Math.abs(mixEff)>Math.abs(rateEff)*1.5;
+  var rateDominates = Math.abs(rateEff)>Math.abs(mixEff)*1.5;
+  if(!mixDominates && !rateDominates) return null;
+  var L=LANG, dl=tbdDimLabel(dimKey);
+  return { strength: Math.abs(mixDominates?mixEff:rateEff), icon:'⚗',
+    title: mixDominates
+      ? (L==='en'?'The year-over-year change is media mix, not creative':L==='pt'?'A mudança ano a ano é mix de mídia, não criativo':'El cambio año contra año es mezcla de medios, no creativo')
+      : (L==='en'?'The year-over-year change is creative performance, not mix':L==='pt'?'A mudança ano a ano é performance criativa, não mix':'El cambio año contra año es desempeño creativo, no mezcla'),
+    body: (L==='en'
+      ? 'Portfolio L/$1k adj. moved '+fmtNum(totalEff,1)+'% from 2025 to 2026. Decomposing it by '+dl+': re-allocating spend across categories accounts for '+fmtNum(mixEff,1)+' points, while the categories\' own performance accounts for '+fmtNum(rateEff,1)+' points. The biggest reallocation was "'+shiftLabel+'" ('+fmtNum(wa[shiftLabel]*100,0)+'% → '+fmtNum(wb[shiftLabel]*100,0)+'% of spend). '+(mixDominates?'So this is a media-planning result, not a creative one — do not credit or blame the creative team for it.':'So this is a creative result, not a planning one — the mix barely moved the needle; the pieces themselves changed.')
+      : L==='pt'
+      ? 'O L/$1k adj. do portfólio mudou '+fmtNum(totalEff,1)+'% de 2025 para 2026. Decompondo por '+dl+': a realocação de gasto entre categorias responde por '+fmtNum(mixEff,1)+' pontos, enquanto a performance própria das categorias responde por '+fmtNum(rateEff,1)+' pontos. A maior realocação foi "'+shiftLabel+'" ('+fmtNum(wa[shiftLabel]*100,0)+'% → '+fmtNum(wb[shiftLabel]*100,0)+'% do gasto). '+(mixDominates?'Então este é um resultado de planejamento de mídia, não criativo — não credite nem culpe a equipe criativa por ele.':'Então este é um resultado criativo, não de planejamento — o mix mal moveu o ponteiro; as peças em si mudaram.')
+      : 'El L/$1k adj. del portafolio se movió '+fmtNum(totalEff,1)+'% de 2025 a 2026. Al descomponerlo por '+dl+': reasignar gasto entre categorías explica '+fmtNum(mixEff,1)+' puntos, mientras que el desempeño propio de las categorías explica '+fmtNum(rateEff,1)+' puntos. La mayor reasignación fue "'+shiftLabel+'" ('+fmtNum(wa[shiftLabel]*100,0)+'% → '+fmtNum(wb[shiftLabel]*100,0)+'% del gasto). '+(mixDominates?'O sea que esto es un resultado de planeación de medios, no creativo — no le acredites ni le reclames al equipo creativo por él.':'O sea que esto es un resultado creativo, no de planeación — la mezcla casi no movió la aguja; cambiaron las piezas en sí.')) };
+}
+
+/* ---------- TARJETA DE ESTACIONALIDAD POR PESTANA ----------
+   Requisito explicito: TODA tabla debe cruzar el indice de estacionalidad,
+   no solo la pestana de Seasonality. Cada pestana recibe la pregunta
+   estacional que SOLO ella puede responder, con la dimension que le
+   corresponde. Combina tres lecturas:
+     (1) sesgo de exposicion -- ¿le tocaron meses mejores o peores?
+     (2) elasticidad por banda -- ¿gana solo en la ola o tambien en el valle?
+     (3) auditoria del ajuste -- ¿el indice esta limpiando bien el calendario?
+   Si ninguna supera sus gates, la tarjeta lo dice explicitamente en vez de
+   inventar una frase. */
+function tbdSeasonalityCardFor(data, dimKey){
+  var L = LANG;
+  var head = L==='en'?'Seasonality read for this table':L==='pt'?'Leitura de sazonalidade desta tabela':'Lectura de estacionalidad de esta tabla';
+  var parts = [];
+  var keyFn = dimKey && TBD_DIM_DEFS[dimKey] ? TBD_DIM_DEFS[dimKey].keyFn : null;
+  var dl = dimKey && TBD_DIM_DEFS[dimKey] ? tbdDimLabel(dimKey) : (L==='en'?'creative':L==='pt'?'criativo':'creativo');
+
+  if(keyFn){
+    var exp = tbdSafeDetect(tbdSeasonExposure, data.y26, keyFn);
+    if(exp && exp.rows.length && Math.abs(exp.rows[0].gap)>=5){
+      var r = exp.rows[0];
+      parts.push(L==='en'
+        ? '<b>Calendar bias:</b> "'+esc(r.label)+'" ran in months averaging a demand index of '+fmtNum(r.dem,0)+' vs '+fmtNum(exp.portfolioDem,0)+' for the portfolio ('+(r.gap>0?'+':'')+fmtNum(r.gap,0)+' points). Its raw numbers are '+(r.gap>0?'flattered':'penalised')+' by the calendar it was given — the adj. column is the one to read for it.'
+        : L==='pt'
+        ? '<b>Viés de calendário:</b> "'+esc(r.label)+'" rodou em meses com índice de demanda médio de '+fmtNum(r.dem,0)+' vs '+fmtNum(exp.portfolioDem,0)+' do portfólio ('+(r.gap>0?'+':'')+fmtNum(r.gap,0)+' pontos). Seus números brutos estão '+(r.gap>0?'favorecidos':'penalizados')+' pelo calendário que recebeu — a coluna adj. é a que vale para ele.'
+        : '<b>Sesgo de calendario:</b> "'+esc(r.label)+'" corrió en meses con índice de demanda promedio de '+fmtNum(r.dem,0)+' vs '+fmtNum(exp.portfolioDem,0)+' del portafolio ('+(r.gap>0?'+':'')+fmtNum(r.gap,0)+' puntos). Sus números crudos están '+(r.gap>0?'favorecidos':'castigados')+' por el calendario que le tocó — la columna adj. es la que vale para él.');
+    }
+    var bands = tbdSafeDetect(tbdSeasonBands, data.y26, keyFn);
+    if(bands && bands.profiles.length){
+      var p = bands.profiles[0];
+      var isRider = p.gap >= 25, isValley = p.gap <= 10;
+      if(isRider){
+        parts.push(L==='en'
+          ? '<b>Wave rider:</b> "'+esc(p.label)+'" delivers '+fmtNum(p.hi.l1k_adj,1)+' adj. L/$1k in high-demand months but only '+fmtNum(p.lo.l1k_adj,1)+' in low-demand ones ('+fmtNum(p.gap,0)+'% apart, even after adjusting). It needs the tide: do not schedule it as your valley workhorse.'
+          : L==='pt'
+          ? '<b>Surfista de onda:</b> "'+esc(p.label)+'" entrega '+fmtNum(p.hi.l1k_adj,1)+' de L/$1k adj. em meses de alta demanda mas só '+fmtNum(p.lo.l1k_adj,1)+' nos de baixa ('+fmtNum(p.gap,0)+'% de diferença, mesmo já ajustado). Ele precisa da maré: não o programe como cavalo de batalha do vale.'
+          : '<b>Surfista de ola:</b> "'+esc(p.label)+'" entrega '+fmtNum(p.hi.l1k_adj,1)+' de L/$1k adj. en meses de alta demanda pero solo '+fmtNum(p.lo.l1k_adj,1)+' en los de baja ('+fmtNum(p.gap,0)+'% de diferencia, incluso ya ajustado). Necesita la marea: no lo programes como tu caballo de batalla del valle.');
+      } else if(isValley){
+        parts.push(L==='en'
+          ? '<b>Valley engine:</b> "'+esc(p.label)+'" holds up in low-demand months ('+fmtNum(p.lo.l1k_adj,1)+' vs '+fmtNum(p.hi.l1k_adj,1)+' adj. L/$1k in the peak). Its ranking is the message doing the work, not the calendar — this is what you schedule when the market is quiet.'
+          : L==='pt'
+          ? '<b>Motor de vale:</b> "'+esc(p.label)+'" se sustenta em meses de baixa demanda ('+fmtNum(p.lo.l1k_adj,1)+' vs '+fmtNum(p.hi.l1k_adj,1)+' de L/$1k adj. no pico). Seu ranking é a mensagem funcionando, não o calendário — é isto que se programa quando o mercado está parado.'
+          : '<b>Motor de valle:</b> "'+esc(p.label)+'" se sostiene en meses de baja demanda ('+fmtNum(p.lo.l1k_adj,1)+' vs '+fmtNum(p.hi.l1k_adj,1)+' de L/$1k adj. en el pico). Su ranking es el mensaje haciendo el trabajo, no el calendario — esto es lo que programas cuando el mercado está quieto.');
+      }
+    }
+  }
+  var audit = tbdSafeDetect(tbdSeasonAdjustmentAudit, data.y26);
+  if(audit) parts.push('<b>'+esc(audit.title)+':</b> '+esc(audit.body));
+
+  if(!parts.length){
+    var s = TBD_SEASONALITY[data.territory];
+    var swing = null;
+    if(s && s.jan_jul_2026 && s.jan_jul_2026.length){
+      var mx=Math.max.apply(null,s.jan_jul_2026), mn=Math.min.apply(null,s.jan_jul_2026);
+      if(mn>0) swing=(mx-mn)/mn*100;
+    }
+    parts.push(L==='en'
+      ? 'No seasonal distortion large enough to change how you read this table'+(swing!=null?' (the demand index swings '+fmtNum(swing,0)+'% across the period, but the categories here were exposed to it evenly)':'')+'. Read the adj. columns as they are.'
+      : L==='pt'
+      ? 'Nenhuma distorção sazonal grande o suficiente para mudar como você lê esta tabela'+(swing!=null?' (o índice de demanda varia '+fmtNum(swing,0)+'% no período, mas as categorias aqui foram expostas a ele de forma equilibrada)':'')+'. Leia as colunas adj. como estão.'
+      : 'No hay distorsión estacional lo bastante grande como para cambiar cómo se lee esta tabla'+(swing!=null?' (el índice de demanda varía '+fmtNum(swing,0)+'% en el período, pero las categorías de aquí quedaron expuestas a él de forma pareja)':'')+'. Lee las columnas adj. tal cual.');
+  }
+  return '<div class="tbd-season-card"><div class="tbd-season-head">🌡 '+esc(head)+'</div>'+
+    parts.map(function(p){ return '<div class="tbd-season-line">'+p+'</div>'; }).join('')+'</div>';
+}
+
 /* ============================ panel de expertos: 15 detectores nuevos ============================
    Disenados por un flujo de 4 personas (CMO/Big Data, Psicologia del consumidor,
    Diseno audiovisual, Copywriting/Comunicacion) en paralelo + una sintesis que
@@ -1784,7 +2154,12 @@ function tbdDeepInsights(data){
     tbdDetectSpendConcentrationRisk, tbdDetectVolumeMarginDecouple, tbdDetectCostPerSaleReversal, tbdDetectGrowthWithoutQuality,
     tbdDetectFragileLeader, tbdDetectSeasonalSpendMismatch, tbdDetectCampaignHiddenStar, tbdDetectCampaignZombie,
     tbdDetectFearNeedsHumor, tbdDetectCheapFormatMarginLeak, tbdDetectMechanismFatigue, tbdDetectCtaEmotionalMismatch,
-    tbdDetectPainPointAdTypeMismatch, tbdDetectHookPairInteraction, tbdDetectMechanismPainPointFit];
+    tbdDetectPainPointAdTypeMismatch, tbdDetectHookPairInteraction, tbdDetectMechanismPainPointFit,
+    // motores del panel por pestana (estadistica + planeacion)
+    tbdSeasonAdjustmentAudit, tbdDetectDimRowFragility, tbdDetectSimpsonReversal, tbdDetectDimScaleCeiling,
+    function(d){ return tbdDetectMixShift(d,'ad_type'); },
+    function(d){ return tbdDetectMixShift(d,'type_of_production'); },
+    function(d){ return tbdDetectMixShift(d,'tone_category'); }];
   var found = [];
   detectors.forEach(function(fn){ try{ var r = fn(data); if(r) found.push(r); }catch(e){} });
   return found.sort(function(a,b){ return b.strength-a.strength; });
@@ -1829,6 +2204,12 @@ function tbdDirectionCards(data){
   var mechFatigue = tbdDetectMechanismFatigue(data);
   var growthNoQuality = tbdDetectGrowthWithoutQuality(data);
   var fragileLeader = tbdDetectFragileLeader(data);
+  // motores del panel por pestana
+  var rowFragility = tbdSafeDetect(tbdDetectDimRowFragility, data);
+  var simpson = tbdSafeDetect(tbdDetectSimpsonReversal, data);
+  var scaleCeiling = tbdSafeDetect(tbdDetectDimScaleCeiling, data);
+  var mixShift = tbdSafeDetect(tbdDetectMixShift, data, 'ad_type');
+  var adjAudit = tbdSafeDetect(tbdSeasonAdjustmentAudit, data.y26);
 
   var keep = [];
   if(sorted26[0]) keep.push(L==='en'?'"'+sorted26[0].nombre+'" — top adj. L/$1k ('+fmtNum(sorted26[0].l1k_adj,1)+') with '+sorted26[0].n+' TV-on days behind it — extend its next flight before writing anything new.':L==='pt'?'"'+sorted26[0].nombre+'" — maior L/$1k adj. ('+fmtNum(sorted26[0].l1k_adj,1)+') com '+sorted26[0].n+' dias de TV-on por trás — estenda o próximo flight antes de escrever qualquer coisa nova.':'"'+sorted26[0].nombre+'" — mayor L/$1k adj. ('+fmtNum(sorted26[0].l1k_adj,1)+') con '+sorted26[0].n+' días de TV-on detrás — extiende su próximo flight antes de escribir algo nuevo.');
@@ -1856,6 +2237,7 @@ function tbdDirectionCards(data){
   if(marginLeak) stop.push(marginLeak.body);
   if(mechFatigue) stop.push(mechFatigue.body);
   if(hookPair && hookPair.type==='clash') stop.push(hookPair.body);
+  if(rowFragility) stop.push(rowFragility.body);
   if(!stop.length) stop.push(L==='en'?'No creative shows a real (non-seasonal) decline this period — nothing needs to be pulled right now.':L==='pt'?'Nenhum criativo mostra uma queda real (não sazonal) neste período — nada precisa ser retirado agora.':'Ningún creativo muestra una caída real (no estacional) este período — no hay nada que haya que retirar ahora.');
 
   var upside = [];
@@ -1863,6 +2245,7 @@ function tbdDirectionCards(data){
   if(smallNHigh) upside.push(L==='en'?'"'+smallNHigh.nombre+'" — strong adj. L/$1k ('+fmtNum(smallNHigh.l1k_adj,1)+') but only '+smallNHigh.n+' TV-on days — too little data to trust yet, but worth a longer test flight before dismissing or scaling it.':L==='pt'?'"'+smallNHigh.nombre+'" — L/$1k adj. forte ('+fmtNum(smallNHigh.l1k_adj,1)+') mas só '+smallNHigh.n+' dias de TV-on — pouco dado ainda para confiar, mas vale um flight de teste mais longo antes de descartar ou escalar.':'"'+smallNHigh.nombre+'" — L/$1k adj. fuerte ('+fmtNum(smallNHigh.l1k_adj,1)+') pero solo '+smallNHigh.n+' días de TV-on — todavía poco dato para confiar, pero vale un flight de prueba más largo antes de descartarlo o escalarlo.');
   if(jh && jh.strength>6) upside.push(L==='en'?'A creative purpose-built for the OE↔Junior cross-brand halo has never been tried — see Test B3.':L==='pt'?'Um criativo feito de propósito para o halo cruzado OE↔Junior nunca foi testado — ver Teste B3.':'Un creativo hecho a propósito para el halo cruzado OE↔Junior nunca se ha probado — ver Test B3.');
   if(fearHumor) upside.push(fearHumor.body);
+  if(scaleCeiling) upside.push(scaleCeiling.body);
   if(!upside.length) upside.push(L==='en'?'No clear untested gap surfaced this period — the current dimension mix is reasonably well explored.':L==='pt'?'Nenhuma lacuna clara não testada surgiu neste período — a mistura atual de dimensões está razoavelmente bem explorada.':'No surgió ninguna brecha clara sin probar este período — la mezcla actual de dimensiones está razonablemente bien explorada.');
 
   var guide = [];
@@ -1874,6 +2257,9 @@ function tbdDirectionCards(data){
   if(painAdType) guide.push(painAdType.body);
   if(growthNoQuality) guide.push(growthNoQuality.body);
   if(fragileLeader) guide.push(fragileLeader.body);
+  if(simpson) guide.push(simpson.body);
+  if(mixShift) guide.push(mixShift.body);
+  if(adjAudit) guide.push(adjAudit.body);
   guide.push(L==='en'?'Judge a new creative by its Launch Week number, but budget for a natural cooldown afterward — see the Launch Week tab.':L==='pt'?'Julgue um criativo novo pelo seu número de Launch Week, mas planeje um resfriamento natural depois — ver a aba Launch Week.':'Juzga un creativo nuevo por su número de Launch Week, pero presupuesta un enfriamiento natural después — ver la pestaña Launch Week.');
   guide.push(L==='en'?'Always compare creatives on the adj. (★) columns when they aired in different months — raw L/$1k rewards timing, not quality.':L==='pt'?'Sempre compare criativos pelas colunas adj. (★) quando foram ao ar em meses diferentes — o L/$1k bruto recompensa o timing, não a qualidade.':'Siempre compara creativos por las columnas adj. (★) cuando salieron al aire en meses distintos — el L/$1k crudo premia el timing, no la calidad.');
 
