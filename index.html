@@ -109,6 +109,22 @@ a{color:inherit;}
 @media (max-width:900px){ .tbd-two-col{grid-template-columns:1fr;} }
 .tbd-section-title{font-size:15px; font-weight:800; margin:0 0 12px; color:var(--ink);}
 .tbd-badge{display:inline-block; font-size:9.5px; font-weight:800; padding:2px 6px; border-radius:5px; background:var(--border-soft); color:var(--ink-faint); text-transform:uppercase;}
+.tbd-name-link{color:var(--ink); font-weight:700; cursor:pointer; text-decoration:none; border-bottom:1px dashed var(--ink-faint);}
+.tbd-name-link:hover{color:#0E7C66; border-bottom-color:#0E7C66;}
+.modal-card.tbd-wide{max-width:1180px;}
+.tbd-modal-step{margin-bottom:22px;}
+.tbd-modal-step-label{font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:#0E7C66; margin-bottom:8px;}
+.tbd-version-row{display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-soft); border-radius:8px; margin-bottom:6px;}
+.tbd-version-bar{flex:1; height:8px; border-radius:4px; background:var(--border-soft); overflow:hidden;}
+.tbd-version-bar-fill{height:100%; background:#0E7C66;}
+.tbd-rot-row{display:grid; grid-template-columns:120px 1fr 70px; gap:10px; padding:7px 0; border-bottom:1px solid var(--border-soft); font-size:11.5px; align-items:center;}
+.tbd-rot-date{font-weight:700;}
+.tbd-rot-companions{color:var(--ink-faint);}
+.tbd-info-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:12px;}
+.tbd-info-card{background:var(--surface-2); border-radius:10px; padding:12px 14px;}
+.tbd-info-label{font-size:10px; font-weight:800; text-transform:uppercase; color:var(--ink-faint); margin-bottom:4px;}
+.tbd-info-value{font-size:13px; font-weight:700; color:var(--ink);}
+.tbd-info-desc{font-size:11.5px; color:var(--ink-soft); margin-top:4px; line-height:1.5;}
 
 /* ---------- layout: sidebar 20% + main, EACH with its own independent scrollbar ---------- */
 #appShell{height:100vh; overflow:hidden; align-items:stretch;}
@@ -145,6 +161,15 @@ a{color:inherit;}
 .iconbtn:hover{color:var(--ink); border-color:var(--accent);}
 .iconbtn.active{background:var(--accent); color:#fff; border-color:var(--accent);}
 .context-title{padding:18px 22px 4px;}
+.appsw{position:relative;}
+.appsw-btn{border:1px solid var(--border); background:var(--surface); color:var(--ink); border-radius:9px; padding:6px 10px; font-size:11.5px; font-weight:700; display:flex; align-items:center; gap:6px; cursor:pointer;}
+.appsw-btn:hover{border-color:var(--accent);}
+.appsw-menu{display:none; position:absolute; top:calc(100% + 6px); right:0; background:var(--surface); border:1px solid var(--border); border-radius:10px; box-shadow:0 10px 24px rgba(0,0,0,.12); min-width:230px; z-index:600; overflow:hidden;}
+.appsw.open .appsw-menu{display:block;}
+.appsw-item{display:flex; align-items:center; gap:8px; padding:10px 12px; font-size:12px; font-weight:600; color:var(--ink); cursor:pointer;}
+.appsw-item:hover{background:var(--border-soft);}
+.appsw-item.current{background:color-mix(in srgb, var(--accent) 10%, transparent);}
+.appsw-item .chk{width:14px; font-weight:800; color:var(--accent);}
 .context-title h1{font-weight:800; font-size:22px; letter-spacing:-.01em; display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
 .context-metric-chip{display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:800; padding:5px 13px; border-radius:20px; background:var(--accent); color:#fff; white-space:nowrap;}
 .context-sub{margin-top:5px; font-size:12px; font-weight:600; color:var(--ink-faint);}
@@ -246,6 +271,10 @@ td.num, th.num{text-align:right;}
 .tour-btn{border-radius:8px; padding:7px 14px; font-size:12px; font-weight:700; cursor:pointer; border:1px solid var(--border);}
 .tour-btn-ghost{background:var(--surface-2); color:var(--ink-soft);}
 .tour-btn-primary{background:var(--accent); color:#fff; border-color:var(--accent);}
+#tbd-tour-blocker{position:fixed; inset:0; z-index:399; background:transparent;}
+#tbd-tour-highlight{position:fixed; border-radius:10px; border:2px solid #0E7C66; background:transparent; box-shadow:0 0 0 9999px rgba(8,10,16,.74); pointer-events:none; transition:top .25s ease, left .25s ease, width .25s ease, height .25s ease; z-index:400;}
+#tbd-tour-highlight.tour-no-target{border-color:transparent;}
+#tbd-tour-tooltip{position:fixed; z-index:401; width:320px; max-width:calc(100vw - 28px); background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); padding:16px 18px; transition:top .2s ease, left .2s ease;}
 .metric-card.negative{border-color:var(--bad); background:var(--bad-soft);}
 .metric-card-head{display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; color:var(--ink-soft); margin-bottom:7px;}
 .metric-card-val{font-weight:800; font-size:25px;}
@@ -317,7 +346,7 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
       <div style="flex:1"></div>
       <div class="iconbtns">
         <a class="iconbtn" id="btn-download-standalone" href="standalone.html" download="Dashboard_TV_Ads_v3_Standalone.html"></a>
-        <button class="iconbtn" id="btn-switch-app" title="Cambiar de dashboard">⇄</button>
+        <div id="app-switcher-main"></div>
         <button class="iconbtn" id="btn-tour">🎓</button>
         <button class="iconbtn" id="btn-methodology">?</button>
         <button class="iconbtn" id="btn-theme">◐</button>
@@ -346,7 +375,11 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
       <div style="flex:1"></div>
       <div class="iconbtns">
         <button class="iconbtn" id="tbd-btn-ppt">⬇ PPT</button>
-        <button class="iconbtn" id="tbd-btn-switch-app" title="Cambiar de dashboard">⇄</button>
+        <div id="app-switcher-tbd"></div>
+        <button class="iconbtn" id="tbd-btn-tour">🎓</button>
+        <button class="iconbtn" id="tbd-btn-methodology">?</button>
+        <button class="iconbtn" id="tbd-btn-theme">◐</button>
+        <div class="iconbtns" id="tbd-lang-btns"></div>
       </div>
     </div></div>
     <div class="page" id="tbd-page"></div>
@@ -374,6 +407,21 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
     <div class="tour-nav">
       <button class="tour-btn tour-btn-ghost" id="tour-prev"></button>
       <button class="tour-btn tour-btn-primary" id="tour-next"></button>
+    </div>
+  </div>
+</div>
+
+<div id="tbd-tour-blocker" style="display:none;"></div>
+<div id="tbd-tour-highlight" style="display:none;"></div>
+<div id="tbd-tour-tooltip" style="display:none;">
+  <div class="tour-progress" id="tbd-tour-progress"></div>
+  <div class="tour-title" id="tbd-tour-title"></div>
+  <div class="tour-body" id="tbd-tour-body"></div>
+  <div class="tour-actions">
+    <button class="tour-link" id="tbd-tour-skip"></button>
+    <div class="tour-nav">
+      <button class="tour-btn tour-btn-ghost" id="tbd-tour-prev"></button>
+      <button class="tour-btn tour-btn-primary" id="tbd-tour-next" style="background:#0E7C66;border-color:#0E7C66;"></button>
     </div>
   </div>
 </div>
@@ -509,6 +557,35 @@ async function boot(fetcher){
    de decidir cual de los dos motores de render arrancar. Cambiar de vista
    despues (⇄) simplemente oculta un shell y muestra el otro -- ambos leen
    el MISMO window.__BOOT_YEARS_DATA__, nunca se vuelve a pedir la data. */
+var APP_LIST = [
+  { id:'main', label:'TV Ads Performance', icon:'📊' },
+  { id:'tbd', label:'TBD Dolo', icon:'🧭' },
+];
+function renderAppSwitcher(containerId, currentId){
+  var el = document.getElementById(containerId);
+  if(!el) return;
+  var current = APP_LIST.filter(function(a){ return a.id===currentId; })[0];
+  el.innerHTML = '<div class="appsw" id="'+containerId+'-wrap">'+
+    '<button class="appsw-btn" type="button">'+current.icon+' '+esc(current.label)+' <span style="font-size:9px;">▾</span></button>'+
+    '<div class="appsw-menu">'+APP_LIST.map(function(a){
+      return '<div class="appsw-item'+(a.id===currentId?' current':'')+'" data-app="'+a.id+'"><span class="chk">'+(a.id===currentId?'✓':'')+'</span>'+a.icon+' '+esc(a.label)+'</div>';
+    }).join('')+'</div></div>';
+  var wrap = document.getElementById(containerId+'-wrap');
+  wrap.querySelector('.appsw-btn').addEventListener('click', function(e){ e.stopPropagation(); wrap.classList.toggle('open'); });
+  Array.from(wrap.querySelectorAll('.appsw-item')).forEach(function(item){
+    item.addEventListener('click', function(){
+      wrap.classList.remove('open');
+      if(item.dataset.app==='main') tvadsOpenMainApp(); else tvadsOpenTbdApp();
+    });
+  });
+}
+document.addEventListener('click', function(){ Array.from(document.querySelectorAll('.appsw.open')).forEach(function(w){ w.classList.remove('open'); }); });
+function tvadsToggleTheme(){
+  var root=document.documentElement;
+  var cur = root.getAttribute('data-theme');
+  var next = cur==='dark' ? 'light' : (cur==='light' ? null : 'dark');
+  if(next) root.setAttribute('data-theme', next); else root.removeAttribute('data-theme');
+}
 function tvadsOpenMainApp(){
   document.getElementById('appPicker').classList.remove('ready');
   document.getElementById('tbdShell').classList.remove('ready');
@@ -517,6 +594,7 @@ function tvadsOpenMainApp(){
     startApp(window.__BOOT_YEARS_DATA__);
   }
   document.getElementById('appShell').classList.add('ready');
+  renderAppSwitcher('app-switcher-main','main');
   setTimeout(function(){ if(typeof tabScrollUpdate==='function') tabScrollUpdate(); }, 0);
   if(!window.__MAIN_APP_TOUR_DONE__){ window.__MAIN_APP_TOUR_DONE__ = true; setTimeout(maybeAutoStartTour, 300); }
 }
@@ -532,17 +610,14 @@ function tvadsOpenTbdApp(){
     YEARS_DATA = window.__BOOT_YEARS_DATA__.years;
     COUNTRIES = window.__BOOT_YEARS_DATA__.allCountries || [];
   }
+  renderAppSwitcher('app-switcher-tbd','tbd');
   if(typeof tbdBoot==='function') tbdBoot();
 }
 document.getElementById('picker-card-main').addEventListener('click', tvadsOpenMainApp);
 document.getElementById('picker-card-tbd').addEventListener('click', tvadsOpenTbdApp);
-document.getElementById('btn-switch-app').addEventListener('click', function(){
-  document.getElementById('appShell').classList.remove('ready');
-  document.getElementById('appPicker').classList.add('ready');
-});
-document.getElementById('tbd-btn-switch-app').addEventListener('click', function(){
-  document.getElementById('tbdShell').classList.remove('ready');
-  document.getElementById('appPicker').classList.add('ready');
+document.getElementById('tbd-btn-theme').addEventListener('click', tvadsToggleTheme);
+document.getElementById('tbd-btn-methodology').addEventListener('click', function(){
+  TBD_STATE.tab = 'methodology'; tbdSetHash();
 });
 </script>
 </body>
