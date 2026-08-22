@@ -92,8 +92,11 @@ html[data-tbd-brand="jr"]{ --tbd-accent:var(--oejr); --tbd-deep:#4A2E15; --tbd-d
    seleccionada, no el azul global de --accent */
 #tbdShell .iconbtn.active{background:var(--tbd-accent); color:#fff; border-color:var(--tbd-accent);}
 #tbdShell .iconbtn:hover{border-color:var(--tbd-accent);}
-#tbd-sidebar{width:250px; min-width:250px; height:100%; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; flex:0 0 auto; overflow-y:auto;}
+#tbd-sidebar{width:250px; min-width:250px; transition:width .15s, min-width .15s, max-width .15s; height:100%; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; flex:0 0 auto; overflow-y:auto;}
 #tbd-main{flex:1 1 auto; min-width:0; height:100%; overflow-y:auto; display:flex; flex-direction:column;}
+#tbdShell.sb-collapsed #tbd-sidebar{width:0; min-width:0; max-width:0; overflow:hidden; border-right:none;}
+#tbd-sidebar-toggle{position:sticky; top:10px; align-self:flex-start; margin:10px; border:1px solid var(--border); background:var(--surface); color:var(--ink-soft); border-radius:8px; width:30px; height:30px; font-size:13px; z-index:10; flex:0 0 auto;}
+#tbd-sidebar-toggle:hover{border-color:var(--tbd-accent); color:var(--ink);}
 #tbd-nav{padding:8px 10px 30px; display:flex; flex-direction:column; gap:1px;}
 .tbd-nav-link{display:block; padding:9px 12px; border-radius:8px; font-size:12.5px; font-weight:600; color:var(--ink-faint); cursor:pointer; text-decoration:none;}
 .tbd-nav-link:hover{background:var(--border-soft); color:var(--ink);}
@@ -142,6 +145,22 @@ html[data-tbd-brand="jr"]{ --tbd-accent:var(--oejr); --tbd-deep:#4A2E15; --tbd-d
 .tbd-switch input:checked+.tbd-switch-slider{background:var(--tbd-accent);}
 .tbd-switch input:checked+.tbd-switch-slider::before{transform:translateX(15px);}
 .tbd-layout-toggle-label{font-size:11.5px; font-weight:700; color:var(--ink-soft); white-space:nowrap;}
+.tbd-explain{background:var(--warn-soft); border:1px solid var(--warn-border); border-radius:10px; padding:13px 17px; margin:10px 0 14px;}
+.tbd-explain-h{font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--warn); margin-bottom:8px;}
+.tbd-explain-list{margin:0; padding-left:20px; font-size:12.5px; line-height:1.6; color:var(--ink-soft);}
+.tbd-explain-list li{margin-bottom:7px;}
+.tbd-explain-list li:last-child{margin-bottom:0;}
+.tbd-season-year{background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px;}
+.tbd-season-year-head{font-size:12.5px; font-weight:800; color:var(--ink); margin-bottom:8px; padding-bottom:7px; border-bottom:2px solid var(--tbd-accent);}
+.tbd-season-bartrack{background:var(--border-soft); border-radius:4px; height:12px; min-width:60px;}
+.tbd-season-barfill{height:100%; border-radius:4px; background:var(--tbd-accent);}
+.tbd-season-barfill.y25{opacity:.5;}
+.tbd-bullets{margin:0; padding-left:18px;}
+.tbd-bullets li{margin-bottom:11px; line-height:1.55;}
+.tbd-bullets li:last-child{margin-bottom:0;}
+.tbd-bullets li::marker{color:var(--tbd-deep-soft);}
+.tbd-sub-line{margin-top:5px; font-size:11.5px; opacity:.92;}
+.tbd-sub-tag{display:inline-block; font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--tbd-deep-soft); border:1px solid currentColor; border-radius:4px; padding:0 5px; margin-right:6px;}
 .tbd-season-card{background:var(--warn-soft); border:1px solid var(--warn-border); border-radius:10px; padding:12px 16px; margin:10px 0 14px;}
 .tbd-season-head{font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--warn); margin-bottom:7px;}
 .tbd-season-line{font-size:12px; line-height:1.55; color:var(--ink-soft); margin-bottom:6px;}
@@ -433,6 +452,7 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
 </div>
 
 <div id="tbdShell">
+  <button id="tbd-sidebar-toggle">☰</button>
   <div id="tbd-sidebar">
     <div class="sb-brand"><span class="dot" style="background:var(--tbd-accent)"></span><span>TBD DOLO</span></div>
     <div id="tbd-nav"></div>
@@ -449,7 +469,6 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
         <div id="app-switcher-tbd"></div>
         <div class="tbd-topbar-divider"></div>
         <button class="iconbtn" id="tbd-btn-tour" title="Tour">🎓</button>
-        <button class="iconbtn" id="tbd-btn-methodology" title="How it was built">?</button>
         <button class="iconbtn" id="tbd-btn-theme" title="Theme">◐</button>
         <div class="tbd-topbar-divider"></div>
         <div class="iconbtns" id="tbd-lang-btns"></div>
@@ -623,7 +642,7 @@ async function boot(fetcher){
 </script>
 <script src="app.js?v=24"></script>
 <script src="tbd_seasonality.js?v=1"></script>
-<script src="tbd_dolo.js?v=17"></script>
+<script src="tbd_dolo.js?v=21"></script>
 <script>
 /* Selector de dashboard: se muestra una vez, apenas termina de cargar la
    data (boot() en el script anterior le agrega .ready a #appPicker), antes
@@ -689,9 +708,6 @@ function tvadsOpenTbdApp(){
 document.getElementById('picker-card-main').addEventListener('click', tvadsOpenMainApp);
 document.getElementById('picker-card-tbd').addEventListener('click', tvadsOpenTbdApp);
 document.getElementById('tbd-btn-theme').addEventListener('click', tvadsToggleTheme);
-document.getElementById('tbd-btn-methodology').addEventListener('click', function(){
-  TBD_STATE.tab = 'methodology'; tbdSetHash();
-});
 </script>
 </body>
 </html>
