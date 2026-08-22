@@ -259,6 +259,11 @@ function tbdCreativesForPeriod(territory, region, yearKey, pais, adTypeFilter){
       cta_type_code: primary.cta_type_code, type_of_production: primary.type_of_production, version: primary.version,
       link_video: primary.link_video, launch_dates: primary.launch_dates,
       theme_explanation: primary.theme_explanation, hook_audio: primary.hook_audio, hook_visual: primary.hook_visual,
+      /* Ya venian en tvads-creative-taxonomy.json y engine.js ya los pega a la
+         fila del deck; simplemente nadie los estaba copiando hasta aca, asi
+         que el brief no podia hablar de reparto ni de la frase de CTA real. */
+      main_character: primary.main_character, secondary_characters: primary.secondary_characters,
+      cta_phrase: primary.cta_phrase, promo_name: primary.promo_name,
       is_grouped: videos.length > 1,
       versions: videos.map(function(v){ return { video_name: v.row.nombre, link_video: v.row.link_video, version: v.row.version, num_dias: new Set(v.rawDays.map(function(d){return d.fecha;})).size }; }),
       _dailyItems: mergedItems, _rawDays: mergedRawDays,
@@ -301,6 +306,8 @@ function tbdVideoRowsForPeriod(territory, region, yearKey, pais, adTypeFilter){
       cta_type_code: row.cta_type_code, type_of_production: row.type_of_production,
       link_video: row.link_video, launch_dates: row.launch_dates,
       theme_explanation: row.theme_explanation, hook_audio: row.hook_audio, hook_visual: row.hook_visual,
+      main_character: row.main_character, secondary_characters: row.secondary_characters,
+      cta_phrase: row.cta_phrase, promo_name: row.promo_name,
       is_grouped: false, versions: [{ video_name: row.nombre, link_video: row.link_video, version: row.version, num_dias: a.n }],
       _dailyItems: dailyItems, _rawDays: taggedRawDays,
     }, a));
@@ -327,6 +334,44 @@ function tbdWearout(item){
   var h1 = tbdAgg(asc.slice(0,mid)), h2 = tbdAgg(asc.slice(mid));
   if(!h1 || !h2 || h1.l1k_adj<=0) return {h1:h1, h2:h2, pct:null};
   return {h1:h1, h2:h2, pct:(h2.l1k_adj-h1.l1k_adj)/h1.l1k_adj*100};
+}
+
+/* ---------- desgaste por FECHA unica ----------
+   tbdWearout() de arriba parte _dailyItems por numero de FILAS. En un Ad Name
+   agrupado (is_grouped) dos versiones que rotaron el mismo dia son dos filas,
+   asi que la "primera mitad al aire" y la "segunda" podian compartir fecha y
+   el delta salia contaminado. Esta version parte por fecha unica y exige 12
+   fechas para dar un porcentaje: con menos, la mitad tiene 5 dias o menos y
+   el numero es ruido. Devuelve tambien las fechas de corte, para poder decir
+   en el texto contra que periodo se esta comparando. */
+function tbdWearout2(r){
+  var dl = r && r._dailyItems;
+  var out = { h1:null, h2:null, pct:null, d1:0, d2:0, fIniH1:null, fFinH1:null, fIniH2:null, fFinH2:null, leadsH1:0, leadsH2:0 };
+  if(!dl || !dl.length) return out;
+  var byDate = {};
+  dl.forEach(function(d){ (byDate[d.date] = byDate[d.date] || []).push(d); });
+  var fechas = Object.keys(byDate).sort();
+  out.d1 = Math.floor(fechas.length/2); out.d2 = fechas.length - out.d1;
+  if(fechas.length < 12) return out;
+  var mid = Math.floor(fechas.length/2);
+  var a = [], b = [];
+  fechas.forEach(function(f, i){ (i<mid ? a : b).push.apply(i<mid ? a : b, byDate[f]); });
+  var h1 = tbdAgg(a), h2 = tbdAgg(b);
+  out.h1 = h1; out.h2 = h2;
+  out.d1 = mid; out.d2 = fechas.length - mid;
+  out.fIniH1 = fechas[0]; out.fFinH1 = fechas[mid-1];
+  out.fIniH2 = fechas[mid]; out.fFinH2 = fechas[fechas.length-1];
+  out.leadsH1 = h1 ? h1.l : 0; out.leadsH2 = h2 ? h2.l : 0;
+  if(!h1 || !h2 || !(h1.l1k_adj>0)) return out;
+  out.pct = (h2.l1k_adj - h1.l1k_adj) / h1.l1k_adj * 100;
+  return out;
+}
+function tbdDaysUnique(r){
+  var dl = r && r._dailyItems;
+  if(!dl || !dl.length) return 0;
+  var set = {};
+  dl.forEach(function(d){ set[d.date] = 1; });
+  return Object.keys(set).length;
 }
 
 /* ---------- dimension rollup: puerto de dagg() ---------- */
@@ -363,7 +408,13 @@ var TBD_DIM_DEFS = {
   type_of_production: { keyFn:function(r){return r.type_of_production||null;}, label:{en:'production method',es:'método de producción',pt:'método de produção'} },
   cta_type_code: { keyFn:function(r){return r.cta_type_code||null;}, label:{en:'CTA type',es:'tipo de CTA',pt:'tipo de CTA'} },
 };
-function tbdDimLabel(dimKey){ return tbdT(TBD_DIM_DEFS[dimKey].label); }
+/* Devuelve la clave cruda si la dimension no esta en el catalogo, en vez de
+   reventar: hay dimensiones validas del dataset (pain_point_code, version,
+   campaign_name) que nunca estuvieron en TBD_DIM_DEFS. */
+function tbdDimLabel(dimKey){
+  var d = TBD_DIM_DEFS[dimKey];
+  return d && d.label ? tbdT(d.label) : String(dimKey||'');
+}
 function tbdPainPrefix(r){ var c=r.pain_point_code||''; var i=c.indexOf('-'); return i===-1?c:c.slice(0,i); }
 function tbdIsFearPain(r){ return (r.pain_point_code||'').indexOf('Fear')!==-1; }
 function tbdLaunchDateOf(r){ return (r.launch_dates&&r.launch_dates[0]) || (r._dailyItems&&r._dailyItems.length?r._dailyItems.slice().sort(function(a,b){return a.date<b.date?-1:1;})[0].date:null); }
@@ -1781,14 +1832,16 @@ function tbdInsightsMetaInsight(data){
     ? 'Esta carga encontrou '+found.length+' achado'+(found.length===1?'':'s')+' de sinais cruzados para '+esc(data.territory)+'. O mais forte: "'+top.title+'".'
     : 'Esta carga encontró '+found.length+' hallazgo'+(found.length===1?'':'s')+' de señales cruzadas para '+esc(data.territory)+'. El más fuerte: "'+top.title+'".';
 }
+/* tbdTestsInsight() se elimino: tenia el umbral -20 escrito a mano y apuntaba
+   al test A2, que ya no existe. El insight de la pestana ahora sale del propio
+   motor de reglas. */
 function tbdTestsInsight(data){
-  var wo26 = data.y26.map(function(r){return {nombre:r.nombre, w:tbdWearout(r)};}).filter(function(x){return x.w.pct!=null;}).sort(function(a,b){return a.w.pct-b.w.pct;});
-  if(!wo26.length || wo26[0].w.pct>=-20) return null;
-  return LANG==='en'
-    ? 'Test A2 has the most urgent backing: "'+wo26[0].nombre+'" already dropped '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% from its first half on air to its second half (demand-adjusted) — this is measured decay, not a hypothesis, so it should be the first thing acted on from this list.'
-    : LANG==='pt'
-    ? 'O Teste A2 tem o respaldo mais urgente: "'+wo26[0].nombre+'" já caiu '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% da sua primeira metade no ar para a segunda metade (ajustado por demanda) — isso é decaimento medido, não uma hipótese, então deveria ser a primeira coisa da lista a ser executada.'
-    : 'El Test A2 tiene el respaldo más urgente: "'+wo26[0].nombre+'" ya cayó '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% de su primera mitad al aire a su segunda mitad (ajustado por demanda) — eso es desgaste medido, no una hipótesis, así que debería ser lo primero de esta lista en accionarse.';
+  var res = data.__tbdRes || (data.__tbdRes = tbdRunRules(data));
+  if(!res.tests.length) return res.vacios.tests.length ? res.vacios.tests[0] : tbdLimiteDeteccion(res.ctx);
+  var ctx = res.ctx;
+  return tbdL('<b>Takeaway:</b> '+res.tests.length+' test(s) are readable in '+ctx.pais+' for '+ctx.marca+' given its '+tbdNP1(ctx.err)+' adjustment error and '+tbdUSD(ctx.spd)+'/day of spend. Everything that could not be read at this budget is listed as discarded, with what it would take.',
+    '<b>Takeaway:</b> '+res.tests.length+' teste(s) sao legiveis em '+ctx.pais+' para '+ctx.marca+' dado seu erro de ajuste de '+tbdNP1(ctx.err)+' e '+tbdUSD(ctx.spd)+'/dia de gasto. Tudo que nao pode ser lido com este orcamento aparece como descartado, com o que faltaria.',
+    '<b>Takeaway:</b> '+res.tests.length+' test(s) son legibles en '+ctx.pais+' para '+ctx.marca+' dado su error de ajuste de '+tbdNP1(ctx.err)+' y '+tbdUSD(ctx.spd)+'/dia de gasto. Todo lo que no se pudo leer con este presupuesto queda listado como descartado, con lo que le faltaria.');
 }
 /* ============================ motor de insights por correlacion ============================
    Cada detector cruza AL MENOS dos senales (nunca "el mejor de X" solo) y solo
@@ -1928,17 +1981,31 @@ function tbdDetectRankReversal(data){
   };
 }
 function tbdDetectJrHaloShare(data){
-  var totalOe = data.p26.l, totalJr = data.y26.reduce(function(s,r){return s+r.jr_l;},0);
-  if(totalOe<=0 || totalJr<=0) return null;
+  /* El halo es bidireccional: viendo Open English son leads de Junior que el
+     sistema atribuyo al gasto adulto, y viendo Junior es exactamente al reves.
+     Antes la direccion estaba escrita a mano en los 3 idiomas, asi que quien
+     miraba Junior leia un texto redactado para OE. Ahora se nombra con
+     tbdOrgName()/tbdHaloTargetName(), igual que el resto del reporte. */
+  var totalJr = 0, totalOe = 0;
+  data.y26.forEach(function(r){ totalJr += (r.jr_l||0); totalOe += r.l; });
+  if(totalOe <= 0 || totalJr <= 0) return null;
   var pct = totalJr/totalOe*100;
-  if(pct<3) return null;
+  if(pct < 3) return null;
+  var aport = data.y26.filter(function(r){ return (r.jr_l||0) > 0; })
+    .sort(function(a,b){ return b.jr_l - a.jr_l; });
+  var L = LANG, from = tbdOrgName(), to = tbdHaloTargetName();
+  var top = aport[0];
   return {
-    strength: pct*2,
-    icon:'♦',
-    title: LANG==='en'?'Open English’s TV spend is quietly buying Junior leads too':LANG==='pt'?'O investimento em TV da Open English também está gerando leads Junior':'La inversión en TV de Open English también está generando leads de Junior',
-    body: (LANG==='en'?'In 2026, Open English adult TV spend generated the equivalent of '+fmtNum(pct,1)+'% additional real Open English Junior leads ('+fmtNum(totalJr,0)+' leads) on top of its own '+fmtNum(totalOe,0)+' — at $0 incremental cost. This is real budget efficiency that would be missed by looking at OE performance alone; it should factor into any cross-brand budget conversation.'
-      :LANG==='pt'?'Em 2026, o investimento em TV de Open English adulto gerou o equivalente a '+fmtNum(pct,1)+'% de leads reais adicionais de Open English Junior ('+fmtNum(totalJr,0)+' leads) além dos seus próprios '+fmtNum(totalOe,0)+' — com custo incremental $0. Essa é uma eficiência real de orçamento que passaria despercebida olhando só a performance da OE; deveria entrar em qualquer conversa de orçamento entre marcas.'
-      :'En 2026, la inversión de TV de Open English adulto generó el equivalente a '+fmtNum(pct,1)+'% de leads reales adicionales de Open English Junior ('+fmtNum(totalJr,0)+' leads) encima de sus propios '+fmtNum(totalOe,0)+' — a costo incremental $0. Esto es eficiencia real de presupuesto que se perdería mirando solo el performance de OE; debería entrar en cualquier conversación de presupuesto entre marcas.'),
+    strength: pct*2, icon: '\u{1F517}',
+    f: { pct: pct, totalJr: totalJr, totalOe: totalOe, topAportantes: aport.slice(0,3), nAportantes: aport.length },
+    title: L==='en' ? 'TV spend on '+from+' is also producing '+to+' leads'
+      : L==='pt' ? 'O investimento de TV em '+from+' tambem esta gerando leads de '+to
+      : 'La inversion en TV de '+from+' tambien esta generando leads de '+to,
+    body: L==='en'
+      ? 'For every 100 '+from+' leads this period, another '+fmtNum(pct,0)+' real '+to+' leads came in that the source system attributed to '+from+' spend ('+fmtNum(totalJr,0)+' leads across '+aport.length+' creatives'+(top?', led by "'+top.nombre+'" with '+fmtNum(top.jr_l,0):'')+'). They are not counted anywhere in the '+from+' numbers, so the real return on this budget is higher than the tables show.'
+      : L==='pt'
+      ? 'A cada 100 leads de '+from+' neste periodo, entraram outros '+fmtNum(pct,0)+' leads reais de '+to+' que o sistema de origem atribuiu ao gasto de '+from+' ('+fmtNum(totalJr,0)+' leads em '+aport.length+' criativos'+(top?', puxados por "'+top.nombre+'" com '+fmtNum(top.jr_l,0):'')+'). Nao estao contados em nenhum numero de '+from+', entao o retorno real deste orcamento e maior do que as tabelas mostram.'
+      : 'Por cada 100 leads de '+from+' de este periodo entraron otros '+fmtNum(pct,0)+' leads reales de '+to+' que el sistema de origen le atribuyo al gasto de '+from+' ('+fmtNum(totalJr,0)+' leads repartidos en '+aport.length+' creativos'+(top?', encabezados por "'+top.nombre+'" con '+fmtNum(top.jr_l,0):'')+'). No estan contados en ningun numero de '+from+', asi que el retorno real de este presupuesto es mayor que el que muestran las tablas.'
   };
 }
 function tbdDetectCvrDivergence(data){
@@ -2758,127 +2825,1432 @@ function tbdDeepInsights(data){
   detectors.forEach(function(fn){ try{ var r = fn(data); if(r) found.push(r); }catch(e){} });
   return found.sort(function(a,b){ return b.strength-a.strength; });
 }
+/* ============================================================
+   ACCIONABILIDAD PROFUNDA -- nucleo compartido.
+   Ver tbdRunRules() más abajo para el registro de reglas.
+   ============================================================ */
+function tbdL(en, pt, es){ return LANG==='en' ? en : (LANG==='pt' ? pt : es); }
+function tbdNL(v){ return fmtNum(v,0); }               /* leads: 0 decimales, regla de la casa */
+function tbdNK(v){ return fmtNum(v,0); }               /* L/$1k y L/$1k adj.: 0 decimales */
+function tbdNP(v){ return fmtNum(v,0)+'%'; }
+function tbdNP1(v){ return fmtNum(v,1)+'%'; }
+function tbdUSD(v){ return fmt$(v,0); }
+function tbdPP(v){ return fmtNum(v,1)+' pp'; }
+function tbdQ(x){ return '"'+String(x==null?'':x)+'"'; }
+
+/* rollup con lo que el rollup viejo no da: n de creativos, días MINIMOS por
+   pieza (el viejo suma días-creativo, que no sirve como compuerta), y los
+   nombres, para poder citarlos en el texto. */
+function tbdRollup2(items, keyFn){
+  var b = {};
+  items.forEach(function(r){
+    var k = keyFn(r);
+    if(k==null || k==='') return;
+    var o = b[k] || (b[k] = { label:k, l:0, s:0, e:0, c:0, dw:0, nCre:0, dias:[], nombres:[] });
+    o.l += r.l; o.s += r.s; o.e += (r.e||0); o.c += (r.c||0);
+    o.dw += r.dem * r.s; o.nCre++; o.dias.push(r.n); o.nombres.push(r.nombre);
+  });
+  var out = [];
+  Object.keys(b).forEach(function(k){
+    var o = b[k];
+    if(o.s <= 0) return;
+    var di = o.dw / o.s;
+    out.push({ label:o.label, nCre:o.nCre, l:o.l, s:o.s, e:o.e, c:o.c, dem:di,
+      l1k: o.l/o.s*1000, l1k_adj: o.l/o.s*1000/(di/100),
+      cpl_adj: o.l>0 ? (o.s/o.l)*(di/100) : null,
+      cvr: o.l>0 ? o.e/o.l : 0, mncc: o.c>0 ? (o.c-o.s)/o.c : null,
+      diasMin: Math.min.apply(null, o.dias), diasMax: Math.max.apply(null, o.dias),
+      diasSum: o.dias.reduce(function(a,x){return a+x;},0),
+      nombres: o.nombres });
+  });
+  return out.sort(function(x,y){ return y.l1k_adj - x.l1k_adj; });
+}
+
+/* Nivel de evidencia. Es lo que impide que una celda con n=1 se lea igual que
+   una con n=8: el tier decide el verbo y el descargo. */
+function tbdTier(nCre, diasMinPieza, gapPct, err){
+  var g = Math.abs(gapPct||0), e = err==null ? 8 : err;
+  if(nCre<=1 || g < e){
+    return { tier:'INDICIO',
+      verbo: tbdL('look at','olhe','mira'),
+      prefijo: tbdL('Signal too thin to act on yet','Sinal fraco demais para agir ainda','Senal demasiado débil para accionar todavía') };
+  }
+  if(nCre>=3 && diasMinPieza>=6 && g >= Math.max(15, 2*e)){
+    return { tier:'REGLA',
+      verbo: tbdL('scale','escale','escala'),
+      prefijo: tbdL('Enough evidence to make it the default','Evidencia suficiente para virar padrao','Evidencia suficiente para volverlo el default') };
+  }
+  return { tier:'APUESTA',
+    verbo: tbdL('test','teste','proba'),
+    prefijo: tbdL('Worth one controlled bet','Vale uma aposta controlada','Vale una apuesta controlada') };
+}
+
+/* Sobredispersion diaria de leads: sin esto, cualquier calculo de cuantos
+   leads hace falta para leer un test subestima el ruido real de la TV. */
+function tbdPhi(items){
+  var byDate = {};
+  items.forEach(function(r){ (r._dailyItems||[]).forEach(function(d){
+    byDate[d.date] = (byDate[d.date]||0) + d.l; }); });
+  var v = Object.keys(byDate).map(function(k){ return byDate[k]; });
+  if(v.length < 8) return { phi:3, nFechas:v.length, supuesto:true };
+  var m = v.reduce(function(a,x){return a+x;},0)/v.length;
+  if(!(m>0)) return { phi:3, nFechas:v.length, supuesto:true };
+  var s2 = v.reduce(function(a,x){return a+(x-m)*(x-m);},0)/(v.length-1);
+  return { phi: Math.max(1, s2/m), nFechas:v.length, supuesto:false };
+}
+function tbdNLeads(delta, phi){
+  var d = Math.abs(delta||0);
+  if(d < 0.01) return Infinity;
+  return Math.ceil(15.7*(phi||3)/(d*d));
+}
+
+/* Meses que QUEDAN por delante en el año, descartando los que el modelo v2026
+   marco como no significativos: recomendar una ventana sobre un mes gris seria
+   recomendar sobre ruido. */
+function tbdMonthsAhead(territory){
+  var t = TBD_SEASONALITY[territory] || {};
+  var f = t.factorsIndex || [], grey = t.grey || [];
+  var MM = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+  var hoyMes = (new Date()).getMonth(); // 0-11
+  var cand = [];
+  for(var m = hoyMes+1; m < 12; m++){
+    if(f[m]==null) continue;
+    if(grey[m]) continue;
+    cand.push({ m:m, nombre: mesLabel(MM[m]), factor: f[m] });
+  }
+  var todosGrises = cand.length===0;
+  var top = null, flojo = null;
+  cand.forEach(function(c){
+    if(!top || c.factor > top.factor) top = c;
+    if(!flojo || c.factor < flojo.factor) flojo = c;
+  });
+  return { cand:cand, mesTop: top?top.nombre:null, facTop: top?top.factor:null,
+           mesFlojo: flojo?flojo.nombre:null, facFlojo: flojo?flojo.factor:null,
+           todosGrises: todosGrises, unico: cand.length===1 };
+}
+function tbdGreySpendShare(items, territory){
+  var t = TBD_SEASONALITY[territory] || {}, grey = t.grey || [];
+  var tot = 0, gris = 0, meses = {};
+  var MM = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+  items.forEach(function(r){ (r._dailyItems||[]).forEach(function(d){
+    var m = Number(d.date.slice(5,7))-1;
+    tot += d.s;
+    if(grey[m]){ gris += d.s; meses[mesLabel(MM[m])] = 1; }
+  }); });
+  return { pct: tot>0 ? gris/tot*100 : 0, meses: Object.keys(meses), nGrises: Object.keys(meses).length };
+}
+/* Deriva real del mercado dentro del período, leida del nivel desestacionalizado. */
+function tbdMarketDrift(territory){
+  var t = TBD_SEASONALITY[territory] || {};
+  return t.market_yoy==null ? null : t.market_yoy;
+}
+function tbdRangoFactor(territory){
+  var t = TBD_SEASONALITY[territory] || {};
+  var f = (t.factorsIndex||[]).slice(0,7);
+  if(!f.length) return null;
+  return Math.max.apply(null,f) - Math.min.apply(null,f);
+}
+/* Pais de contraste: el que tenga el error de ajuste más distinto, para poder
+   decir "acá no se puede afinar tanto como en X". */
+function tbdPeerCountry(territory){
+  var err = tbdSeasonErrPct(territory);
+  if(err==null) return null;
+  var best = null;
+  (TBD_TERRITORIES||[]).forEach(function(t){
+    if(t===territory) return;
+    var e = tbdSeasonErrPct(t);
+    if(e==null) return;
+    if(!best || Math.abs(e-err) > Math.abs(best.err-err)) best = { pais:t, err:e };
+  });
+  return best;
+}
+/* Cubo de reparto sobre main_character. 6 cubos, sin inventar: lo que no
+   encaje devuelve null y la regla no dispara. */
+function tbdCastBucket(r){
+  var mc = r && r.main_character;
+  var txt = mc ? (typeof mc==='string' ? mc : (mc.es||mc.en||mc.pt||'')) : '';
+  if(!txt) return null;
+  var t = String(txt).split('—')[0].split(' - ')[0].toLowerCase();
+  var nino = /niñ|nino|crian|kid|child|filh|hij/.test(t);
+  var adulto = /adult|madre|padre|mam|pap|mujer|hombre|mãe|pai|estudiante|profesional/.test(t);
+  if(/ceo|vocero|fundador|founder|spokes|andrei|andrey/.test(t)) return 'CEO_VOCERO';
+  if(/disfraz|costume|mascota|personaje|character|fantasia/.test(t)) return 'PERSONAJE_DISFRAZ';
+  if(nino && adulto) return 'ADULTO_MAS_NINO';
+  if(nino) return 'NINO';
+  if(adulto) return 'ADULTO';
+  if(/sin persona|none|texto|animation|animaci|produto|producto/.test(t)) return 'SIN_PERSONA';
+  return null;
+}
+function tbdSpd(items){
+  var s = 0, d = {};
+  items.forEach(function(r){ (r._dailyItems||[]).forEach(function(x){ s += x.s; d[x.date]=1; }); });
+  var n = Object.keys(d).length;
+  return n>0 ? s/n : 0;
+}
+function tbdMedian(arr){
+  if(!arr.length) return 0;
+  var a = arr.slice().sort(function(x,y){return x-y;});
+  var m = Math.floor(a.length/2);
+  return a.length%2 ? a[m] : (a[m-1]+a[m])/2;
+}
+
+/* ---------- CONTEXTO: se calcula UNA vez por render ---------- */
+function tbdCtx(data){
+  var pais = data.territory, marca = tbdOrgName(), esJr = marca==='Open English Junior';
+  var gate = tbdSeasonGate(pais) || {};
+  var err = tbdSeasonErrPct(pais);
+  var sea = TBD_SEASONALITY[pais] || {};
+  var y26f = data.y26.filter(function(r){ return r.n >= 3; });
+  var gastoPeriodo = data.p26.s || 0;
+  var gastoMes = gastoPeriodo / 7;   // el período son 7 meses (Ene-Jul)
+  var ph = tbdPhi(data.y26);
+  var nMedibles = data.y26.filter(function(r){ return tbdDaysUnique(r) >= 12; }).length;
+  var ctx = {
+    pais: pais, marca: marca, esJr: esJr,
+    err: err, errOk: err!=null, gate: gate.label||null, skill: gate.skill,
+    yoy: tbdMarketDrift(pais), market25: sea.market_25, market26: sea.market_26,
+    factores: sea.factorsIndex || [], grey: sea.grey || [],
+    meses: tbdMonthsAhead(pais), rangoFactor: tbdRangoFactor(pais),
+    greySpend: tbdGreySpendShare(data.y26, pais),
+    paisContraste: tbdPeerCountry(pais),
+    y26f: y26f, nCre26: data.y26.length, nCre25: data.y25.length, nMedibles: nMedibles,
+    l1kPort26: data.p26.l1k_adj, l1kPort25: data.p25.l1k_adj, mnccPort26: data.p26.mncc,
+    spd: tbdSpd(data.y26), phi: ph.phi, nFechas: ph.nFechas, phiSupuesto: ph.supuesto,
+    diasVueloTipico: tbdMedian(y26f.map(function(r){ return r.n; })),
+    gastoPeriodo: gastoPeriodo, gastoMes: gastoMes,
+    roll: {}
+  };
+  /* Tope de carga: cuánto dinero puede reasignar UNA lectura de este reporte.
+     Se aprieta donde el ajuste es menos confiable -- en AMBAR no se mueve lo
+     mismo que en VERDE. */
+  ctx.topeCarga = gastoMes * (ctx.gate==='VERDE' ? 0.25 : 0.12);
+  return ctx;
+}
+function tbdRollCached(ctx, items, dimKey, keyFn){
+  if(ctx.roll[dimKey]) return ctx.roll[dimKey];
+  ctx.roll[dimKey] = tbdRollup2(items, keyFn);
+  return ctx.roll[dimKey];
+}
+
+/* ---------- LIBRO DE SALDO ----------
+   Un solo tope por carga, compartido entre todas las reglas. Sin esto, tres
+   reglas distintas pueden mandar a mover el mismo dolar y la misma pieza, y
+   la suma de las recomendaciones supera el presupuesto del mes. */
+function tbdLedgerNew(ctx){
+  return { tope: ctx.topeCarga, saldo: ctx.topeCarga, piezas: {}, dims: {}, consumidores: [], errores: 0 };
+}
+function tbdLedgerClaimPiece(led, nombre, id){
+  if(!nombre) return false;
+  if(led.piezas[nombre]) return false;
+  led.piezas[nombre] = id;
+  return true;
+}
+function tbdLedgerClaimDim(led, dimKey, id){
+  if(!dimKey) return false;
+  if(led.dims[dimKey]) return false;
+  led.dims[dimKey] = id;
+  return true;
+}
+function tbdLedgerSpend(led, usd, id){
+  if(!(usd>0)) return { ok:true, monto:0, saldo:led.saldo };
+  if(led.saldo <= 0) return { ok:false, monto:0, saldo:0 };
+  var monto = Math.min(usd, led.saldo);
+  led.saldo -= monto;
+  if(led.consumidores.indexOf(id)===-1) led.consumidores.push(id);
+  return { ok:true, monto:monto, saldo:led.saldo };
+}
+function tbdLedgerWho(led){ return led.consumidores.join(', '); }
+
+/* ---------- formato obligatorio de toda tarjeta ----------
+   Hallazgo -> Hipotesis -> Comprobacion -> Accion (-> número de exito).
+   La comprobación NUNCA puede quedar vacia: si no hay con que cruzarla, hay
+   que decirlo y nombrar el dato que falta. */
+function tbdCard(o){
+  var L = {
+    hall: tbdL('FINDING','ACHADO','HALLAZGO'),
+    hip:  tbdL('HYPOTHESIS','HIPOTESE','HIPOTESIS'),
+    comp: tbdL('CROSS-CHECK','COMPROVACAO','COMPROBACION'),
+    acc:  tbdL('ACTION','ACAO','ACCION'),
+    num:  tbdL('SUCCESS / REVERT','SUCESSO / REVERSAO','EXITO / REVERSION')
+  };
+  var t = L.hall+' — '+o.hallazgo+'\n'+
+          L.hip+' — '+o.hipotesis+'\n'+
+          L.comp+' — '+(o.comprobacion || tbdL('No way to check it inside this report.','Sem como comprovar dentro deste relatorio.','No hay con que comprobarlo dentro de este reporte.'))+'\n'+
+          L.acc+' ('+o.verbo+') — '+o.accion;
+  if(o.exito) t += '\n'+L.num+' — '+o.exito;
+  if(t.length > 1400 && o.hipotesis && o.hipotesis.length > 80){
+    /* si hay que recortar, se recorta la hipotesis: nunca el hallazgo ni la
+       comprobación, que son los que sostienen el número. El corte tiene que
+       avanzar SIEMPRE, si no la recursion no termina cuando el resto de las
+       secciones ya supera el tope por si solo. */
+    /* -2 y no -1: al recorte se le pega un '…', así que con -1 el texto
+       quedaba del mismo largo y la recursion no terminaba nunca. */
+    var largo = Math.max(60, Math.min(o.hipotesis.length - 2, o.hipotesis.length - (t.length-1400)));
+    return tbdCard(Object.assign({}, o, { hipotesis: o.hipotesis.slice(0, largo) + '…' }));
+  }
+  return t;
+}
+function tbdSafeRule(rule, ctx, data, led){
+  try{
+    var c = rule.run(ctx, data, led);
+    if(!c) return null;
+    c.id = rule.id; c.dest = rule.dest; c.prio = rule.prio;
+    c.usd = c.usd || 0; c.delta = c.delta || 0;
+    c.conf = c.conf==null ? 0.5 : c.conf;
+    c.ev = c.usd * Math.abs(c.delta) * c.conf;
+    c.claims = c.claims || { piezas:[], dims:[] };
+    return c;
+  }catch(e){ led.errores++; return null; }
+}
+function tbdSafeVacio(rule, ctx, data){
+  try{ return rule.vacio ? rule.vacio(ctx, data) : null; }catch(e){ return null; }
+}
+
 /* ============================ Direction + Brief ============================
    Puerto del bloque "Direction + Brief" del reporte de referencia: NO es un
    parrafo narrativo -- son 4 tarjetas (Keep&Scale / Stop&Avoid / Highest
    untested upside / Operational guidelines) + una caja de Brief separada con
    2 columnas (Generic / Promo), cada bullet compuesto desde datos reales de
-   ESTE territorio/marca/periodo (nunca texto fijo por pais). */
+   ESTE territorio/marca/período (nunca texto fijo por pais). */
 function tbdModeOf(items, keyFn){
   var counts = {}; items.forEach(function(r){ var k=keyFn(r); if(k==null||k==='') return; counts[k]=(counts[k]||0)+1; });
   var best=null; Object.keys(counts).forEach(function(k){ if(!best || counts[k]>counts[best]) best=k; });
   return best;
 }
-function tbdDirectionCards(data){
-  var L = LANG;
-  var y26 = data.y26.filter(function(r){ return r.n>=3; });
-  var sorted26 = y26.slice().sort(function(a,b){ return b.l1k_adj-a.l1k_adj; });
-  var toneRoll = tbdDimensionRollup(data.y26, function(r){ return r.tone_category||null; });
-  var hookRoll = tbdDimensionRollup(data.y26, function(r){ return r.hook_audio_type_code||null; });
-  var wo = data.y26.map(function(r){ return {row:r, w:tbdWearout(r)}; }).filter(function(x){ return x.w.pct!=null; });
-  var worstWearout = wo.slice().sort(function(a,b){ return a.w.pct-b.w.pct; }).filter(function(x){ return x.w.pct<-20; });
-  var jh = tbdDetectJrHaloShare(data);
-  var toneByType = tbdDetectToneByAdType(data);
-  var timing = tbdDetectSpendVsDemandTiming(data,'2026');
-  var smallNHigh = data.y26.filter(function(r){ return r.n>=2 && r.n<5; }).sort(function(a,b){ return b.l1k_adj-a.l1k_adj; })[0];
-  var rankRev = tbdDetectRankReversal(data);
-  // panel de expertos -- ver especificacion sintetizada
-  var hiddenStar = tbdDetectCampaignHiddenStar(data);
-  var zombie = tbdDetectCampaignZombie(data);
-  var concentration = tbdDetectSpendConcentrationRisk(data);
-  var marginLeak = tbdDetectCheapFormatMarginLeak(data);
-  var mechPainFit = tbdDetectMechanismPainPointFit(data);
-  var hookPair = tbdDetectHookPairInteraction(data);
-  var costSale = tbdDetectCostPerSaleReversal(data);
-  var volMargin = tbdDetectVolumeMarginDecouple(data);
-  var seasonMismatch = tbdDetectSeasonalSpendMismatch(data);
-  var ctaMismatch = tbdDetectCtaEmotionalMismatch(data);
-  var painAdType = tbdDetectPainPointAdTypeMismatch(data);
-  var fearHumor = tbdDetectFearNeedsHumor(data);
-  var mechFatigue = tbdDetectMechanismFatigue(data);
-  var growthNoQuality = tbdDetectGrowthWithoutQuality(data);
-  var fragileLeader = tbdDetectFragileLeader(data);
-  // motores del panel por pestana
-  var rowFragility = tbdSafeDetect(tbdDetectDimRowFragility, data);
-  var simpson = tbdSafeDetect(tbdDetectSimpsonReversal, data);
-  var scaleCeiling = tbdSafeDetect(tbdDetectDimScaleCeiling, data);
-  var mixShift = tbdSafeDetect(tbdDetectMixShift, data, 'ad_type');
-  var adjAudit = tbdSafeDetect(tbdSeasonAdjustmentAudit, data.y26);
-
-  var keep = [];
-  if(sorted26[0]) keep.push(L==='en'?'"'+sorted26[0].nombre+'" — top adj. L/$1k ('+fmtNum(sorted26[0].l1k_adj,0)+') with '+sorted26[0].n+' TV-on days behind it — extend its next flight before writing anything new.':L==='pt'?'"'+sorted26[0].nombre+'" — maior L/$1k adj. ('+fmtNum(sorted26[0].l1k_adj,0)+') com '+sorted26[0].n+' dias de TV-on por trás — estenda o próximo flight antes de escrever qualquer coisa nova.':'"'+sorted26[0].nombre+'" — mayor L/$1k adj. ('+fmtNum(sorted26[0].l1k_adj,0)+') con '+sorted26[0].n+' días de TV-on detrás — extiende su próximo flight antes de escribir algo nuevo.');
-  if(toneRoll[0] && toneRoll[0].n>=2) keep.push(L==='en'?'"'+toneRoll[0].label+'" tone — best adj. L/$1k across '+toneRoll[0].n+' creatives ('+fmtNum(toneRoll[0].l1k_adj,0)+') — default to this tone for new briefs unless there\'s a specific reason not to.':L==='pt'?'Tom "'+toneRoll[0].label+'" — melhor L/$1k adj. entre '+toneRoll[0].n+' criativos ('+fmtNum(toneRoll[0].l1k_adj,0)+') — use este tom como padrão em novos briefs, salvo razão específica em contrário.':'Tono "'+toneRoll[0].label+'" — mejor L/$1k adj. entre '+toneRoll[0].n+' creativos ('+fmtNum(toneRoll[0].l1k_adj,0)+') — usa este tono como default en briefs nuevos salvo razón específica en contra.');
-  if(hookRoll[0] && hookRoll[0].n>=2) keep.push(L==='en'?'"'+hookRoll[0].label+'" audio hook — the strongest opening mechanic this period ('+fmtNum(hookRoll[0].l1k_adj,0)+' adj.) — reuse it across formats, not just the creative that popularized it.':L==='pt'?'Hook de áudio "'+hookRoll[0].label+'" — o mecanismo de abertura mais forte do período ('+fmtNum(hookRoll[0].l1k_adj,0)+' adj.) — reutilize em vários formatos, não só no criativo que o popularizou.':'Hook de audio "'+hookRoll[0].label+'" — el mecanismo de apertura más fuerte del período ('+fmtNum(hookRoll[0].l1k_adj,0)+' adj.) — reutilízalo en varios formatos, no solo en el creativo que lo popularizó.');
-  if(jh) keep.push(jh.body);
-  if(hiddenStar) keep.push(hiddenStar.body);
-  if(mechPainFit) keep.push(mechPainFit.body);
-  if(hookPair && hookPair.type==='synergy') keep.push(hookPair.body);
-  if(!keep.length) keep.push(L==='en'?'No creative or dimension cleared the bar for a confident "scale this" call this period — treat the current portfolio as still in testing.':L==='pt'?'Nenhum criativo ou dimensão passou da régua para um "escale isso" com confiança neste período — trate o portfólio atual como ainda em teste.':'Ningún creativo o dimensión pasó la vara para un "escala esto" con confianza este período — trata el portafolio actual como todavía en prueba.');
-
-  var stop = [];
-  worstWearout.slice(0,2).forEach(function(x){
-    stop.push(L==='en'?'"'+x.row.nombre+'" — dropped '+fmtNum(Math.abs(x.w.pct),0)+'% (demand-adjusted) from its first half on air to its second half — real wear-out, pause before writing a V2.':L==='pt'?'"'+x.row.nombre+'" — caiu '+fmtNum(Math.abs(x.w.pct),0)+'% (ajustado por demanda) da primeira metade no ar para a segunda metade — desgaste real, pause antes de escrever uma V2.':'"'+x.row.nombre+'" — cayó '+fmtNum(Math.abs(x.w.pct),0)+'% (ajustado por demanda) de su primera mitad al aire a su segunda mitad — desgaste real, pausa antes de escribir una V2.');
-  });
-  if(toneRoll.length>=2){
-    var worstTone = toneRoll[toneRoll.length-1];
-    if(worstTone.n>=2 && toneRoll[0] && (toneRoll[0].l1k_adj-worstTone.l1k_adj)/Math.max(1,worstTone.l1k_adj)>0.3){
-      stop.push(L==='en'?'"'+worstTone.label+'" tone — trailing every other tone by a wide margin ('+fmtNum(worstTone.l1k_adj,0)+' adj.) — stop defaulting to it without a specific reason.':L==='pt'?'Tom "'+worstTone.label+'" — atrás de todos os outros tons por uma margem grande ('+fmtNum(worstTone.l1k_adj,0)+' adj.) — pare de usá-lo por padrão sem uma razão específica.':'Tono "'+worstTone.label+'" — muy por debajo de todos los demás tonos ('+fmtNum(worstTone.l1k_adj,0)+' adj.) — deja de usarlo por default sin una razón específica.');
-    }
-  }
-  if(rankRev && rankRev.icon==='⚠') stop.push(rankRev.body);
-  if(zombie) stop.push(zombie.body);
-  if(concentration) stop.push(concentration.body);
-  if(marginLeak) stop.push(marginLeak.body);
-  if(mechFatigue) stop.push(mechFatigue.body);
-  if(hookPair && hookPair.type==='clash') stop.push(hookPair.body);
-  if(rowFragility) stop.push(rowFragility.body);
-  if(!stop.length) stop.push(L==='en'?'No creative shows a real (non-seasonal) decline this period — nothing needs to be pulled right now.':L==='pt'?'Nenhum criativo mostra uma queda real (não sazonal) neste período — nada precisa ser retirado agora.':'Ningún creativo muestra una caída real (no estacional) este período — no hay nada que haya que retirar ahora.');
-
-  var upside = [];
-  if(toneByType) upside.push(toneByType.body);
-  if(smallNHigh) upside.push(L==='en'?'"'+smallNHigh.nombre+'" — strong adj. L/$1k ('+fmtNum(smallNHigh.l1k_adj,0)+') but only '+smallNHigh.n+' TV-on days — too little data to trust yet, but worth a longer test flight before dismissing or scaling it.':L==='pt'?'"'+smallNHigh.nombre+'" — L/$1k adj. forte ('+fmtNum(smallNHigh.l1k_adj,0)+') mas só '+smallNHigh.n+' dias de TV-on — pouco dado ainda para confiar, mas vale um flight de teste mais longo antes de descartar ou escalar.':'"'+smallNHigh.nombre+'" — L/$1k adj. fuerte ('+fmtNum(smallNHigh.l1k_adj,0)+') pero solo '+smallNHigh.n+' días de TV-on — todavía poco dato para confiar, pero vale un flight de prueba más largo antes de descartarlo o escalarlo.');
-  if(jh && jh.strength>6) upside.push(L==='en'?'A creative purpose-built for the OE↔Junior cross-brand halo has never been tried — see Test B3.':L==='pt'?'Um criativo feito de propósito para o halo cruzado OE↔Junior nunca foi testado — ver Teste B3.':'Un creativo hecho a propósito para el halo cruzado OE↔Junior nunca se ha probado — ver Test B3.');
-  if(fearHumor) upside.push(fearHumor.body);
-  if(scaleCeiling) upside.push(scaleCeiling.body);
-  if(!upside.length) upside.push(L==='en'?'No clear untested gap surfaced this period — the current dimension mix is reasonably well explored.':L==='pt'?'Nenhuma lacuna clara não testada surgiu neste período — a mistura atual de dimensões está razoavelmente bem explorada.':'No surgió ninguna brecha clara sin probar este período — la mezcla actual de dimensiones está razonablemente bien explorada.');
-
-  var guide = [];
-  if(timing) guide.push(timing.body);
-  if(seasonMismatch) guide.push(seasonMismatch.body);
-  if(costSale) guide.push(costSale.body);
-  if(volMargin) guide.push(volMargin.body);
-  if(ctaMismatch) guide.push(ctaMismatch.body);
-  if(painAdType) guide.push(painAdType.body);
-  if(growthNoQuality) guide.push(growthNoQuality.body);
-  if(fragileLeader) guide.push(fragileLeader.body);
-  if(simpson) guide.push(simpson.body);
-  if(mixShift) guide.push(mixShift.body);
-  if(adjAudit) guide.push(adjAudit.body);
-  guide.push(L==='en'?'Judge a new creative by its Launch Week number, but budget for a natural cooldown afterward — see the Launch Week tab.':L==='pt'?'Julgue um criativo novo pelo seu número de Launch Week, mas planeje um resfriamento natural depois — ver a aba Launch Week.':'Juzga un creativo nuevo por su número de Launch Week, pero presupuesta un enfriamiento natural después — ver la pestaña Launch Week.');
-  guide.push(L==='en'?'Always compare creatives on the adj. (★) columns when they aired in different months — raw L/$1k rewards timing, not quality.':L==='pt'?'Sempre compare criativos pelas colunas adj. (★) quando foram ao ar em meses diferentes — o L/$1k bruto recompensa o timing, não a qualidade.':'Siempre compara creativos por las columnas adj. (★) cuando salieron al aire en meses distintos — el L/$1k crudo premia el timing, no la calidad.');
-
-  return { keep:keep, stop:stop, upside:upside, guide:guide };
+/* ============================================================
+   REGISTRO DE REGLAS
+   dest: STOP | KEEP | UPSIDE | GUIDE | BRIEF | TEST
+   prio: menor = se evalua e imprime primero (y reclama primero en el ledger)
+   ============================================================ */
+function tbdPainFam(r){
+  var c = r && r.pain_point_code;
+  return c ? String(c).split('-')[0] : null;
 }
-function tbdBriefBullets(itemsOfType){
-  var L = LANG;
-  if(itemsOfType.length<3) return null;
-  var sorted = itemsOfType.slice().sort(function(a,b){ return b.l1k_adj-a.l1k_adj; });
-  var top = sorted.slice(0, Math.max(2, Math.ceil(sorted.length/3)));
-  var tone = tbdModeOf(top, function(r){ return r.tone_category; });
-  var hookA = tbdModeOf(top, function(r){ return r.hook_audio_type_code; });
-  var hookV = tbdModeOf(top, function(r){ return r.hook_visual_type_code; });
-  var pain = tbdModeOf(top, function(r){ return r.pain_point; });
-  var out = [];
-  if(tone) out.push(L==='en'?'Lead with a "'+tone+'" tone — it\'s what the top performers in this format share.':L==='pt'?'Abra com um tom "'+tone+'" — é o que os melhores desempenhos deste formato têm em comum.':'Abre con un tono "'+tone+'" — es lo que comparten los mejores desempeños de este formato.');
-  if(hookA && hookV) out.push(L==='en'?'Open on a "'+hookA+'" audio cue paired with a "'+hookV+'" visual — that combination shows up repeatedly at the top.':L==='pt'?'Abra com um gancho de áudio "'+hookA+'" combinado com um visual "'+hookV+'" — essa combinação aparece repetidamente no topo.':'Abre con un gancho de audio "'+hookA+'" combinado con un visual "'+hookV+'" — esa combinación aparece repetidamente arriba.');
-  if(pain) out.push(L==='en'?'Anchor the problem on "'+pain+'" — the pain point the strongest creatives in this format keep coming back to.':L==='pt'?'Ancore o problema em "'+pain+'" — o pain point ao qual os criativos mais fortes deste formato sempre voltam.':'Ancla el problema en "'+pain+'" — el pain point al que los creativos más fuertes de este formato vuelven siempre.');
+function tbdPainNombre(r){
+  var pp = r && r.pain_point;
+  if(!pp) return null;
+  return String(typeof pp==='string' ? pp : (pp.es||pp.en||pp.pt||'')).replace(/\s*\([A-Z]+-[A-Za-z]+\)\s*$/,'').trim();
+}
+/* ventana recomendada, siempre en meses reales que quedan por delante en ESTE pais */
+function tbdVentana(ctx){
+  var m = ctx.meses;
+  if(m.todosGrises) return tbdL('There is no month left this year whose seasonal factor is statistically distinguishable from a normal month, so pick the window on operational grounds, not on demand',
+    'não resta nenhum mês do ano cujo fator sazonal se distinga de um mês normal, então escolha a janela por criterio operacional, não por demanda',
+    'no queda ningun mes del año cuyo factor estacional se distinga de un mes normal, así que la ventana se elige por criterio operativo, no por demanda');
+  /* Ojo: "el mejor mes que queda" puede seguir estando por debajo de lo normal.
+     Decir solo "el más fuerte" lo vendia como bueno cuando no lo es. */
+  var bajo = m.facTop < 100;
+  return tbdL('Run it in '+m.mesTop+' (factor '+tbdNK(m.facTop)+' — '+(bajo?'the best month left this year here, though still below a normal month':'the strongest month left this year here')+')',
+    'Rode em '+m.mesTop+' (fator '+tbdNK(m.facTop)+' — '+(bajo?'o melhor mês que resta no ano aqui, ainda assim abaixo de um mês normal':'o mês mais forte que resta no ano aqui')+')',
+    'Córrelo en '+m.mesTop+' (factor '+tbdNK(m.facTop)+' — '+(bajo?'el mejor mes que queda del año acá, aunque todavía por debajo de un mes normal':'el mes más fuerte que queda del año acá')+')');
+}
+/* el lector de JR decide por su hijo; el de OE decide por si mismo. Esta es la
+   diferencia que hace imposible reciclar un brief entre marcas. */
+function tbdDecisor(ctx){
+  return ctx.esJr
+    ? tbdL('the parent who decides and pays, not the child who will take the class',
+           'o pai ou a mãe que decide e paga, não a criança que vai ter a aula',
+           'el padre o la madre que decide y paga, no en el niño que va a tomar la clase')
+    : tbdL('the adult learner, who feels the problem and pays for it himself',
+           'o aprendiz adulto, que sente o problema e paga por ele',
+           'el aprendiz adulto, que siente el problema y lo paga el mismo');
+}
+
+var TBD_RULES = [];
+
+/* ---------------- STOP ---------------- */
+TBD_RULES.push({ id:'S-ZOMBIE', dest:'STOP', prio:10,
+  run: function(ctx, data, led){
+    var byCamp = tbdRollup2(data.y26, function(r){ return r.campaign_name||null; });
+    if(byCamp.length < 2) return null;
+    var peor = null;
+    byCamp.forEach(function(c){
+      var piezas = data.y26.filter(function(r){ return r.campaign_name===c.label; });
+      if(piezas.length < 2) return;
+      var w = piezas.slice().sort(function(a,b){ return a.l1k_adj-b.l1k_adj; })[0];
+      var share = ctx.gastoPeriodo>0 ? w.s/ctx.gastoPeriodo*100 : 0;
+      if(share < 3) return;
+      var resto = piezas.filter(function(r){ return r!==w; });
+      var rs = resto.reduce(function(a,r){return a+r.s;},0);
+      var rl = resto.reduce(function(a,r){return a+r.l;},0);
+      var rdw = resto.reduce(function(a,r){return a+r.dem*r.s;},0);
+      if(rs<=0) return;
+      var restoAdj = rl/rs*1000/((rdw/rs)/100);
+      if(!(restoAdj>0)) return;
+      var gap = (restoAdj - w.l1k_adj)/restoAdj*100;
+      if(gap < Math.max(20, 2*(ctx.err||8))) return;
+      if(!peor || gap > peor.gap) peor = { camp:c.label, w:w, restoAdj:restoAdj, gap:gap, share:share, nPiezas:piezas.length };
+    });
+    if(!peor) return null;
+    if(!tbdLedgerClaimPiece(led, peor.w.nombre, 'S-ZOMBIE')) return null;
+    var sp = tbdLedgerSpend(led, peor.w.s/7, 'S-ZOMBIE');
+    var t = tbdTier(peor.nPiezas, peor.w.n, peor.gap, ctx.err);
+    return { tier:t.tier, usd:sp.monto, delta:peor.gap/100, conf:0.8,
+      claims:{piezas:[peor.w.nombre],dims:[]},
+      texto: tbdCard({
+        verbo: tbdL('pause','pause','pausa'),
+        hallazgo: tbdL('In '+ctx.pais+', '+ctx.marca+', '+tbdQ(peor.w.nombre)+' is the weakest of the '+peor.nPiezas+' pieces in campaign '+tbdQ(peor.camp)+': '+tbdNK(peor.w.l1k_adj)+' L/$1k adj. against '+tbdNK(peor.restoAdj)+' for the rest of the same campaign ('+tbdNP(peor.gap)+' below), while absorbing '+tbdUSD(peor.w.s)+' — '+tbdNP(peor.share)+' of all TV spend in this country this period — over '+peor.w.n+' days on air.',
+          'Em '+ctx.pais+', '+ctx.marca+', '+tbdQ(peor.w.nombre)+' e a peca mais fraca das '+peor.nPiezas+' da campanha '+tbdQ(peor.camp)+': '+tbdNK(peor.w.l1k_adj)+' L/$1k adj. contra '+tbdNK(peor.restoAdj)+' do resto da mesma campanha ('+tbdNP(peor.gap)+' abaixo), absorvendo '+tbdUSD(peor.w.s)+' — '+tbdNP(peor.share)+' de todo o gasto de TV neste pais no periodo — em '+peor.w.n+' dias no ar.',
+          'En '+ctx.pais+', '+ctx.marca+', '+tbdQ(peor.w.nombre)+' es la pieza más débil de las '+peor.nPiezas+' de la campaña '+tbdQ(peor.camp)+': '+tbdNK(peor.w.l1k_adj)+' L/$1k adj. contra '+tbdNK(peor.restoAdj)+' del resto de la misma campaña ('+tbdNP(peor.gap)+' por debajo), y aun así se lleva '+tbdUSD(peor.w.s)+' — '+tbdNP(peor.share)+' de todo el gasto de TV de este país en el período — en '+peor.w.n+' días al aire.'),
+        hipotesis: tbdL('Budget inside a campaign tends to stay where it was set at launch, so a piece that never worked keeps its slot because nobody re-cut the rotation. The alternative this report cannot rule out: it may be holding a daypart or a feed the others do not cover.',
+          'O orçamento dentro de uma campanha tende a ficar onde foi definido no lancamento, então uma peca que nunca funcionou mantem seu espaco porque ninguem recortou a rotação. A alternativa que este relatorio não descarta: pode estar cobrindo um horario ou um feed que as outras não cobrem.',
+          'El presupuesto dentro de una campaña tiende a quedarse donde se fijo al lanzarla, así que una pieza que nunca funciono conserva su lugar porque nadie volvió a cortar la rotación. La alternativa que este reporte no descarta: puede estar cubriendo una franja o un feed que las demas no cubren.'),
+        comprobacion: (function(){
+          var w2 = tbdWearout2(peor.w);
+          if(w2.pct!=null) return tbdL('Cross-checked against its own trajectory: over '+(w2.d1+w2.d2)+' unique dates it went from '+tbdNK(w2.h1.l1k_adj)+' in its first half ('+w2.fIniH1+' to '+w2.fFinH1+') to '+tbdNK(w2.h2.l1k_adj)+' in its second ('+w2.fIniH2+' to '+w2.fFinH2+'), '+tbdNP(w2.pct)+'. It is not a slow start.',
+            'Comprovado contra sua própria trajetoria: em '+(w2.d1+w2.d2)+' datas únicas passou de '+tbdNK(w2.h1.l1k_adj)+' na primeira metade ('+w2.fIniH1+' a '+w2.fFinH1+') para '+tbdNK(w2.h2.l1k_adj)+' na segunda ('+w2.fIniH2+' a '+w2.fFinH2+'), '+tbdNP(w2.pct)+'. Não e um comeco lento.',
+            'Comprobado contra su propia trayectoria: en '+(w2.d1+w2.d2)+' fechas únicas pasó de '+tbdNK(w2.h1.l1k_adj)+' en su primera mitad ('+w2.fIniH1+' a '+w2.fFinH1+') a '+tbdNK(w2.h2.l1k_adj)+' en la segunda ('+w2.fIniH2+' a '+w2.fFinH2+'), '+tbdNP(w2.pct)+'. No es un arranque lento.');
+          return tbdL('Cannot be checked against its own trajectory inside this report: it has '+tbdDaysUnique(peor.w)+' unique dates on air and 12 are needed to split the flight in two readable halves. What is measured is the gap against the rest of its own campaign, which shared the same months.',
+            'Não da para comprovar contra sua trajetoria neste relatorio: tem '+tbdDaysUnique(peor.w)+' datas únicas no ar e são necessarias 12 para dividir o voo em duas metades legiveis. O que esta medido e a diferença contra o resto da própria campanha, que dividiu os mesmos meses.',
+            'No hay con que comprobarlo contra su propia trayectoria en este reporte: tiene '+tbdDaysUnique(peor.w)+' fechas únicas al aire y hacen falta 12 para partir el vuelo en dos mitades legibles. Lo que si esta medido es la brecha contra el resto de su propia campaña, que compartio los mismos meses.');
+        })(),
+        accion: tbdL('Take it out of the rotation of '+tbdQ(peor.camp)+' and move its '+tbdUSD(sp.monto)+'/month to the pieces of that same campaign that are already above '+tbdNK(peor.restoAdj)+'. Keep the campaign, drop the piece.',
+          'Tire-a da rotação de '+tbdQ(peor.camp)+' e mova seus '+tbdUSD(sp.monto)+'/mês para as pecas da mesma campanha que já estáo acima de '+tbdNK(peor.restoAdj)+'. Mantenha a campanha, tire a peca.',
+          'Sácala de la rotación de '+tbdQ(peor.camp)+' y mueve sus '+tbdUSD(sp.monto)+'/mes a las piezas de esa misma campaña que ya están por encima de '+tbdNK(peor.restoAdj)+'. La campaña se queda, la pieza no.'),
+        exito: tbdL('The campaign as a whole should land above '+tbdNK(peor.restoAdj*0.95)+' L/$1k adj. within 30 days. If it falls below '+tbdNK(peor.w.l1k_adj)+', the piece was covering something and it has to go back.',
+          'A campanha inteira deve ficar acima de '+tbdNK(peor.restoAdj*0.95)+' L/$1k adj. em 30 dias. Se cair abaixo de '+tbdNK(peor.w.l1k_adj)+', a peca estava cobrindo algo e precisa voltar.',
+          'La campaña completa debería quedar por encima de '+tbdNK(peor.restoAdj*0.95)+' L/$1k adj. en 30 días. Si cae por debajo de '+tbdNK(peor.w.l1k_adj)+', la pieza estaba cubriendo algo y hay que devolverla.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    var byCamp = tbdRollup2(data.y26, function(r){ return r.campaign_name||null; });
+    if(byCamp.length < 2) return tbdL('In '+ctx.pais+', '+ctx.marca+': all '+ctx.nCre26+' creatives of the period belong to a single campaign, so there is no within-campaign comparison to find a zombie piece. Two campaigns with at least 2 pieces each are needed.',
+      'Em '+ctx.pais+', '+ctx.marca+': os '+ctx.nCre26+' criativos do periodo pertencem a uma única campanha, então não ha comparacao interna para achar uma peca zumbi. São necessarias duas campanhas com ao menos 2 pecas cada.',
+      'En '+ctx.pais+', '+ctx.marca+': los '+ctx.nCre26+' creativos del período pertenecen a una sola campaña, así que no hay comparacion interna con la que encontrar una pieza zombie. Hacen falta dos campañas con al menos 2 piezas cada una.');
+    return tbdL('In '+ctx.pais+', '+ctx.marca+': across '+byCamp.length+' campaigns and '+ctx.nCre26+' creatives, no piece is both more than '+tbdNP(Math.max(20,2*(ctx.err||8)))+' below its own campaign and carrying at least 3% of the '+tbdUSD(ctx.gastoPeriodo)+' spent here. Nothing to pause on those grounds.',
+      'Em '+ctx.pais+', '+ctx.marca+': entre '+byCamp.length+' campanhas e '+ctx.nCre26+' criativos, nenhuma peca esta ao mesmo tempo mais de '+tbdNP(Math.max(20,2*(ctx.err||8)))+' abaixo da própria campanha e carregando ao menos 3% dos '+tbdUSD(ctx.gastoPeriodo)+' gastos aqui. Nada a pausar por esse criterio.',
+      'En '+ctx.pais+', '+ctx.marca+': entre '+byCamp.length+' campañas y '+ctx.nCre26+' creativos, ninguna pieza esta a la vez más de '+tbdNP(Math.max(20,2*(ctx.err||8)))+' por debajo de su propia campaña y cargando al menos 3% de los '+tbdUSD(ctx.gastoPeriodo)+' que se gastaron acá. No hay nada que pausar por ese criterio.');
+  }
+});
+
+TBD_RULES.push({ id:'S-WEAR', dest:'STOP', prio:30,
+  run: function(ctx, data, led){
+    var umbral = -((ctx.err||8) + 10);
+    var cands = [];
+    data.y26.forEach(function(r){
+      if(tbdDaysUnique(r) < 12) return;
+      if(ctx.gastoPeriodo>0 && r.s/ctx.gastoPeriodo < 0.10) return;
+      var w = tbdWearout2(r);
+      if(w.pct==null || w.pct > umbral) return;
+      if(w.leadsH1 < 30) return;
+      cands.push({ r:r, w:w });
+    });
+    if(!cands.length) return null;
+    cands.sort(function(a,b){ return a.w.pct-b.w.pct; });
+    var pick = null;
+    for(var i=0;i<cands.length;i++){ if(tbdLedgerClaimPiece(led, cands[i].r.nombre, 'S-WEAR')){ pick = cands[i]; break; } }
+    if(!pick) return null;
+    var sp = tbdLedgerSpend(led, pick.r.s/7*0.5, 'S-WEAR');
+    var driftTxt = ctx.yoy==null ? null : tbdNP1(ctx.yoy);
+    return { tier:'REGLA', usd:sp.monto, delta:Math.abs(pick.w.pct)/100, conf:0.75,
+      claims:{piezas:[pick.r.nombre],dims:[]},
+      texto: tbdCard({
+        verbo: tbdL('cap','límite','limita'),
+        hallazgo: tbdL(tbdQ(pick.r.nombre)+' in '+ctx.pais+' fell '+tbdNP(Math.abs(pick.w.pct))+' demand-adjusted between the two halves of its own flight — '+tbdNK(pick.w.h1.l1k_adj)+' L/$1k adj. over '+pick.w.d1+' days ('+pick.w.fIniH1+' to '+pick.w.fFinH1+', '+tbdNL(pick.w.leadsH1)+' leads) down to '+tbdNK(pick.w.h2.l1k_adj)+' L/$1k adj. over '+pick.w.d2+' days ('+pick.w.fIniH2+' to '+pick.w.fFinH2+', '+tbdNL(pick.w.leadsH2)+' leads) — while carrying '+tbdUSD(pick.r.s)+'.',
+          tbdQ(pick.r.nombre)+' em '+ctx.pais+' caiu '+tbdNP(Math.abs(pick.w.pct))+' ajustado por demanda entre as duas metades do próprio voo — '+tbdNK(pick.w.h1.l1k_adj)+' L/$1k adj. em '+pick.w.d1+' dias ('+pick.w.fIniH1+' a '+pick.w.fFinH1+', '+tbdNL(pick.w.leadsH1)+' leads) para '+tbdNK(pick.w.h2.l1k_adj)+' L/$1k adj. em '+pick.w.d2+' dias ('+pick.w.fIniH2+' a '+pick.w.fFinH2+', '+tbdNL(pick.w.leadsH2)+' leads) — carregando '+tbdUSD(pick.r.s)+'.',
+          tbdQ(pick.r.nombre)+' en '+ctx.pais+' cayó '+tbdNP(Math.abs(pick.w.pct))+' ya ajustado por demanda entre las dos mitades de su propio vuelo — '+tbdNK(pick.w.h1.l1k_adj)+' L/$1k adj. en '+pick.w.d1+' días ('+pick.w.fIniH1+' a '+pick.w.fFinH1+', '+tbdNL(pick.w.leadsH1)+' leads) a '+tbdNK(pick.w.h2.l1k_adj)+' L/$1k adj. en '+pick.w.d2+' días ('+pick.w.fIniH2+' a '+pick.w.fFinH2+', '+tbdNL(pick.w.leadsH2)+' leads) — cargando '+tbdUSD(pick.r.s)+'.'),
+        hipotesis: tbdL('Frequency saturation: the audience that responds to this execution has already been reached, so extra weight buys repeats instead of new people. What this report cannot separate: a competitor may have entered the same window.',
+          'Saturacao de frequência: a audiencia que responde a esta execução ja foi atingida, então peso extra compra repeticao em vez de gente nova. O que este relatorio não separa: um concorrente pode ter entrado na mesma janela.',
+          'Saturacion de frecuencia: a la audiencia que responde a esta ejecución ya se la alcanzo, así que el peso extra compra repeticiones en vez de gente nueva. Lo que este reporte no puede separar: puede haber entrado un competidor en la misma ventana.'),
+        comprobacion: (driftTxt
+          ? tbdL('Checked against the market: the deseasonalised level of '+ctx.pais+' moved '+driftTxt+' between the two periods, far less than the '+tbdNP(Math.abs(pick.w.pct))+' this piece lost, so the fall is the creative and not the market. It also clears the '+tbdNP1(ctx.err)+' error margin of the adjustment here.',
+              'Comprovado contra o mercado: o nível dessazonalizado de '+ctx.pais+' mudou '+driftTxt+' entre os dois periodos, muito menos que os '+tbdNP(Math.abs(pick.w.pct))+' que esta peca perdeu, então a queda e do criativo e não do mercado. Tambem supera a margem de erro de '+tbdNP1(ctx.err)+' do ajuste aqui.',
+              'Comprobado contra el mercado: el nivel desestacionalizado de '+ctx.pais+' se movió '+driftTxt+' entre los dos periodos, muchisimo menos que el '+tbdNP(Math.abs(pick.w.pct))+' que perdió esta pieza, así que la caida es del creativo y no del mercado. Ademas supera el margen de error de '+tbdNP1(ctx.err)+' que tiene el ajuste acá.')
+          : null),
+        accion: tbdL('Cap its remaining flight at '+tbdUSD(sp.monto)+'/month and put the freed weight behind the pieces that are above '+tbdNK(ctx.l1kPort26)+' (the portfolio level here). Do not brief a V2 of the same execution: what saturated is the execution, not the offer.',
+          'Limite o voo restante em '+tbdUSD(sp.monto)+'/mês e coloque o peso liberado nas pecas acima de '+tbdNK(ctx.l1kPort26)+' (o nível do portfolio aqui). Não peca uma V2 da mesma execução: o que saturou foi a execução, não a oferta.',
+          'Limita su vuelo restante a '+tbdUSD(sp.monto)+'/mes y pon el peso liberado detras de las piezas que están por encima de '+tbdNK(ctx.l1kPort26)+' (el nivel del portafolio acá). No briefees una V2 de la misma ejecución: lo que se saturo es la ejecución, no la oferta.'),
+        exito: tbdL('Two more weeks below '+tbdNK(pick.w.h2.l1k_adj)+' and it comes off air entirely. If it recovers above '+tbdNK(pick.w.h1.l1k_adj*0.9)+', it was a window effect and the cap can be lifted.',
+          'Mais duas semanas abaixo de '+tbdNK(pick.w.h2.l1k_adj)+' e sai do ar de vez. Se recuperar acima de '+tbdNK(pick.w.h1.l1k_adj*0.9)+', foi efeito de janela e o limite pode ser retirado.',
+          'Dos semanas más por debajo de '+tbdNK(pick.w.h2.l1k_adj)+' y sale del aire del todo. Si se recupera por encima de '+tbdNK(pick.w.h1.l1k_adj*0.9)+', fue efecto de ventana y se le puede quitar el tope.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    var umbral = ((ctx.err||8) + 10);
+    return tbdL('In '+ctx.pais+', '+ctx.marca+': of '+ctx.nCre26+' creatives, '+ctx.nMedibles+' have the 12+ unique dates needed to split a flight into two readable halves, and none of those fell more than '+tbdNP(umbral)+' (the '+tbdNP1(ctx.err)+' error of the adjustment plus 10 points) while carrying 10% of spend. No real wear-out to act on.',
+      'Em '+ctx.pais+', '+ctx.marca+': de '+ctx.nCre26+' criativos, '+ctx.nMedibles+' tem as 12+ datas únicas necessarias para dividir o voo em duas metades legiveis, e nenhum caiu mais de '+tbdNP(umbral)+' (os '+tbdNP1(ctx.err)+' de erro do ajuste mais 10 pontos) carregando 10% do gasto. Nenhum desgaste real para agir.',
+      'En '+ctx.pais+', '+ctx.marca+': de '+ctx.nCre26+' creativos, '+ctx.nMedibles+' tienen las 12+ fechas únicas que hacen falta para partir un vuelo en dos mitades legibles, y ninguno de esos cayó más de '+tbdNP(umbral)+' (el '+tbdNP1(ctx.err)+' de error del ajuste más 10 puntos) cargando 10% del gasto. No hay desgaste real que accionar.');
+  }
+});
+
+TBD_RULES.push({ id:'S-VOLMARGIN', dest:'STOP', prio:50,
+  run: function(ctx, data, led){
+    var dims = [['tone_category', function(r){return r.tone_category;}],
+                ['theme_mechanism_code', function(r){return r.theme_mechanism_code;}],
+                ['hook_audio_type_code', function(r){return r.hook_audio_type_code;}]];
+    var best = null;
+    dims.forEach(function(d){
+      var roll = tbdRollup2(data.y26, d[1]).filter(function(c){ return c.mncc!=null && c.nCre>=2; });
+      if(roll.length < 2) return;
+      var porLeads = roll.slice().sort(function(a,b){ return b.l-a.l; })[0];
+      var porMargen = roll.slice().sort(function(a,b){ return b.mncc-a.mncc; })[0];
+      if(porLeads.label===porMargen.label) return;
+      if(ctx.gastoPeriodo>0 && porLeads.s/ctx.gastoPeriodo < 0.15) return;
+      var gapPts = (porMargen.mncc - porLeads.mncc)*100;
+      if(gapPts < 8) return;
+      if(!best || gapPts > best.gapPts) best = { dimKey:d[0], porLeads:porLeads, porMargen:porMargen, gapPts:gapPts };
+    });
+    if(!best) return null;
+    if(!tbdLedgerClaimDim(led, best.dimKey, 'S-VOLMARGIN')) return null;
+    var mover = best.porLeads.s/7*0.3;
+    var sp = tbdLedgerSpend(led, mover, 'S-VOLMARGIN');
+    return { tier:'APUESTA', usd:sp.monto, delta:best.gapPts/100, conf:0.6,
+      claims:{piezas:[],dims:[best.dimKey]},
+      texto: tbdCard({
+        verbo: tbdL('rebalance','rebalanceie','rebalancea'),
+        hallazgo: tbdL('In '+ctx.pais+', '+ctx.marca+', the '+tbdDimLabel(best.dimKey)+' that brings the most leads is not the one that brings the most business: '+tbdQ(best.porLeads.label)+' produced '+tbdNL(best.porLeads.l)+' leads across '+best.porLeads.nCre+' creatives on '+tbdUSD(best.porLeads.s)+', but its margin is '+tbdNP1(best.porLeads.mncc*100)+' against '+tbdNP1(best.porMargen.mncc*100)+' for '+tbdQ(best.porMargen.label)+' — a gap of '+tbdPP(best.gapPts)+'.',
+          'Em '+ctx.pais+', '+ctx.marca+', o '+tbdDimLabel(best.dimKey)+' que traz mais leads não e o que traz mais negocio: '+tbdQ(best.porLeads.label)+' produziu '+tbdNL(best.porLeads.l)+' leads em '+best.porLeads.nCre+' criativos com '+tbdUSD(best.porLeads.s)+', mas sua margem e '+tbdNP1(best.porLeads.mncc*100)+' contra '+tbdNP1(best.porMargen.mncc*100)+' de '+tbdQ(best.porMargen.label)+' — diferença de '+tbdPP(best.gapPts)+'.',
+          'En '+ctx.pais+', '+ctx.marca+', el '+tbdDimLabel(best.dimKey)+' que más leads trae no es el que más negocio trae: '+tbdQ(best.porLeads.label)+' produjo '+tbdNL(best.porLeads.l)+' leads en '+best.porLeads.nCre+' creativos con '+tbdUSD(best.porLeads.s)+', pero su margen es '+tbdNP1(best.porLeads.mncc*100)+' contra '+tbdNP1(best.porMargen.mncc*100)+' de '+tbdQ(best.porMargen.label)+' — una brecha de '+tbdPP(best.gapPts)+'.'),
+        hipotesis: tbdL('Volume and quality of lead are not the same thing: an execution can pull a lot of people who were never close to enrolling. What this report cannot separate: the two groups may be reaching different audiences at different prices.',
+          'Volume e qualidade de lead não são a mesma coisa: uma execução pode atrair muita gente que nunca esteve perto de se matricular. O que este relatorio não separa: os dois grupos podem atingir audiencias diferentes a precos diferentes.',
+          'Volumen y calidad de lead no son lo mismo: una ejecución puede traer mucha gente que nunca estuvo cerca de matricularse. Lo que este reporte no puede separar: los dos grupos pueden estar alcanzando audiencias distintas a precios distintos.'),
+        comprobacion: tbdL('Cross-checked with conversión: '+tbdQ(best.porLeads.label)+' converts at '+tbdNP1(best.porLeads.cvr*100)+' and '+tbdQ(best.porMargen.label)+' at '+tbdNP1(best.porMargen.cvr*100)+', which '+(best.porMargen.cvr>best.porLeads.cvr?'confirms the margin gap comes from lead quality, not from price.':'does NOT confirm it: conversión is similar, so the gap is price of media, not quality of lead — check the buy before moving budget.'),
+          'Comprovado com conversão: '+tbdQ(best.porLeads.label)+' converte a '+tbdNP1(best.porLeads.cvr*100)+' e '+tbdQ(best.porMargen.label)+' a '+tbdNP1(best.porMargen.cvr*100)+', o que '+(best.porMargen.cvr>best.porLeads.cvr?'confirma que a diferença de margem vem da qualidade do lead, não do preco.':'NAO confirma: a conversão e parecida, então a diferença e preco de midia e não qualidade de lead — revise a compra antes de mover verba.'),
+          'Comprobado con la conversión: '+tbdQ(best.porLeads.label)+' convierte a '+tbdNP1(best.porLeads.cvr*100)+' y '+tbdQ(best.porMargen.label)+' a '+tbdNP1(best.porMargen.cvr*100)+', lo que '+(best.porMargen.cvr>best.porLeads.cvr?'confirma que la brecha de margen viene de la calidad del lead y no del precio.':'NO lo confirma: la conversión es parecida, así que la brecha es precio de medios y no calidad de lead — revisa la compra antes de mover presupuesto.')),
+        accion: tbdL('Move '+tbdUSD(sp.monto)+'/month from '+tbdQ(best.porLeads.label)+' to '+tbdQ(best.porMargen.label)+' and read the result on MNCC%, not on lead count. Leads will go down on purpose.',
+          'Mova '+tbdUSD(sp.monto)+'/mês de '+tbdQ(best.porLeads.label)+' para '+tbdQ(best.porMargen.label)+' e leia o resultado em MNCC%, não em número de leads. Os leads vao cair de proposito.',
+          'Mueve '+tbdUSD(sp.monto)+'/mes de '+tbdQ(best.porLeads.label)+' a '+tbdQ(best.porMargen.label)+' y lee el resultado en MNCC%, no en cantidad de leads. Los leads van a bajar a propósito.'),
+        exito: tbdL('Portfolio MNCC% above '+tbdNP1((ctx.mnccPort26||0)*100 + best.gapPts*0.3)+' in 60 days. Revert if total enrollments fall more than 10%.',
+          'MNCC% do portfolio acima de '+tbdNP1((ctx.mnccPort26||0)*100 + best.gapPts*0.3)+' em 60 dias. Reverta se as matrículas totais cairem mais de 10%.',
+          'MNCC% del portafolio por encima de '+tbdNP1((ctx.mnccPort26||0)*100 + best.gapPts*0.3)+' en 60 días. Revierte si las matrículas totales caen más de 10%.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    return tbdL('In '+ctx.pais+', '+ctx.marca+': no dimension has its lead leader and its margin leader in different cells by more than 8 pp with both cells holding 2+ creatives. Volume and business point the same way here, across '+ctx.nCre26+' creatives and '+tbdUSD(ctx.gastoPeriodo)+'.',
+      'Em '+ctx.pais+', '+ctx.marca+': nenhuma dimensao tem o líder de leads e o líder de margem em celulas diferentes por mais de 8 pp com 2+ criativos em cada. Volume e negocio apontam para o mesmo lado aqui, em '+ctx.nCre26+' criativos e '+tbdUSD(ctx.gastoPeriodo)+'.',
+      'En '+ctx.pais+', '+ctx.marca+': ninguna dimension tiene su líder de leads y su líder de margen en celdas distintas por más de 8 pp con 2+ creativos en cada una. Volumen y negocio apuntan al mismo lado acá, sobre '+ctx.nCre26+' creativos y '+tbdUSD(ctx.gastoPeriodo)+'.');
+  }
+});
+
+/* ---------------- KEEP ---------------- */
+TBD_RULES.push({ id:'K-HIDDEN', dest:'KEEP', prio:10,
+  run: function(ctx, data, led){
+    var byCamp = tbdRollup2(data.y26, function(r){ return r.campaign_name||null; });
+    var best = null;
+    byCamp.forEach(function(c){
+      var piezas = data.y26.filter(function(r){ return r.campaign_name===c.label; });
+      if(piezas.length < 2) return;
+      var m = piezas.slice().sort(function(a,b){ return b.l1k_adj-a.l1k_adj; })[0];
+      if(m.n < 3) return;
+      var resto = piezas.filter(function(r){ return r!==m; });
+      var rs = resto.reduce(function(a,r){return a+r.s;},0);
+      var rl = resto.reduce(function(a,r){return a+r.l;},0);
+      var rdw = resto.reduce(function(a,r){return a+r.dem*r.s;},0);
+      if(rs<=0) return;
+      var restoAdj = rl/rs*1000/((rdw/rs)/100);
+      if(!(restoAdj>0)) return;
+      var gap = (m.l1k_adj-restoAdj)/restoAdj*100;
+      if(gap < Math.max(15, 2*(ctx.err||8))) return;
+      var share = c.s>0 ? m.s/c.s*100 : 0;
+      if(share > 40) return; // ya esta bien financiado
+      if(!best || gap > best.gap) best = { camp:c.label, m:m, restoAdj:restoAdj, gap:gap, share:share, nCre:piezas.length, campS:c.s };
+    });
+    if(!best) return null;
+    if(!tbdLedgerClaimPiece(led, best.m.nombre, 'K-HIDDEN')) return null;
+    var objetivo = Math.min(best.campS*0.40, best.campS*0.40) - best.m.s;
+    var sp = tbdLedgerSpend(led, Math.max(0, objetivo/7), 'K-HIDDEN');
+    var t = tbdTier(best.nCre, best.m.n, best.gap, ctx.err);
+    return { tier:t.tier, usd:sp.monto, delta:best.gap/100, conf:0.7,
+      claims:{piezas:[best.m.nombre],dims:[]},
+      texto: tbdCard({
+        verbo: t.verbo,
+        hallazgo: tbdL('In '+ctx.pais+', '+ctx.marca+', '+tbdQ(best.m.nombre)+' is the best piece of campaign '+tbdQ(best.camp)+' — '+tbdNK(best.m.l1k_adj)+' L/$1k adj. against '+tbdNK(best.restoAdj)+' for the other '+(best.nCre-1)+' pieces, '+tbdNP(best.gap)+' better over '+best.m.n+' days — and yet it only holds '+tbdNP(best.share)+' of that campaign’s '+tbdUSD(best.campS)+'.',
+          'Em '+ctx.pais+', '+ctx.marca+', '+tbdQ(best.m.nombre)+' e a melhor peca da campanha '+tbdQ(best.camp)+' — '+tbdNK(best.m.l1k_adj)+' L/$1k adj. contra '+tbdNK(best.restoAdj)+' das outras '+(best.nCre-1)+' pecas, '+tbdNP(best.gap)+' melhor em '+best.m.n+' dias — e ainda assim fica com apenas '+tbdNP(best.share)+' dos '+tbdUSD(best.campS)+' da campanha.',
+          'En '+ctx.pais+', '+ctx.marca+', '+tbdQ(best.m.nombre)+' es la mejor pieza de la campaña '+tbdQ(best.camp)+' — '+tbdNK(best.m.l1k_adj)+' L/$1k adj. contra '+tbdNK(best.restoAdj)+' de las otras '+(best.nCre-1)+' piezas, '+tbdNP(best.gap)+' mejor en '+best.m.n+' días — y aun así solo se lleva '+tbdNP(best.share)+' de los '+tbdUSD(best.campS)+' de esa campaña.'),
+        hipotesis: tbdL('Budget was split when the campaign launched, before anyone could know which execution would work, and nobody re-cut it afterwards. The alternative this report does not rule out: it may already be at the ceiling of the inventory it can buy cheaply.',
+          'O orçamento foi dividido no lancamento da campanha, antes de saber qual execução funcionaria, e ninguem recortou depois. A alternativa que este relatorio não descarta: pode já estár no teto do inventario que consegue comprar barato.',
+          'El presupuesto se repartió al lanzar la campaña, antes de que nadie pudiera saber qué ejecución iba a funcionar, y después nadie lo volvió a cortar. La alternativa que este reporte no descarta: puede estar ya en el techo del inventario que puede comprar barato.'),
+        comprobacion: (function(){
+          var w = tbdWearout2(best.m);
+          if(w.pct!=null) return tbdL('Checked for fatigue before recommending more weight: over '+(w.d1+w.d2)+' unique dates it moved '+tbdNP(w.pct)+' between halves, so it is '+(w.pct<=-15?'already cooling and the increase should be gradual':'still holding')+'.',
+            'Verificado quanto a fadiga antes de recomendar mais peso: em '+(w.d1+w.d2)+' datas únicas variou '+tbdNP(w.pct)+' entre metades, então '+(w.pct<=-15?'já está esfriando e o aumento deve ser gradual':'ainda se sustenta')+'.',
+            'Se revisó fatiga antes de recomendar más peso: en '+(w.d1+w.d2)+' fechas únicas se movió '+tbdNP(w.pct)+' entre mitades, así que '+(w.pct<=-15?'ya viene enfriándose y la subida debe ser gradual':'todavía se sostiene')+'.');
+          return tbdL('Fatigue cannot be checked yet: it has '+tbdDaysUnique(best.m)+' unique dates and 12 are needed. Raise it in steps and re-read after 12 dates, do not jump to full weight.',
+            'A fadiga ainda não pode ser verificada: tem '+tbdDaysUnique(best.m)+' datas únicas e são necessarias 12. Aumente por etapas e releia após 12 datas, não va direto ao peso total.',
+            'La fatiga todavía no se puede comprobar: tiene '+tbdDaysUnique(best.m)+' fechas únicas y hacen falta 12. Súbelo por escalones y vuelve a leer a las 12 fechas, no saltes a peso completo.');
+        })(),
+        accion: sp.monto>0
+          ? tbdL('Raise it to 40% of '+tbdQ(best.camp)+' by adding '+tbdUSD(sp.monto)+'/month taken from the weakest pieces of that same campaign. '+tbdVentana(ctx)+'.',
+              'Suba para 40% de '+tbdQ(best.camp)+' adicionando '+tbdUSD(sp.monto)+'/mês tirados das pecas mais fracas da mesma campanha. '+tbdVentana(ctx)+'.',
+              'Súbelo a 40% de '+tbdQ(best.camp)+' agregando '+tbdUSD(sp.monto)+'/mes sacados de las piezas más débiles de esa misma campaña. '+tbdVentana(ctx)+'.')
+          : tbdL('The reallocation budget for this reading is already committed by '+tbdLedgerWho(led)+', so this one is queued: apply it in the next cycle.',
+              'O orçamento de realocação desta leitura ja foi comprometido por '+tbdLedgerWho(led)+', então este fica na fila: aplique no próximo ciclo.',
+              'El presupuesto de reasignación de esta lectura ya lo comprometio '+tbdLedgerWho(led)+', así que este queda en cola: aplicalo en el próximo ciclo.'),
+        exito: tbdL('Campaign '+tbdQ(best.camp)+' above '+tbdNK(best.restoAdj*1.15)+' L/$1k adj. in 30 days. If '+tbdQ(best.m.nombre)+' itself drops below '+tbdNK(best.restoAdj)+' at the higher weight, it had a scale ceiling and the extra budget goes back.',
+          'Campanha '+tbdQ(best.camp)+' acima de '+tbdNK(best.restoAdj*1.15)+' L/$1k adj. em 30 dias. Se '+tbdQ(best.m.nombre)+' cair abaixo de '+tbdNK(best.restoAdj)+' com mais peso, tinha teto de escala e a verba extra volta.',
+          'La campaña '+tbdQ(best.camp)+' por encima de '+tbdNK(best.restoAdj*1.15)+' L/$1k adj. en 30 días. Si '+tbdQ(best.m.nombre)+' cae por debajo de '+tbdNK(best.restoAdj)+' con más peso, tenía techo de escala y el presupuesto extra se devuelve.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    return tbdL('In '+ctx.pais+', '+ctx.marca+': no campaign has a leader that beats its own campaign siblings by more than '+tbdNP(Math.max(15,2*(ctx.err||8)))+' while holding under 40% of that campaign budget. Across '+ctx.nCre26+' creatives, budget is already sitting where performance is.',
+      'Em '+ctx.pais+', '+ctx.marca+': nenhuma campanha tem líder que supere as irmas por mais de '+tbdNP(Math.max(15,2*(ctx.err||8)))+' ficando com menos de 40% da verba. Em '+ctx.nCre26+' criativos, a verba já está onde esta a performance.',
+      'En '+ctx.pais+', '+ctx.marca+': ninguna campaña tiene un líder que le gane a sus propias hermanas por más de '+tbdNP(Math.max(15,2*(ctx.err||8)))+' llevandose menos del 40% de esa campaña. Sobre '+ctx.nCre26+' creativos, el presupuesto ya esta donde esta el desempenio.');
+  }
+});
+
+/* ---------------- UPSIDE ---------------- */
+TBD_RULES.push({ id:'U-HALO', dest:'UPSIDE', prio:20,
+  run: function(ctx, data, led){
+    var totalJr = 0, totalOe = 0;
+    data.y26.forEach(function(r){ totalJr += (r.jr_l||0); totalOe += r.l; });
+    if(totalOe<=0 || totalJr < 50) return null;
+    var pct = totalJr/totalOe*100;
+    if(pct < 3) return null;
+    var aport = data.y26.filter(function(r){ return (r.jr_l||0)>0 && r.n>=5; })
+      .sort(function(a,b){ return b.jr_l1k_adj-a.jr_l1k_adj; });
+    if(!aport.length) return null;
+    var top = aport[0];
+    var otra = tbdHaloTargetName();
+    return { tier:'APUESTA', usd:0, delta:pct/100, conf:0.65, claims:{piezas:[],dims:[]},
+      texto: tbdCard({
+        verbo: tbdL('brief','peca','briefea'),
+        hallazgo: tbdL('In '+ctx.pais+', the '+tbdUSD(ctx.gastoPeriodo)+' spent on '+ctx.marca+' also produced '+tbdNL(totalJr)+' real '+otra+' leads — '+tbdNP(pct)+' on top of its own '+tbdNL(totalOe)+' — spread over '+aport.length+' creatives, led by '+tbdQ(top.nombre)+' at '+tbdNK(top.jr_l1k_adj)+' halo L/$1k adj. against its own '+tbdNK(top.l1k_adj)+'. Nobody has ever briefed a piece to do this on purpose.',
+          'Em '+ctx.pais+', os '+tbdUSD(ctx.gastoPeriodo)+' gastos em '+ctx.marca+' tambem geraram '+tbdNL(totalJr)+' leads reais de '+otra+' — '+tbdNP(pct)+' alem dos seus próprios '+tbdNL(totalOe)+' — em '+aport.length+' criativos, liderados por '+tbdQ(top.nombre)+' com '+tbdNK(top.jr_l1k_adj)+' de L/$1k adj. de halo contra '+tbdNK(top.l1k_adj)+' próprio. Ninguem nunca pediu uma peca para fazer isso de proposito.',
+          'En '+ctx.pais+', los '+tbdUSD(ctx.gastoPeriodo)+' gastados en '+ctx.marca+' también produjeron '+tbdNL(totalJr)+' leads reales de '+otra+' — '+tbdNP(pct)+' encima de sus propios '+tbdNL(totalOe)+' — repartidos en '+aport.length+' creativos, encabezados por '+tbdQ(top.nombre)+' con '+tbdNK(top.jr_l1k_adj)+' de L/$1k adj. de halo contra '+tbdNK(top.l1k_adj)+' propio. Nunca nadie briefeo una pieza para que esto pasara a propósito.'),
+        hipotesis: ctx.esJr
+          ? tbdL('A parent watching an ad for their child is also an adult who once gave up on English. The Junior spot is reactivating that personal frustration as a side effect.',
+              'Um pai assistindo a um anuncio para o filho tambem e um adulto que um día desistiu do ingles. O comercial Junior esta reativando essa frustracao pessoal como efeito colateral.',
+              'Un padre viendo un anuncio para su hijo también es un adulto que alguna vez abandono el ingles. El spot de Junior le esta reactivando esa frustracion personal como efecto secundario.')
+          : tbdL('An adult who sees the value of English for themselves immediately thinks of their child. The adult spot is opening a door it never explicitly knocks on.',
+              'Um adulto que ve o valor do ingles para si pensa imediatamente no filho. O comercial adulto abre uma porta na qual nunca bate explicitamente.',
+              'Un adulto que le ve el valor al ingles para si mismo piensa de inmediato en su hijo. El spot adulto abre una puerta a la que nunca toca de forma explicita.'),
+        comprobacion: tbdL('Cross-checked piece by piece: '+aport.length+' of the '+ctx.nCre26+' creatives produce halo with 5+ days on air, so this is not one lucky spot. The pieces that lead on halo are '+(aport[0].nombre===data.y26.slice().sort(function(a,b){return b.l1k_adj-a.l1k_adj;})[0].nombre ? 'the same ones that lead on their own brand, which suggests general reach rather than a specific cross-brand mechanic.' : 'NOT the ones that lead on their own brand, which suggests something specific in those executions is doing it — that is what the brief should copy.'),
+          'Comprovado peca a peca: '+aport.length+' dos '+ctx.nCre26+' criativos geram halo com 5+ dias no ar, então não e um comercial de sorte. As pecas que lideram em halo são '+(aport[0].nombre===data.y26.slice().sort(function(a,b){return b.l1k_adj-a.l1k_adj;})[0].nombre ? 'as mesmas que lideram na própria marca, o que sugere alcance geral e não uma mecánica cruzada especifica.' : 'NAO as que lideram na própria marca, o que sugere que algo especifico nessas execucoes esta causando isso — e o que o brief deve copiar.'),
+          'Comprobado pieza por pieza: '+aport.length+' de los '+ctx.nCre26+' creativos generan halo con 5+ días al aire, así que no es un spot con suerte. Las piezas que lideran en halo son '+(aport[0].nombre===data.y26.slice().sort(function(a,b){return b.l1k_adj-a.l1k_adj;})[0].nombre ? 'las mismas que lideran en su propia marca, lo que sugiere alcance general y no una mecánica cruzada especifica.' : 'NO las que lideran en su propia marca, lo que sugiere que algo especifico de esas ejecuciones lo esta causando — eso es lo que hay que copiar en el brief.')),
+        accion: tbdL('Brief one piece that names both audiences explicitly, using '+tbdQ(top.nombre)+' (campaign '+tbdQ(top.campaign_name)+', tone '+tbdQ(top.tone_category)+') as the reference execution. '+tbdVentana(ctx)+'. Budget it as a normal production, not as an experiment: the halo already exists, this only makes it deliberate.',
+          'Peca uma peca que nomeie as duas audiencias explicitamente, usando '+tbdQ(top.nombre)+' (campanha '+tbdQ(top.campaign_name)+', tom '+tbdQ(top.tone_category)+') como execução de referência. '+tbdVentana(ctx)+'. Orce como produção normal, não como experimento: o halo ja existe, isto so o torna deliberado.',
+          'Briefea una pieza que nombre a las dos audiencias de forma explicita, usando '+tbdQ(top.nombre)+' (campaña '+tbdQ(top.campaign_name)+', tono '+tbdQ(top.tone_category)+') como ejecución de referencia. '+tbdVentana(ctx)+'. Presupuestala como una producción normal, no como un experimento: el halo ya existe, esto solo lo vuelve deliberado.'),
+        exito: tbdL('Halo above '+tbdNK(top.jr_l1k_adj*1.2)+' L/$1k adj. for the new piece without its own '+ctx.marca+' number falling below '+tbdNK(ctx.l1kPort26)+'. If its own brand drops, the piece is cannibalising, not adding.',
+          'Halo acima de '+tbdNK(top.jr_l1k_adj*1.2)+' L/$1k adj. para a peca nova sem que seu próprio número de '+ctx.marca+' caia abaixo de '+tbdNK(ctx.l1kPort26)+'. Se a própria marca cair, a peca esta canibalizando, não somando.',
+          'Halo por encima de '+tbdNK(top.jr_l1k_adj*1.2)+' L/$1k adj. para la pieza nueva sin que su propio número de '+ctx.marca+' caiga por debajo de '+tbdNK(ctx.l1kPort26)+'. Si la marca propia baja, la pieza esta canibalizando, no sumando.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    var totalJr = 0, totalOe = 0;
+    data.y26.forEach(function(r){ totalJr += (r.jr_l||0); totalOe += r.l; });
+    var pct = totalOe>0 ? totalJr/totalOe*100 : 0;
+    return tbdL('In '+ctx.pais+', '+ctx.marca+' produced '+tbdNL(totalJr)+' cross-brand leads against '+tbdNL(totalOe)+' of its own ('+tbdNP1(pct)+'), below the 3% and 50-lead floor needed to justify briefing a piece for it. Not worth a production here yet.',
+      'Em '+ctx.pais+', '+ctx.marca+' gerou '+tbdNL(totalJr)+' leads cruzados contra '+tbdNL(totalOe)+' próprios ('+tbdNP1(pct)+'), abaixo do piso de 3% e 50 leads necessario para justificar uma peca dedicada. Ainda não vale uma produção aqui.',
+      'En '+ctx.pais+', '+ctx.marca+' genero '+tbdNL(totalJr)+' leads cruzados contra '+tbdNL(totalOe)+' propios ('+tbdNP1(pct)+'), por debajo del piso de 3% y 50 leads que hace falta para justificar una pieza dedicada. Todavia no amerita una producción acá.');
+  }
+});
+
+TBD_RULES.push({ id:'U-THIN', dest:'UPSIDE', prio:30,
+  run: function(ctx, data, led){
+    var e = ctx.err||8;
+    var c = data.y26.filter(function(r){ return r.n>=2 && r.n<=4 && ctx.l1kPort26>0 && r.l1k_adj > ctx.l1kPort26*(1+e/100); })
+      .sort(function(a,b){ return b.l1k_adj-a.l1k_adj; })[0];
+    if(!c) return null;
+    if(!tbdLedgerClaimPiece(led, c.nombre, 'U-THIN')) return null;
+    var lift = (c.l1k_adj-ctx.l1kPort26)/ctx.l1kPort26*100;
+    var faltan = Math.max(0, 6-c.n);
+    return { tier:'INDICIO', usd:0, delta:lift/100, conf:0.3, claims:{piezas:[c.nombre],dims:[]},
+      texto: tbdCard({
+        verbo: tbdL('extend','estenda','extiende'),
+        hallazgo: tbdL(tbdQ(c.nombre)+' (campaign '+tbdQ(c.campaign_name)+', '+tbdQ(c.tone_category)+' tone) in '+ctx.pais+' shows '+tbdNK(c.l1k_adj)+' L/$1k adj., '+tbdNP(lift)+' above the '+tbdNK(ctx.l1kPort26)+' of the '+ctx.marca+' portfolio here — but on only '+c.n+' days on air and '+tbdNL(c.l)+' leads, with '+tbdUSD(c.s)+' behind it. This is NOT a winner yet: with '+c.n+' days, the error of the adjustment alone in '+ctx.pais+' is '+tbdNP1(ctx.err)+'.',
+          tbdQ(c.nombre)+' (campanha '+tbdQ(c.campaign_name)+', tom '+tbdQ(c.tone_category)+') em '+ctx.pais+' mostra '+tbdNK(c.l1k_adj)+' L/$1k adj., '+tbdNP(lift)+' acima dos '+tbdNK(ctx.l1kPort26)+' do portfolio '+ctx.marca+' aqui — mas em apenas '+c.n+' dias no ar e '+tbdNL(c.l)+' leads, com '+tbdUSD(c.s)+' por tras. Isto NAO e um vencedor ainda: com '+c.n+' dias, so o erro do ajuste em '+ctx.pais+' e '+tbdNP1(ctx.err)+'.',
+          tbdQ(c.nombre)+' (campaña '+tbdQ(c.campaign_name)+', tono '+tbdQ(c.tone_category)+') en '+ctx.pais+' marca '+tbdNK(c.l1k_adj)+' L/$1k adj., '+tbdNP(lift)+' por encima de los '+tbdNK(ctx.l1kPort26)+' del portafolio de '+ctx.marca+' acá — pero con apenas '+c.n+' días al aire y '+tbdNL(c.l)+' leads, con '+tbdUSD(c.s)+' detras. Esto NO es un ganador todavía: con '+c.n+' días, solo el error del ajuste en '+ctx.pais+' ya es '+tbdNP1(ctx.err)+'.'),
+        hipotesis: tbdL('Short flights land on the days that happened to be good. The fewer the days, the more the number is luck rather than quality.',
+          'Voos curtos caem nos dias que por acaso foram bons. Quanto menos dias, mais o número e sorte e não qualidade.',
+          'Los vuelos cortos caen en los días que por casualidad salieron buenos. Cuantos menos días, más el número es suerte y no calidad.'),
+        comprobacion: tbdL('There is no way to confirm it inside this report: '+c.n+' days is below the 6 needed for a stable read here. What has to happen to settle it: '+faltan+' more days on air at similar weight.',
+          'Não ha como confirmar dentro deste relatorio: '+c.n+' dias esta abaixo dos 6 necessarios para uma leitura estavel aqui. O que falta para resolver: '+faltan+' dias a mais no ar com peso similar.',
+          'No hay con que comprobarlo dentro de este reporte: '+c.n+' días esta por debajo de los 6 que hacen falta para una lectura estable acá. Lo que falta para resolverlo: '+faltan+' días más al aire a peso similar.'),
+        accion: tbdL('Give it '+faltan+' more days at the same daily weight ('+tbdUSD(ctx.spd)+'/day is the country average) before deciding anything. Do not scale it and do not kill it on '+c.n+' days.',
+          'De a ela '+faltan+' dias a mais com o mesmo peso diario ('+tbdUSD(ctx.spd)+'/dia e a média do pais) antes de decidir. Não escale e não mate com '+c.n+' dias.',
+          'Dale '+faltan+' días más al mismo peso diario ('+tbdUSD(ctx.spd)+'/día es el promedio del país) antes de decidir nada. Ni la escales ni la mates con '+c.n+' días.'),
+        exito: tbdL('If it holds above '+tbdNK(ctx.l1kPort26*(1+ctx.err/100))+' after 6 days it becomes a real candidate to scale. If it lands below '+tbdNK(ctx.l1kPort26)+', it was the days and not the piece.',
+          'Se ficar acima de '+tbdNK(ctx.l1kPort26*(1+ctx.err/100))+' após 6 dias vira candidata real. Se ficar abaixo de '+tbdNK(ctx.l1kPort26)+', foram os dias e não a peca.',
+          'Si se sostiene por encima de '+tbdNK(ctx.l1kPort26*(1+ctx.err/100))+' a los 6 días, pasa a ser candidata real para escalar. Si cae por debajo de '+tbdNK(ctx.l1kPort26)+', fueron los días y no la pieza.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    return tbdL('In '+ctx.pais+', '+ctx.marca+': no creative with 2-4 days on air is above '+tbdNK(ctx.l1kPort26*(1+(ctx.err||8)/100))+' (the '+tbdNK(ctx.l1kPort26)+' of the portfolio plus its '+tbdNP1(ctx.err)+' error margin). There is no promising short flight waiting for more days.',
+      'Em '+ctx.pais+', '+ctx.marca+': nenhum criativo com 2-4 dias no ar esta acima de '+tbdNK(ctx.l1kPort26*(1+(ctx.err||8)/100))+' (os '+tbdNK(ctx.l1kPort26)+' do portfolio mais sua margem de '+tbdNP1(ctx.err)+'). Não ha voo curto promissor esperando mais dias.',
+      'En '+ctx.pais+', '+ctx.marca+': ningun creativo con 2-4 días al aire esta por encima de '+tbdNK(ctx.l1kPort26*(1+(ctx.err||8)/100))+' (los '+tbdNK(ctx.l1kPort26)+' del portafolio más su margen de '+tbdNP1(ctx.err)+'). No hay ningun vuelo corto prometedor esperando más días.');
+  }
+});
+
+/* ---------------- GUIDE ---------------- */
+TBD_RULES.push({ id:'G-GOV', dest:'GUIDE', prio:10,
+  run: function(ctx, data, led){
+    var gName = LANG==='en' ? (ctx.gate==='VERDE'?'GREEN':ctx.gate==='AMBAR'?'AMBER':ctx.gate) : ctx.gate;
+    var grande = (ctx.err||0) >= 10;
+    return { tier:'REGLA', usd:0, delta:0, conf:1, claims:{piezas:[],dims:[]},
+      texto: tbdCard({
+        verbo: tbdL('read','leia','lee'),
+        hallazgo: tbdL('The demand adjustment in '+ctx.pais+' is rated '+gName+' (it beat "every month is the same" by '+tbdNP(ctx.skill)+' on months the model never saw) and carries '+tbdNP1(ctx.err)+' of error. The seasonal factors of Jan-Jul here span '+tbdNK(ctx.rangoFactor)+' points, and '+tbdNP(ctx.greySpend.pct)+' of the '+tbdUSD(ctx.gastoPeriodo)+' spent ran in months whose factor is not statistically distinguishable from a normal month'+(ctx.greySpend.nGrises?' ('+ctx.greySpend.meses.join(', ')+')':'')+'.',
+          'O ajuste de demanda em '+ctx.pais+' esta como '+gName+' (superou "todo mês e igual" em '+tbdNP(ctx.skill)+' em meses que o modelo nunca viu) e carrega '+tbdNP1(ctx.err)+' de erro. Os fatores sazonais de Jan-Jul aqui variam '+tbdNK(ctx.rangoFactor)+' pontos, e '+tbdNP(ctx.greySpend.pct)+' dos '+tbdUSD(ctx.gastoPeriodo)+' gastos rodaram em meses cujo fator não se distingue de um mês normal'+(ctx.greySpend.nGrises?' ('+ctx.greySpend.meses.join(', ')+')':'')+'.',
+          'El ajuste por demanda de '+ctx.pais+' esta calificado como '+gName+' (le ganó a "todos los meses son iguales" por '+tbdNP(ctx.skill)+' en meses que el modelo nunca vio) y carga '+tbdNP1(ctx.err)+' de error. Los factores estacionales de Ene-Jul acá abarcan '+tbdNK(ctx.rangoFactor)+' puntos, y '+tbdNP(ctx.greySpend.pct)+' de los '+tbdUSD(ctx.gastoPeriodo)+' gastados corrieron en meses cuyo factor no se distingue de un mes normal'+(ctx.greySpend.nGrises?' ('+ctx.greySpend.meses.join(', ')+')':'')+'.'),
+        hipotesis: tbdL('An error margin is not a formality: it is the width below which two creatives are the same creative as far as this report can tell.',
+          'Uma margem de erro não e formalidade: e a largura abaixo da qual dois criativos são o mesmo criativo para este relatorio.',
+          'Un margen de error no es una formalidad: es el ancho por debajo del cual dos creativos son el mismo creativo para lo que este reporte puede distinguir.'),
+        comprobacion: ctx.paisContraste
+          ? tbdL('For scale: in '+ctx.paisContraste.pais+' the same adjustment carries '+tbdNP1(ctx.paisContraste.err)+', so a gap that is decisive there '+(ctx.paisContraste.err<ctx.err?'is not decisive here':'would not be decisive there')+'. The threshold is a property of the country, not of the creative.',
+              'Para escala: em '+ctx.paisContraste.pais+' o mesmo ajuste carrega '+tbdNP1(ctx.paisContraste.err)+', então uma diferença decisiva la '+(ctx.paisContraste.err<ctx.err?'não e decisiva aqui':'não seria decisiva la')+'. O limiar e uma propriedade do pais, não do criativo.',
+              'Para dar escala: en '+ctx.paisContraste.pais+' el mismo ajuste carga '+tbdNP1(ctx.paisContraste.err)+', así que una brecha que alla es decisiva '+(ctx.paisContraste.err<ctx.err?'acá no lo es':'alla no lo seria')+'. El umbral es una propiedad del país, no del creativo.')
+          : null,
+        accion: tbdL('Do not separate two creatives in '+ctx.pais+' on a gap smaller than '+tbdNP1(ctx.err)+'.'+(grande?' With an error this wide, most of the differences between creatives in this country are NOT decidable with this metric — treat every ranking here as provisional order and decide with spend and days, not with decimals.':'')+' The reallocation ceiling for one reading of this report here is '+tbdUSD(ctx.topeCarga)+'/month.',
+          'Não separe dois criativos em '+ctx.pais+' por uma diferença menor que '+tbdNP1(ctx.err)+'.'+(grande?' Com um erro tao largo, a maioria das diferencas entre criativos neste pais NAO e decidivel com esta metrica — trate todo ranking aqui como ordem provisoria e decida com gasto e dias, não com decimais.':'')+' O teto de realocação para uma leitura deste relatorio aqui e '+tbdUSD(ctx.topeCarga)+'/mês.',
+          'No separes a dos creativos en '+ctx.pais+' por una brecha menor a '+tbdNP1(ctx.err)+'.'+(grande?' Con un error así de ancho, la mayoria de las diferencias entre creativos de este país NO son decidibles con esta métrica — trata todo ranking de acá como orden provisional y decide con gasto y días, no con decimales.':'')+' El tope de reasignación para una lectura de este reporte acá es '+tbdUSD(ctx.topeCarga)+'/mes.'),
+        exito: null
+      })
+    };
+  }
+});
+
+TBD_RULES.push({ id:'G-MARKET', dest:'GUIDE', prio:20,
+  run: function(ctx, data, led){
+    if(ctx.yoy==null || Math.abs(ctx.yoy) < 3) return null;
+    var sube = ctx.yoy > 0;
+    return { tier:'REGLA', usd:0, delta:Math.abs(ctx.yoy)/100, conf:0.9, claims:{piezas:[],dims:[]},
+      texto: tbdCard({
+        verbo: tbdL('discount','desconte','descuenta'),
+        hallazgo: tbdL('Beyond seasonality, the market itself in '+ctx.pais+' '+(sube?'grew':'shrank')+' '+tbdNP1(Math.abs(ctx.yoy))+' between Jan-Jul 2025 and Jan-Jul 2026 (level '+tbdNK(ctx.market25)+' to '+tbdNK(ctx.market26)+'). The '+ctx.marca+' portfolio went from '+tbdNK(ctx.l1kPort25)+' to '+tbdNK(ctx.l1kPort26)+' L/$1k adj. over the same window, on '+tbdUSD(ctx.gastoPeriodo)+' across '+ctx.nCre26+' creatives.',
+          'Alem da sazonalidade, o próprio mercado em '+ctx.pais+' '+(sube?'cresceu':'encolheu')+' '+tbdNP1(Math.abs(ctx.yoy))+' entre Jan-Jul 2025 e Jan-Jul 2026 (nível '+tbdNK(ctx.market25)+' para '+tbdNK(ctx.market26)+'). O portfolio '+ctx.marca+' foi de '+tbdNK(ctx.l1kPort25)+' para '+tbdNK(ctx.l1kPort26)+' L/$1k adj. na mesma janela, com '+tbdUSD(ctx.gastoPeriodo)+' em '+ctx.nCre26+' criativos.',
+          'Mas alla de la estacionalidad, el mercado mismo de '+ctx.pais+' '+(sube?'crecio':'se encogio')+' '+tbdNP1(Math.abs(ctx.yoy))+' entre Ene-Jul 2025 y Ene-Jul 2026 (nivel '+tbdNK(ctx.market25)+' a '+tbdNK(ctx.market26)+'). El portafolio de '+ctx.marca+' pasó de '+tbdNK(ctx.l1kPort25)+' a '+tbdNK(ctx.l1kPort26)+' L/$1k adj. en la misma ventana, sobre '+tbdUSD(ctx.gastoPeriodo)+' y '+ctx.nCre26+' creativos.'),
+        hipotesis: sube
+          ? tbdL('A rising market lifts every creative, so part of any year-on-year improvement here was not earned by the work.',
+              'Um mercado em alta levanta todo criativo, então parte de qualquer melhora ano a ano aqui não foi merito do trabalho.',
+              'Un mercado que sube levanta a todos los creativos, así que parte de cualquier mejora año contra año de acá no la ganó el trabajo.')
+          : tbdL('A falling market drags every creative down, so a flat year-on-year number here is actually a gain against the field.',
+              'Um mercado em queda arrasta todo criativo, então um número estavel ano a ano aqui e na verdade um ganho relativo.',
+              'Un mercado que cae arrastra a todos los creativos, así que un número plano año contra año acá es en realidad una ganancia frente al campo.'),
+        comprobacion: tbdL('This is deliberately NOT divided out of the adj. columns, because dividing by it would make a creative look better precisely because its market collapsed. It is stated here so the year-on-year reading is discounted by hand.',
+          'Isto NAO e dividido nas colunas adj. de proposito, porque dividir faria um criativo parecer melhor justamente porque seu mercado caiu. Fica declarado aqui para que a leitura ano a ano seja descontada a mao.',
+          'Esto a propósito NO se divide en las columnas adj., porque dividir por el haria que un creativo se vea mejor justamente porque su mercado se derrumbo. Se declara acá para que la lectura año contra año se descuente a mano.'),
+        accion: tbdL('When you present '+ctx.pais+', say the '+tbdNP1(Math.abs(ctx.yoy))+' out loud before the creative verdict. '+(sube?'Any improvement below that number is the market, not the work.':'Anything that merely held flat outperformed the market by '+tbdNP1(Math.abs(ctx.yoy))+'.'),
+          'Ao apresentar '+ctx.pais+', diga os '+tbdNP1(Math.abs(ctx.yoy))+' antes do veredicto criativo. '+(sube?'Qualquer melhora abaixo desse número e o mercado, não o trabalho.':'Qualquer coisa que apenas se manteve superou o mercado em '+tbdNP1(Math.abs(ctx.yoy))+'.'),
+          'Cuando presentes '+ctx.pais+', di el '+tbdNP1(Math.abs(ctx.yoy))+' en voz alta antes del veredicto creativo. '+(sube?'Cualquier mejora por debajo de ese número es el mercado, no el trabajo.':'Cualquier cosa que apenas se mantuvo le ganó al mercado por '+tbdNP1(Math.abs(ctx.yoy))+'.')),
+        exito: null
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    if(ctx.yoy==null) return null;
+    return tbdL('In '+ctx.pais+' the deseasonalised market moved only '+tbdNP1(ctx.yoy)+' between the two periods (level '+tbdNK(ctx.market25)+' to '+tbdNK(ctx.market26)+'), below the 3% worth mentioning. The year-on-year comparison here needs no market discount.',
+      'Em '+ctx.pais+' o mercado dessazonalizado moveu apenas '+tbdNP1(ctx.yoy)+' entre os dois periodos (nível '+tbdNK(ctx.market25)+' para '+tbdNK(ctx.market26)+'), abaixo dos 3% que valem mencao. A comparacao ano a ano aqui não precisa de desconto de mercado.',
+      'En '+ctx.pais+' el mercado desestacionalizado se movió apenas '+tbdNP1(ctx.yoy)+' entre los dos periodos (nivel '+tbdNK(ctx.market25)+' a '+tbdNK(ctx.market26)+'), por debajo del 3% que amerita mencion. La comparacion año contra año de acá no necesita descuento de mercado.');
+  }
+});
+
+/* ---------------- BRIEF (se corre dos veces: GENERIC y PROMO) ---------------- */
+function tbdBriefCtx(ctx, data, T){
+  var items = data.y26.filter(function(r){ return r.ad_type===T; });
+  var conDias = items.filter(function(r){ return r.n>=3; });
+  var base = conDias.length>=2 ? conDias : items;
+  var s = 0, l = 0, dw = 0;
+  base.forEach(function(r){ s+=r.s; l+=r.l; dw+=r.dem*r.s; });
+  return { T:T, items:items, base:base, n:base.length,
+    s:s, l:l, l1k_adj: s>0 ? l/s*1000/((dw/s)/100) : null,
+    lider: base.slice().sort(function(a,b){ return b.l1k_adj-a.l1k_adj; })[0] || null };
+}
+TBD_RULES.push({ id:'B-OPEN', dest:'BRIEF', prio:10,
+  run: function(ctx, data, led, T){
+    var b = tbdBriefCtx(ctx, data, T);
+    if(!b.lider || b.n < 2) return null;
+    var lid = b.lider;
+    var ha = lid.hook_audio_type_code, hv = lid.hook_visual_type_code;
+    if(!ha && !hv) return null;
+    var k = b.base.filter(function(r){ return r.hook_audio_type_code===ha && r.hook_visual_type_code===hv; });
+    var otros = b.base.filter(function(r){ return r!==lid; });
+    var os_ = otros.reduce(function(a,r){return a+r.s;},0), ol = otros.reduce(function(a,r){return a+r.l;},0), odw = otros.reduce(function(a,r){return a+r.dem*r.s;},0);
+    var otrosAdj = os_>0 ? ol/os_*1000/((odw/os_)/100) : null;
+    var gap = otrosAdj>0 ? (lid.l1k_adj-otrosAdj)/otrosAdj*100 : 0;
+    var t = tbdTier(k.length, lid.n, gap, ctx.err);
+    var ah = lid.hook_audio ? tbdT(lid.hook_audio) : null;
+    var vh = lid.hook_visual ? tbdT(lid.hook_visual) : null;
+    return { tier:t.tier, usd:0, delta:gap/100, conf: Math.min(1, k.length/3), claims:{piezas:[],dims:[]},
+      texto: tbdCard({
+        verbo: t.verbo,
+        hallazgo: tbdL('The best '+T+' piece in '+ctx.pais+' for '+ctx.marca+' is '+tbdQ(lid.nombre)+' at '+tbdNK(lid.l1k_adj)+' L/$1k adj. over '+lid.n+' days, against '+tbdNK(otrosAdj)+' for the other '+otros.length+' '+T+' pieces ('+tbdNP(gap)+'). It opens on a '+tbdQ(ha)+' audio hook with a '+tbdQ(hv)+' visual'+(k.length>1?', a pairing shared by '+k.length+' pieces here':', and it is the only piece here that opens that way')+'.',
+          'A melhor peca '+T+' em '+ctx.pais+' para '+ctx.marca+' e '+tbdQ(lid.nombre)+' com '+tbdNK(lid.l1k_adj)+' L/$1k adj. em '+lid.n+' dias, contra '+tbdNK(otrosAdj)+' das outras '+otros.length+' pecas '+T+' ('+tbdNP(gap)+'). Abre com hook de audio '+tbdQ(ha)+' e visual '+tbdQ(hv)+(k.length>1?', dupla compartilhada por '+k.length+' pecas aqui':', e e a única peca aqui que abre assim')+'.',
+          'La mejor pieza '+T+' en '+ctx.pais+' para '+ctx.marca+' es '+tbdQ(lid.nombre)+' con '+tbdNK(lid.l1k_adj)+' L/$1k adj. en '+lid.n+' días, contra '+tbdNK(otrosAdj)+' de las otras '+otros.length+' piezas '+T+' ('+tbdNP(gap)+'). Abre con un hook de audio '+tbdQ(ha)+' y un visual '+tbdQ(hv)+(k.length>1?', una dupla que comparten '+k.length+' piezas acá':', y es la única pieza de acá que abre así')+'.'),
+        hipotesis: tbdL('The first three seconds decide whether the rest gets watched, so the opening is the part of the execution most likely to transfer to a new script. What cannot be separated here: the opening may be working because of the specific performer, not the mechanic.',
+          'Os primeiros tres segundos decidem se o resto será assistido, então a abertura e a parte mais transferivel para um roteiro novo. O que não da para separar aqui: a abertura pode estar funcionando pelo interprete especifico, não pela mecánica.',
+          'Los primeros tres segundos deciden si se ve el resto, así que la apertura es la parte de la ejecución que más fácil se transfiere a un guion nuevo. Lo que acá no se puede separar: la apertura puede estar funcionando por el interprete concreto y no por la mecánica.'),
+        comprobacion: k.length>1
+          ? tbdL('Cross-checked inside this country: the '+k.length+' pieces that open with that same pairing average '+tbdNK(tbdRollup2(k, function(){return 'k';})[0].l1k_adj)+' L/$1k adj., so the opening travels beyond the one execution.',
+              'Comprovado dentro deste pais: as '+k.length+' pecas que abrem com a mesma dupla tem média de '+tbdNK(tbdRollup2(k, function(){return 'k';})[0].l1k_adj)+' L/$1k adj., então a abertura viaja alem de uma execução.',
+              'Comprobado dentro de este país: las '+k.length+' piezas que abren con esa misma dupla promedian '+tbdNK(tbdRollup2(k, function(){return 'k';})[0].l1k_adj)+' L/$1k adj., así que la apertura viaja más allá de una sola ejecución.')
+          : tbdL('There is no way to confirm the opening travels: only 1 piece in '+ctx.pais+' opens this way. To settle it, the next '+T+' script has to reuse the same pairing with a different cast and setting.',
+              'Não ha como confirmar que a abertura viaja: apenas 1 peca em '+ctx.pais+' abre assim. Para resolver, o próximo roteiro '+T+' precisa reusar a mesma dupla com elenco e cenario diferentes.',
+              'No hay con que comprobar que la apertura viaja: solo 1 pieza en '+ctx.pais+' abre así. Para resolverlo, el próximo guion '+T+' tiene que reusar la misma dupla con otro reparto y otra locacion.'),
+        accion: tbdL('Open the next '+T+' script the same way'+(ah?', on the audio side: '+String(ah).replace(/\.\s*$/,''):'')+(vh?'; on screen: '+String(vh).replace(/\.\s*$/,''):'')+'. Write it for '+tbdDecisor(ctx)+', from the first line.',
+          'Abra o próximo roteiro '+T+' do mesmo jeito'+(ah?', no audio: '+String(ah).replace(/\.\s*$/,''):'')+(vh?'; na tela: '+String(vh).replace(/\.\s*$/,''):'')+'. Escreva pensando em '+tbdDecisor(ctx)+', desde a primeira linha.',
+          'Abre el próximo guion '+T+' de la misma forma'+(ah?', en el audio: '+String(ah).replace(/\.\s*$/,''):'')+(vh?'; en pantalla: '+String(vh).replace(/\.\s*$/,''):'')+'. Escribe pensando en '+tbdDecisor(ctx)+', desde la primera línea.'),
+        exito: tbdL('The new piece should clear '+tbdNK(otrosAdj*(1+(ctx.err||8)/100))+' L/$1k adj. in its first 6 days. Below that, the opening was not what was working.',
+          'A peca nova deve superar '+tbdNK(otrosAdj*(1+(ctx.err||8)/100))+' L/$1k adj. nos primeiros 6 dias. Abaixo disso, a abertura não era o que funcionava.',
+          'La pieza nueva debería superar '+tbdNK(otrosAdj*(1+(ctx.err||8)/100))+' L/$1k adj. en sus primeros 6 días. Por debajo de eso, la apertura no era lo que funcionaba.')
+      })
+    };
+  },
+  vacio: function(ctx, data, T){
+    var b = tbdBriefCtx(ctx, data, T);
+    return tbdL('In '+ctx.pais+', '+ctx.marca+', '+T+' ads: there are '+b.items.length+' pieces of this type and '+b.base.length+' with 3+ days on air, below the 2 needed to compare an opening against anything. Nothing to brief from openings here.',
+      'Em '+ctx.pais+', '+ctx.marca+', anuncios '+T+': ha '+b.items.length+' pecas deste tipo e '+b.base.length+' com 3+ dias no ar, abaixo das 2 necessarias para comparar uma abertura. Nada a instruir a partir de aberturas aqui.',
+      'En '+ctx.pais+', '+ctx.marca+', anuncios '+T+': hay '+b.items.length+' piezas de este tipo y '+b.base.length+' con 3+ días al aire, por debajo de las 2 que hacen falta para comparar una apertura contra algo. No hay nada que briefear desde aperturas acá.');
+  }
+});
+
+TBD_RULES.push({ id:'B-PAIN', dest:'BRIEF', prio:30,
+  run: function(ctx, data, led, T){
+    var b = tbdBriefCtx(ctx, data, T);
+    if(b.n < 3) return null;
+    /* 7 familias reales del catalogo (EXC, PROC, MOV, OPP, MET, AI, IMP) --
+       usar solo 3 dejaba fuera 22% de los creativos, incluido OPP-Work que es
+       el pain point más frecuente de OE. */
+    var roll = tbdRollup2(b.base, tbdPainFam).filter(function(c){ return c.nCre>=1; });
+    if(roll.length < 2) return null;
+    var top = roll[0], last = roll[roll.length-1];
+    var gap = last.l1k_adj>0 ? (top.l1k_adj-last.l1k_adj)/last.l1k_adj*100 : 0;
+    if(gap < (ctx.err||8)) return null;
+    var t = tbdTier(top.nCre, top.diasMin, gap, ctx.err);
+    var ejemplo = b.base.filter(function(r){ return tbdPainFam(r)===top.label; })
+      .sort(function(a,b2){ return b2.l1k_adj-a.l1k_adj; })[0];
+    var nombreDolor = ejemplo ? tbdPainNombre(ejemplo) : null;
+    var refPieza = ejemplo ? ejemplo.nombre : null;
+    var refMec = ejemplo ? ejemplo.theme_mechanism_code : null;
+    return { tier:t.tier, usd:0, delta:gap/100, conf: Math.min(1, top.nCre/3), claims:{piezas:[],dims:[]},
+      texto: tbdCard({
+        verbo: t.verbo,
+        hallazgo: tbdL('Among '+T+' ads in '+ctx.pais+' for '+ctx.marca+', the '+tbdQ(top.label)+' pain family leads with '+tbdNK(top.l1k_adj)+' L/$1k adj. across '+top.nCre+' creative(s) (min '+top.diasMin+' days each), against '+tbdNK(last.l1k_adj)+' for '+tbdQ(last.label)+' — a gap of '+tbdNP(gap)+' over the '+tbdNP1(ctx.err)+' error of the adjustment here'+(nombreDolor?'. The best-performing wording of it is '+tbdQ(nombreDolor)+', in '+tbdQ(refPieza)+' via the '+tbdQ(refMec)+' mechanism':'')+'.',
+          'Entre anuncios '+T+' em '+ctx.pais+' para '+ctx.marca+', a familia de dor '+tbdQ(top.label)+' lidera com '+tbdNK(top.l1k_adj)+' L/$1k adj. em '+top.nCre+' criativo(s) (min '+top.diasMin+' dias cada), contra '+tbdNK(last.l1k_adj)+' de '+tbdQ(last.label)+' — diferença de '+tbdNP(gap)+' sobre o erro de '+tbdNP1(ctx.err)+' do ajuste aqui'+(nombreDolor?'. A formulacao de melhor desempenho e '+tbdQ(nombreDolor)+', em '+tbdQ(refPieza)+' pelo mecanismo '+tbdQ(refMec):'')+'.',
+          'Entre los anuncios '+T+' de '+ctx.pais+' para '+ctx.marca+', la familia de dolor '+tbdQ(top.label)+' lidera con '+tbdNK(top.l1k_adj)+' L/$1k adj. en '+top.nCre+' creativo(s) (min '+top.diasMin+' días cada uno), contra '+tbdNK(last.l1k_adj)+' de '+tbdQ(last.label)+' — una brecha de '+tbdNP(gap)+' sobre el error de '+tbdNP1(ctx.err)+' que tiene el ajuste acá'+(nombreDolor?'. La formulacion que mejor rinde es '+tbdQ(nombreDolor)+', en '+tbdQ(refPieza)+' con el mecanismo '+tbdQ(refMec):'')+'.'),
+        hipotesis: ctx.esJr
+          ? tbdL('For Junior the person who feels the pain and the person who pays are two different people: the child lives the difficulty, the parent lives the guilt of not solving it. A pain that works here is one the parent recognises in their child.',
+              'Para Junior quem sente a dor e quem paga são duas pessoas: a criança vive a dificuldade, o pai vive a culpa de não resolver. Uma dor que funciona aqui e a que o pai reconhece no filho.',
+              'Para Junior quien siente el dolor y quien paga son dos personas distintas: el niño vive la dificultad, el padre vive la culpa de no resolverla. Un dolor que funciona acá es uno que el padre reconoce en su hijo.')
+          : tbdL('For the adult learner the person who feels the pain, decides and pays is the same person, so the pain has to be one they will admit to themselves — shame works only if it comes with a way out in the same spot.',
+              'Para o aprendiz adulto quem sente, decide e paga e a mesma pessoa, então a dor precisa ser uma que ele admita para si — vergonha so funciona se vier com uma saida no mesmo comercial.',
+              'Para el aprendiz adulto quien siente el dolor, decide y paga es la misma persona, así que el dolor tiene que ser uno que se admita a si mismo — la vergüenza solo funciona si viene con una salida en el mismo spot.'),
+        comprobacion: top.nCre>=2
+          ? tbdL('Checked across executions: the '+top.nCre+' pieces in this family are not one creative — the family holds up with '+tbdNL(top.l)+' leads on '+tbdUSD(top.s)+'.',
+              'Comprovado entre execucoes: as '+top.nCre+' pecas desta familia não são um único criativo — a familia se sustenta com '+tbdNL(top.l)+' leads em '+tbdUSD(top.s)+'.',
+              'Comprobado entre ejecuciones: las '+top.nCre+' piezas de esta familia no son un solo creativo — la familia se sostiene con '+tbdNL(top.l)+' leads sobre '+tbdUSD(top.s)+'.')
+          : tbdL('It cannot be confirmed as a family: only 1 '+T+' creative in '+ctx.pais+' uses it, so what is measured is that execution and not the pain. A second piece on the same pain with a different execution would settle it.',
+              'Não da para confirmar como familia: apenas 1 criativo '+T+' em '+ctx.pais+' a usa, então o que esta medido e a execução e não a dor. Uma segunda peca na mesma dor com execução diferente resolveria.',
+              'No se puede confirmar como familia: solo 1 creativo '+T+' de '+ctx.pais+' la usa, así que lo medido es esa ejecución y no el dolor. Una segunda pieza sobre el mismo dolor con otra ejecución lo resolveria.'),
+        accion: tbdL('Anchor the next '+T+' script on the '+tbdQ(top.label)+' pain, written for '+tbdDecisor(ctx)+'. Do not open on '+tbdQ(last.label)+' in '+ctx.pais+' unless there is a reason outside this data.',
+          'Ancore o próximo roteiro '+T+' na dor '+tbdQ(top.label)+', escrito para '+tbdDecisor(ctx)+'. Não abra com '+tbdQ(last.label)+' em '+ctx.pais+' sem uma razao fora destes dados.',
+          'Ancla el próximo guion '+T+' en el dolor '+tbdQ(top.label)+', escrito para '+tbdDecisor(ctx)+'. No abras con '+tbdQ(last.label)+' en '+ctx.pais+' salvo que haya una razon fuera de estos datos.'),
+        exito: tbdL('Above '+tbdNK(top.l1k_adj*0.9)+' L/$1k adj. in its first 6 days keeps the pain as the default for '+ctx.pais+'.',
+          'Acima de '+tbdNK(top.l1k_adj*0.9)+' L/$1k adj. nos primeiros 6 días mantem a dor como padrao para '+ctx.pais+'.',
+          'Por encima de '+tbdNK(top.l1k_adj*0.9)+' L/$1k adj. en sus primeros 6 días mantiene ese dolor como default para '+ctx.pais+'.')
+      })
+    };
+  },
+  vacio: function(ctx, data, T){
+    var b = tbdBriefCtx(ctx, data, T);
+    var roll = b.n ? tbdRollup2(b.base, tbdPainFam) : [];
+    if(roll.length<2) return tbdL('In '+ctx.pais+', '+ctx.marca+', '+T+' ads: the '+b.n+' pieces with enough days all share '+(roll.length?'the same pain family ('+roll[0].label+')':'no coded pain family')+', so there is nothing to compare.',
+      'Em '+ctx.pais+', '+ctx.marca+', anuncios '+T+': as '+b.n+' pecas com dias suficientes compartilham '+(roll.length?'a mesma familia de dor ('+roll[0].label+')':'nenhuma familia codificada')+', então não ha o que comparar.',
+      'En '+ctx.pais+', '+ctx.marca+', anuncios '+T+': las '+b.n+' piezas con días suficientes comparten '+(roll.length?'la misma familia de dolor ('+roll[0].label+')':'ninguna familia codificada')+', así que no hay con que comparar.');
+    var gap = roll[roll.length-1].l1k_adj>0 ? (roll[0].l1k_adj-roll[roll.length-1].l1k_adj)/roll[roll.length-1].l1k_adj*100 : 0;
+    return tbdL('In '+ctx.pais+', '+ctx.marca+', '+T+' ads: the best pain family ('+roll[0].label+', '+tbdNK(roll[0].l1k_adj)+') beats the worst ('+roll[roll.length-1].label+', '+tbdNK(roll[roll.length-1].l1k_adj)+') by only '+tbdNP(gap)+', under the '+tbdNP1(ctx.err)+' error of the adjustment. A brief cannot be decided on that.',
+      'Em '+ctx.pais+', '+ctx.marca+', anuncios '+T+': a melhor familia de dor ('+roll[0].label+', '+tbdNK(roll[0].l1k_adj)+') supera a pior ('+roll[roll.length-1].label+', '+tbdNK(roll[roll.length-1].l1k_adj)+') por apenas '+tbdNP(gap)+', abaixo do erro de '+tbdNP1(ctx.err)+'. Não se decide um brief com isso.',
+      'En '+ctx.pais+', '+ctx.marca+', anuncios '+T+': la mejor familia de dolor ('+roll[0].label+', '+tbdNK(roll[0].l1k_adj)+') le gana a la peor ('+roll[roll.length-1].label+', '+tbdNK(roll[roll.length-1].l1k_adj)+') por apenas '+tbdNP(gap)+', por debajo del '+tbdNP1(ctx.err)+' de error del ajuste. Con eso no se decide un brief.');
+  }
+});
+
+TBD_RULES.push({ id:'B-CAST', dest:'BRIEF', prio:60,
+  run: function(ctx, data, led, T){
+    var b = tbdBriefCtx(ctx, data, T);
+    if(b.n < 3) return null;
+    var roll = tbdRollup2(b.base, tbdCastBucket).filter(function(c){ return c.label; });
+    if(roll.length < 2) return null;
+    var top = roll[0], last = roll[roll.length-1];
+    var gap = last.l1k_adj>0 ? (top.l1k_adj-last.l1k_adj)/last.l1k_adj*100 : 0;
+    if(gap < Math.max(15, (ctx.err||8))) return null;
+    var t = tbdTier(top.nCre, top.diasMin, gap, ctx.err);
+    var ejTop = top.nombres && top.nombres.length ? top.nombres[0] : null;
+    var ejLast = last.nombres && last.nombres.length ? last.nombres[0] : null;
+    var etq = { CEO_VOCERO: tbdL('the founder/spokesperson on camera','o fundador/porta-voz na camera','el fundador o vocero en camara'),
+      PERSONAJE_DISFRAZ: tbdL('a costumed character','um personagem fantasiado','un personaje disfrazado'),
+      NINO: tbdL('a child as the lead','uma crianca como protagonista','un niño como protagonista'),
+      ADULTO: tbdL('an adult as the lead','um adulto como protagonista','un adulto como protagonista'),
+      ADULTO_MAS_NINO: tbdL('an adult and a child together','um adulto e uma crianca juntos','un adulto y un niño juntos'),
+      SIN_PERSONA: tbdL('no person on screen','sem pessoa na tela','sin persona en pantalla') };
+    return { tier:t.tier, usd:0, delta:gap/100, conf:Math.min(1, top.nCre/3), claims:{piezas:[],dims:[]},
+      texto: tbdCard({
+        verbo: t.verbo,
+        hallazgo: tbdL('Casting in '+ctx.pais+' for '+ctx.marca+' ('+T+'): '+(etq[top.label]||top.label)+' delivers '+tbdNK(top.l1k_adj)+' L/$1k adj. across '+top.nCre+' piece(s) with at least '+top.diasMin+' days each, against '+tbdNK(last.l1k_adj)+' L/$1k adj. for '+(etq[last.label]||last.label)+' — '+tbdNP(gap)+' apart on '+tbdUSD(top.s+last.s)+' of combined spend'+(ejTop?', e.g. '+tbdQ(ejTop)+' against '+tbdQ(ejLast):'')+'.',
+          'Elenco em '+ctx.pais+' para '+ctx.marca+' ('+T+'): '+(etq[top.label]||top.label)+' entrega '+tbdNK(top.l1k_adj)+' L/$1k adj. em '+top.nCre+' peca(s) com ao menos '+top.diasMin+' dias cada, contra '+tbdNK(last.l1k_adj)+' L/$1k adj. de '+(etq[last.label]||last.label)+' — '+tbdNP(gap)+' de diferença em '+tbdUSD(top.s+last.s)+' de gasto somado'+(ejTop?', ex. '+tbdQ(ejTop)+' contra '+tbdQ(ejLast):'')+'.',
+          'Reparto en '+ctx.pais+' para '+ctx.marca+' ('+T+'): '+(etq[top.label]||top.label)+' entrega '+tbdNK(top.l1k_adj)+' L/$1k adj. en '+top.nCre+' pieza(s) con al menos '+top.diasMin+' días cada una, contra '+tbdNK(last.l1k_adj)+' L/$1k adj. de '+(etq[last.label]||last.label)+' — '+tbdNP(gap)+' de diferencia sobre '+tbdUSD(top.s+last.s)+' de gasto sumado'+(ejTop?', por ejemplo '+tbdQ(ejTop)+' contra '+tbdQ(ejLast):'')+'.'),
+        hipotesis: ctx.esJr
+          ? tbdL('Who appears on screen tells the parent whether the ad is talking to them or to their child. A child alone entertains the child; an adult present gives the parent someone to identify with while deciding.',
+              'Quem aparece na tela diz ao pai se o anuncio fala com ele ou com o filho. Uma crianca sozinha entretem a crianca; um adulto presente da ao pai com quem se identificar ao decidir.',
+              'Quien aparece en pantalla le dice al padre si el anuncio le habla a el o a su hijo. Un niño solo entretiene al niño; un adulto presente le da al padre con quien identificarse mientras decide.')
+          : tbdL('The adult learner needs to see someone at their own level of failure, not someone who already succeeded. Casting decides whether the viewer thinks "that is me" or "that is not for me".',
+              'O aprendiz adulto precisa ver alguem no seu próprio nível de fracasso, não alguem que ja teve sucesso. O elenco decide se o espectador pensa "sou eu" ou "isso não e para mim".',
+              'El aprendiz adulto necesita ver a alguien en su mismo nivel de fracaso, no a alguien que ya lo logro. El reparto decide si el espectador piensa "ese soy yo" o "eso no es para mi".'),
+        comprobacion: top.nCre>=2
+          ? tbdL('Holds across '+top.nCre+' executions with at least '+top.diasMin+' days each, so it is the casting choice and not one performer.',
+              'Se sustenta em '+top.nCre+' execucoes com ao menos '+top.diasMin+' dias cada, então e a escolha de elenco e não um interprete.',
+              'Se sostiene en '+top.nCre+' ejecuciones con al menos '+top.diasMin+' días cada una, así que es la decision de reparto y no un interprete puntual.')
+          : tbdL('One execution only, so this is that performer and not the casting rule. A second piece with the same casting and a different performer would settle it.',
+              'Apenas uma execução, então isto e aquele interprete e não a regra de elenco. Uma segunda peca com o mesmo elenco e outro interprete resolveria.',
+              'Una sola ejecución, así que esto es ese interprete y no la regla de reparto. Una segunda pieza con el mismo tipo de reparto y otro interprete lo resolveria.'),
+        accion: tbdL('Cast the next '+T+' piece for '+ctx.pais+' with '+(etq[top.label]||top.label)+'.',
+          'Escale a próxima peca '+T+' para '+ctx.pais+' com '+(etq[top.label]||top.label)+'.',
+          'Reparte la proxima pieza '+T+' de '+ctx.pais+' con '+(etq[top.label]||top.label)+'.'),
+        exito: tbdL('Above '+tbdNK(last.l1k_adj*(1+(ctx.err||8)/100))+' L/$1k adj. confirms the casting rule for this country.',
+          'Acima de '+tbdNK(last.l1k_adj*(1+(ctx.err||8)/100))+' L/$1k adj. confirma a regra de elenco para este país.',
+          'Por encima de '+tbdNK(last.l1k_adj*(1+(ctx.err||8)/100))+' L/$1k adj. confirma la regla de reparto para este país.')
+      })
+    };
+  },
+  vacio: function(ctx, data, T){
+    var b = tbdBriefCtx(ctx, data, T);
+    var roll = b.n ? tbdRollup2(b.base, tbdCastBucket).filter(function(c){return c.label;}) : [];
+    return tbdL('In '+ctx.pais+', '+ctx.marca+', '+T+': '+roll.length+' distinct casting type(s) across '+b.n+' pieces with enough days — not enough contrast to turn casting into a brief instruction.',
+      'Em '+ctx.pais+', '+ctx.marca+', '+T+': '+roll.length+' tipo(s) de elenco em '+b.n+' pecas com dias suficientes — contraste insuficiente para virar instrucao de brief.',
+      'En '+ctx.pais+', '+ctx.marca+', '+T+': '+roll.length+' tipo(s) de reparto entre '+b.n+' piezas con días suficientes — contraste insuficiente para convertir el reparto en instrucción de brief.');
+  }
+});
+
+TBD_RULES.push({ id:'B-PROMO', dest:'BRIEF', prio:70, soloPromo:true,
+  run: function(ctx, data, led, T){
+    if(T!=='PROMO') return null;
+    var b = tbdBriefCtx(ctx, data, T);
+    if(b.n < 2) return null;
+    var roll = tbdRollup2(b.base, function(r){ return r.promo_name||null; });
+    if(roll.length < 2) return null;
+    var top = roll[0], last = roll[roll.length-1];
+    var gap = last.l1k_adj>0 ? (top.l1k_adj-last.l1k_adj)/last.l1k_adj*100 : 0;
+    if(gap < (ctx.err||8)) return null;
+    var mn = tbdRollup2(b.base, function(r){ return r.promo_name||null; }).filter(function(c){ return c.mncc!=null; });
+    var topM = mn.length ? mn.slice().sort(function(a,b2){ return b2.mncc-a.mncc; })[0] : null;
+    var t = tbdTier(top.nCre, top.diasMin, gap, ctx.err);
+    return { tier:t.tier, usd:0, delta:gap/100, conf:Math.min(1, top.nCre/3), claims:{piezas:[],dims:[]},
+      texto: tbdCard({
+        verbo: t.verbo,
+        hallazgo: tbdL('Among the promo offers run in '+ctx.pais+' for '+ctx.marca+', '+tbdQ(top.label)+' leads with '+tbdNK(top.l1k_adj)+' L/$1k adj. over '+top.nCre+' piece(s) and '+tbdUSD(top.s)+', against '+tbdNK(last.l1k_adj)+' for '+tbdQ(last.label)+' ('+tbdNP(gap)+' apart)'+(topM && topM.label!==top.label ? '. But the best margin belongs to '+tbdQ(topM.label)+' at '+tbdNP1(topM.mncc*100)+' MNCC' : (topM ? '. It also holds the best margin, '+tbdNP1(topM.mncc*100)+' MNCC' : ''))+'.',
+          'Entre as ofertas promo rodadas em '+ctx.pais+' para '+ctx.marca+', '+tbdQ(top.label)+' lidera com '+tbdNK(top.l1k_adj)+' L/$1k adj. em '+top.nCre+' peca(s) e '+tbdUSD(top.s)+', contra '+tbdNK(last.l1k_adj)+' de '+tbdQ(last.label)+' ('+tbdNP(gap)+')'+(topM && topM.label!==top.label ? '. Mas a melhor margem e de '+tbdQ(topM.label)+' com '+tbdNP1(topM.mncc*100)+' de MNCC' : (topM ? '. Tambem tem a melhor margem, '+tbdNP1(topM.mncc*100)+' de MNCC' : ''))+'.',
+          'Entre las ofertas promo que corrieron en '+ctx.pais+' para '+ctx.marca+', '+tbdQ(top.label)+' lidera con '+tbdNK(top.l1k_adj)+' L/$1k adj. en '+top.nCre+' pieza(s) y '+tbdUSD(top.s)+', contra '+tbdNK(last.l1k_adj)+' de '+tbdQ(last.label)+' ('+tbdNP(gap)+' de diferencia)'+(topM && topM.label!==top.label ? '. Pero el mejor margen es de '+tbdQ(topM.label)+' con '+tbdNP1(topM.mncc*100)+' de MNCC' : (topM ? '. Ademas tiene el mejor margen, '+tbdNP1(topM.mncc*100)+' de MNCC' : ''))+'.'),
+        hipotesis: tbdL('A discount buys attention, but the size of the discount also sets who shows up. The cheapest lead is not always the one that enrols.',
+          'Um desconto compra atencao, más o tamanho do desconto tambem define quem aparece. O lead mais barato nem sempre e o que se matrícula.',
+          'Un descuento compra atención, pero el tamanio del descuento también define quien aparece. El lead más barato no siempre es el que se matrícula.'),
+        comprobacion: topM && topM.label!==top.label
+          ? tbdL('Cross-checked on margin, and it disagrees: the offer that brings the cheapest leads is not the one that leaves the most money. Decide this one on MNCC, not on L/$1k.',
+              'Comprovado na margem, e discorda: a oferta que traz os leads mais baratos não e a que deixa mais dinheiro. Decida pela MNCC, não pelo L/$1k.',
+              'Comprobado contra el margen, y no coincide: la oferta que trae los leads más baratos no es la que deja más dinero. Esta se decide por MNCC, no por L/$1k.')
+          : tbdL('Cross-checked on margin and it agrees: the same offer leads on both efficiency and margin, so there is no trade-off to arbitrate here.',
+              'Comprovado na margem e concorda: a mesma oferta lidera em eficiencia e margem, então não ha trade-off a arbitrar.',
+              'Comprobado contra el margen y coincide: la misma oferta lidera en eficiencia y en margen, así que acá no hay trade-off que arbitrar.'),
+        accion: tbdL('Write the next promo script in '+ctx.pais+' around '+tbdQ((topM && topM.label!==top.label) ? topM.label : top.label)+', with the number in digits in the first 5 seconds and an action-first CTA.',
+          'Escreva o próximo roteiro promo em '+ctx.pais+' em torno de '+tbdQ((topM && topM.label!==top.label) ? topM.label : top.label)+', com o número em digitos nos primeiros 5 segundos e um CTA de acao.',
+          'Escribe el próximo guion promo de '+ctx.pais+' alrededor de '+tbdQ((topM && topM.label!==top.label) ? topM.label : top.label)+', con el número en digitos en los primeros 5 segundos y un CTA de accion primero.'),
+        exito: tbdL('Above '+tbdNK(top.l1k_adj*0.9)+' L/$1k adj. and MNCC not below '+tbdNP1((ctx.mnccPort26||0)*100)+'.',
+          'Acima de '+tbdNK(top.l1k_adj*0.9)+' L/$1k adj. e MNCC não abaixo de '+tbdNP1((ctx.mnccPort26||0)*100)+'.',
+          'Por encima de '+tbdNK(top.l1k_adj*0.9)+' L/$1k adj. y MNCC no por debajo de '+tbdNP1((ctx.mnccPort26||0)*100)+'.')
+      })
+    };
+  },
+  vacio: function(ctx, data, T){
+    if(T!=='PROMO') return null;
+    var b = tbdBriefCtx(ctx, data, T);
+    var roll = b.n ? tbdRollup2(b.base, function(r){ return r.promo_name||null; }) : [];
+    return tbdL('In '+ctx.pais+', '+ctx.marca+': '+roll.length+' distinct promo offer(s) across '+b.items.length+' promo pieces — with fewer than 2 comparable offers there is no read on which discount to write next.',
+      'Em '+ctx.pais+', '+ctx.marca+': '+roll.length+' oferta(s) promo distinta(s) em '+b.items.length+' pecas promo — com menos de 2 ofertas comparaveis não ha leitura sobre qual desconto escrever.',
+      'En '+ctx.pais+', '+ctx.marca+': '+roll.length+' oferta(s) promo distinta(s) entre '+b.items.length+' piezas promo — con menos de 2 ofertas comparables no hay lectura de que descuento escribir después.');
+  }
+});
+
+/* ---------------- TESTS ---------------- */
+TBD_RULES.push({ id:'T-CTA', dest:'TEST', prio:20,
+  run: function(ctx, data, led){
+    var roll = tbdRollup2(data.y26, function(r){ return r.cta_type_code||null; })
+      .filter(function(c){ return c.nCre>=2 && c.diasMin>=8 && c.l>0; });
+    if(roll.length < 2) return null;
+    var a = roll.slice().sort(function(x,y){ return y.cvr-x.cvr; })[0];
+    var b = roll.slice().sort(function(x,y){ return x.cvr-y.cvr; })[0];
+    var ppGap = (a.cvr-b.cvr)*100;
+    if(ppGap < 2.0) return null;
+    var delta = b.cvr>0 ? (a.cvr-b.cvr)/b.cvr : 0;
+    var need = tbdNLeads(delta, ctx.phi);
+    var diasNec = ctx.spd>0 && ctx.l1kPort26>0 ? Math.ceil(need / Math.max(1,(ctx.spd*ctx.l1kPort26/1000))) : null;
+    return { tier:'APUESTA', usd:0, delta:delta, conf:Math.min(1, Math.min(a.l,b.l)/need), claims:{dims:['cta_type_code'],piezas:[]},
+      texto: tbdCard({
+        verbo: tbdL('test','teste','proba'),
+        hallazgo: tbdL('In '+ctx.pais+' for '+ctx.marca+', CTA '+tbdQ(a.label)+' converts leads to enrolments at '+tbdNP1(a.cvr*100)+' across '+a.nCre+' creatives, against '+tbdNP1(b.cvr*100)+' for '+tbdQ(b.label)+' over '+b.nCre+' — '+tbdPP(ppGap)+' apart on '+tbdNL(a.l+b.l)+' combined leads.',
+          'Em '+ctx.pais+' para '+ctx.marca+', o CTA '+tbdQ(a.label)+' converte leads em matrículas a '+tbdNP1(a.cvr*100)+' em '+a.nCre+' criativos, contra '+tbdNP1(b.cvr*100)+' de '+tbdQ(b.label)+' em '+b.nCre+' — '+tbdPP(ppGap)+' de diferença em '+tbdNL(a.l+b.l)+' leads somados.',
+          'En '+ctx.pais+' para '+ctx.marca+', el CTA '+tbdQ(a.label)+' convierte leads en matrículas a '+tbdNP1(a.cvr*100)+' en '+a.nCre+' creativos, contra '+tbdNP1(b.cvr*100)+' de '+tbdQ(b.label)+' en '+b.nCre+' — '+tbdPP(ppGap)+' de diferencia sobre '+tbdNL(a.l+b.l)+' leads sumados.'),
+        hipotesis: tbdL('The CTA decides how much friction sits between wanting it and asking for it, so it moves conversión far more than it moves lead volume.',
+          'O CTA decide quanta friccao existe entre querer e pedir, então move a conversão muito mais que o volume de leads.',
+          'El CTA decide cuánta fricción hay entre querer y pedir, así que mueve la conversión mucho más que el volumen de leads.'),
+        comprobacion: tbdL('Not confirmed as causal: these CTAs did not run against each other on the same days, so the gap carries whatever else differed between those creatives. That is exactly what the test below settles.',
+          'Não confirmado como causal: estes CTAs não rodaram um contra o outro nos mesmos dias, então a diferença carrega tudo o mais que difere entre esses criativos. E isso que o teste abaixo resolve.',
+          'No confirmado como causal: estos CTA no corrieron uno contra otro los mismos días, así que la brecha carga con todo lo demas que diferia entre esos creativos. Eso es justo lo que resuelve el test de abajo.'),
+        accion: tbdL('Produce the same script twice changing only the CTA ('+tbdQ(a.label)+' vs '+tbdQ(b.label)+') and alternate them in blocks of 3-4 days, discarding the first day of each block for carry-over. '+tbdVentana(ctx)+'. You need about '+tbdNL(need)+' leads per arm'+(diasNec?' — roughly '+diasNec+' days per arm at the '+tbdUSD(ctx.spd)+'/day this country runs':'')+'.',
+          'Produza o mesmo roteiro duas vezes mudando so o CTA ('+tbdQ(a.label)+' vs '+tbdQ(b.label)+') e alterne em blocos de 3-4 dias, descartando o primeiro dia de cada bloco. '+tbdVentana(ctx)+'. Precisa de cerca de '+tbdNL(need)+' leads por braco'+(diasNec?' — algo como '+diasNec+' dias por braco ao ritmo de '+tbdUSD(ctx.spd)+'/dia deste pais':'')+'.',
+          'Produce el mismo guion dos veces cambiando solo el CTA ('+tbdQ(a.label)+' vs '+tbdQ(b.label)+') y alternalos en bloques de 3-4 días, descartando el primer día de cada bloque por arrastre. '+tbdVentana(ctx)+'. Necesitas alrededor de '+tbdNL(need)+' leads por brazo'+(diasNec?' — unos '+diasNec+' días por brazo al ritmo de '+tbdUSD(ctx.spd)+'/día que lleva este país':'')+'.'),
+        exito: tbdL('A gap that survives above '+tbdPP(2.0)+' with '+tbdNL(need)+' leads per arm makes '+tbdQ(a.label)+' the standard CTA for '+ctx.pais+'. Below that, CTA is not the lever here.',
+          'Uma diferença que sobreviva acima de '+tbdPP(2.0)+' com '+tbdNL(need)+' leads por braco torna '+tbdQ(a.label)+' o CTA padrão de '+ctx.pais+'. Abaixo disso, CTA não e a alavanca aqui.',
+          'Una brecha que sobreviva por encima de '+tbdPP(2.0)+' con '+tbdNL(need)+' leads por brazo vuelve a '+tbdQ(a.label)+' el CTA estandar de '+ctx.pais+'. Por debajo de eso, el CTA no es la palanca acá.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    var roll = tbdRollup2(data.y26, function(r){ return r.cta_type_code||null; });
+    var ok = roll.filter(function(c){ return c.nCre>=2 && c.diasMin>=8; });
+    return tbdL('In '+ctx.pais+', '+ctx.marca+': of '+roll.length+' CTA type(s) used, '+ok.length+' have 2+ creatives with 8+ days each. Two are needed to compare, so a CTA test cannot be read here yet.',
+      'Em '+ctx.pais+', '+ctx.marca+': de '+roll.length+' tipo(s) de CTA usados, '+ok.length+' tem 2+ criativos com 8+ dias cada. São necessarios dois para comparar, então um teste de CTA ainda não e legivel aqui.',
+      'En '+ctx.pais+', '+ctx.marca+': de '+roll.length+' tipo(s) de CTA usados, '+ok.length+' tienen 2+ creativos con 8+ días cada uno. Hacen falta dos para comparar, así que un test de CTA todavía no se puede leer acá.');
+  }
+});
+
+TBD_RULES.push({ id:'T-REACTIVAR', dest:'TEST', prio:40,
+  run: function(ctx, data, led){
+    var vivos = {};
+    data.y26.forEach(function(r){ vivos[r.nombre]=1; });
+    var gasto25 = data.p25.s||0;
+    var c = data.y25.filter(function(r){ return !vivos[r.nombre] && r.n>=5 && gasto25>0 && r.s/gasto25>=0.05; })
+      .sort(function(a,b){ return b.l1k_adj-a.l1k_adj; })[0];
+    if(!c) return null;
+    if(ctx.l1kPort26>0 && c.l1k_adj < ctx.l1kPort26*(1+(ctx.err||8)/100)) return null;
+    var lift = ctx.l1kPort26>0 ? (c.l1k_adj-ctx.l1kPort26)/ctx.l1kPort26*100 : 0;
+    return { tier:'APUESTA', usd:0, delta:lift/100, conf:0.55, claims:{piezas:[c.nombre],dims:[]},
+      texto: tbdCard({
+        verbo: tbdL('reactivate','reative','reactiva'),
+        hallazgo: tbdL(tbdQ(c.nombre)+' (campaign '+tbdQ(c.campaign_name)+', tone '+tbdQ(c.tone_category)+') ran in '+ctx.pais+' during Jan-Jul 2025 for '+c.n+' days on '+tbdUSD(c.s)+' and delivered '+tbdNK(c.l1k_adj)+' L/$1k adj. — '+tbdNP(lift)+' above the '+tbdNK(ctx.l1kPort26)+' the '+ctx.marca+' portfolio is doing here in 2026 — and it is not in the 2026 rotation at all.',
+          tbdQ(c.nombre)+' (campanha '+tbdQ(c.campaign_name)+', tom '+tbdQ(c.tone_category)+') rodou em '+ctx.pais+' durante Jan-Jul 2025 por '+c.n+' dias com '+tbdUSD(c.s)+' e entregou '+tbdNK(c.l1k_adj)+' L/$1k adj. — '+tbdNP(lift)+' acima dos '+tbdNK(ctx.l1kPort26)+' que o portfolio '+ctx.marca+' faz aqui em 2026 — e não esta na rotação de 2026.',
+          tbdQ(c.nombre)+' (campaña '+tbdQ(c.campaign_name)+', tono '+tbdQ(c.tone_category)+') corrió en '+ctx.pais+' durante Ene-Jul 2025 por '+c.n+' días con '+tbdUSD(c.s)+' y entrego '+tbdNK(c.l1k_adj)+' L/$1k adj. — '+tbdNP(lift)+' por encima de los '+tbdNK(ctx.l1kPort26)+' que hace el portafolio de '+ctx.marca+' acá en 2026 — y no esta en la rotación de 2026.'),
+        hipotesis: tbdL('Rotations get rebuilt each year around what is new, and a piece that worked can fall off the list for calendar reasons rather than performance ones. What this report cannot tell: whether it was pulled for a legal or offer reason.',
+          'As rotacoes são refeitas a cada ano em torno do que e novo, e uma peca que funcionava pode sair da lista por calendario e não por desempenho. O que este relatorio não diz: se foi retirada por questao legal ou de oferta.',
+          'Las rotaciones se rearman cada año alrededor de lo nuevo, y una pieza que funcionaba puede caerse de la lista por calendario y no por desempenio. Lo que este reporte no puede decir: si se retiro por un tema legal o de oferta.'),
+        comprobacion: tbdL('Checked against the seasonality it enjoyed: its 2025 number is already demand-adjusted with the same fixed factors used for 2026, so the comparison is not flattered by the months it ran in. Its spend-weighted factor was '+tbdNK(c.dem)+' against '+tbdNK(data.p26.dem)+' for the 2026 portfolio.',
+          'Comprovado contra a sazonalidade que teve: seu número de 2025 já está ajustado com os mesmos fatores fixos de 2026, então a comparacao não e favorecida pelos meses em que rodou. Seu fator ponderado foi '+tbdNK(c.dem)+' contra '+tbdNK(data.p26.dem)+' do portfolio 2026.',
+          'Comprobado contra la estacionalidad que le toco: su número de 2025 ya esta ajustado con los mismos factores fijos que se usan para 2026, así que la comparacion no esta favorecida por los meses en que corrió. Su factor ponderado por gasto fue '+tbdNK(c.dem)+' contra '+tbdNK(data.p26.dem)+' del portafolio 2026.'),
+        accion: tbdL('Put it back on air unchanged, at '+tbdUSD(c.s/Math.max(1,c.n))+'/day (its own 2025 pace), for at least 6 days. '+tbdVentana(ctx)+'. Zero production cost — this is the cheapest thing on this page.',
+          'Coloque-a no ar sem alteracoes, a '+tbdUSD(c.s/Math.max(1,c.n))+'/día (o proprio ritmo de 2025), por ao menos 6 días. '+tbdVentana(ctx)+'. Custo de producao zero — e o mais barato desta pagina.',
+          'Vuelve a ponerla al aire sin cambios, a '+tbdUSD(c.s/Math.max(1,c.n))+'/día (su propio ritmo de 2025), por al menos 6 días. '+tbdVentana(ctx)+'. Costo de producción cero — es lo más barato de esta pagina.'),
+        exito: tbdL('Above '+tbdNK(ctx.l1kPort26*(1+(ctx.err||8)/100))+' L/$1k adj. in 6 days and it goes back into permanent rotation. Below '+tbdNK(ctx.l1kPort26)+' and it had aged out — stop there, do not extend.',
+          'Acima de '+tbdNK(ctx.l1kPort26*(1+(ctx.err||8)/100))+' L/$1k adj. em 6 dias e volta a rotação permanente. Abaixo de '+tbdNK(ctx.l1kPort26)+' envelheceu — pare ai, não estenda.',
+          'Por encima de '+tbdNK(ctx.l1kPort26*(1+(ctx.err||8)/100))+' L/$1k adj. en 6 días y vuelve a rotación permanente. Por debajo de '+tbdNK(ctx.l1kPort26)+' ya envejecio — para ahí, no lo extiendas.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    var vivos = {}; data.y26.forEach(function(r){ vivos[r.nombre]=1; });
+    var fuera = data.y25.filter(function(r){ return !vivos[r.nombre]; });
+    return tbdL('In '+ctx.pais+', '+ctx.marca+': '+fuera.length+' of the '+ctx.nCre25+' creatives of 2025 are not running in 2026, but none of them combines 5+ days on air, 5% of the 2025 budget, and a number above '+tbdNK(ctx.l1kPort26*(1+(ctx.err||8)/100))+'. Nothing worth reactivating for free.',
+      'Em '+ctx.pais+', '+ctx.marca+': '+fuera.length+' dos '+ctx.nCre25+' criativos de 2025 não rodam em 2026, mas nenhum combina 5+ dias no ar, 5% da verba de 2025 e número acima de '+tbdNK(ctx.l1kPort26*(1+(ctx.err||8)/100))+'. Nada que valha reativar de graca.',
+      'En '+ctx.pais+', '+ctx.marca+': '+fuera.length+' de los '+ctx.nCre25+' creativos de 2025 no están corriendo en 2026, pero ninguno combina 5+ días al aire, 5% del presupuesto de 2025 y un número por encima de '+tbdNK(ctx.l1kPort26*(1+(ctx.err||8)/100))+'. No hay nada que valga la pena reactivar gratis.');
+  }
+});
+
+TBD_RULES.push({ id:'T-FORMATO', dest:'TEST', prio:30,
+  run: function(ctx, data, led){
+    var roll = tbdRollup2(data.y26, function(r){ return r.type_of_production||null; });
+    if(roll.length !== 1) return null;           // solo si el mercado es monoformato
+    var unico = roll[0];
+    if(unico.nCre < 4) return null;
+    var tonoDom = tbdRollup2(data.y26, function(r){ return r.tone_category||null; }).slice().sort(function(a,b){ return b.s-a.s; })[0];
+    var campDom = tbdRollup2(data.y26, function(r){ return r.campaign_name||null; }).slice().sort(function(a,b){ return b.s-a.s; })[0];
+    /* referencia real: el mismo formato alternativo en OTRO pais de la misma marca */
+    var otro = null;
+    (TBD_TERRITORIES||[]).forEach(function(t){
+      if(t===ctx.pais || otro) return;
+      var d2;
+      try{ d2 = tbdDataForOrgTerritory(ctx.marca, t); }catch(e){ return; }
+      var r2 = tbdRollup2(d2.y26, function(r){ return r.type_of_production||null; })
+        .filter(function(c){ return c.label!==unico.label && c.nCre>=2; })[0];
+      if(r2) otro = { pais:t, roll:r2 };
+    });
+    var need = tbdNLeads(0.20, ctx.phi);
+    var diasNec = ctx.spd>0 && ctx.l1kPort26>0 ? Math.ceil(need / Math.max(1,(ctx.spd*ctx.l1kPort26/1000))) : null;
+    return { tier:'APUESTA', usd:0, delta:0.20, conf:0.4, claims:{dims:['type_of_production'],piezas:[]},
+      texto: tbdCard({
+        verbo: tbdL('test','teste','proba'),
+        hallazgo: tbdL('All '+unico.nCre+' creatives that ran in '+ctx.pais+' for '+ctx.marca+' this period are '+tbdQ(unico.label)+', on '+tbdUSD(unico.s)+((tonoDom&&campDom)?', mostly in '+tbdQ(tonoDom.label)+' tone under campaign '+tbdQ(campDom.label):'')+'. There is no second production method in this country, so the report literally cannot say whether the alternative is better or worse here.',
+          'Todos os '+unico.nCre+' criativos que rodaram em '+ctx.pais+' para '+ctx.marca+' neste periodo são '+tbdQ(unico.label)+', com '+tbdUSD(unico.s)+((tonoDom&&campDom)?', na maioria em tom '+tbdQ(tonoDom.label)+' sob a campanha '+tbdQ(campDom.label):'')+'. Não ha um segundo método de produção neste pais, então o relatorio literalmente não pode dizer se a alternativa e melhor ou pior aqui.',
+          'Los '+unico.nCre+' creativos que corrieron en '+ctx.pais+' para '+ctx.marca+' este período son todos '+tbdQ(unico.label)+', sobre '+tbdUSD(unico.s)+((tonoDom&&campDom)?', en su mayoria en tono '+tbdQ(tonoDom.label)+' bajo la campaña '+tbdQ(campDom.label):'')+'. No hay un segundo método de producción en este país, así que el reporte literalmente no puede decir si la alternativa es mejor o peor acá.'),
+        hipotesis: tbdL('A single production method is usually an operational habit, not a tested decision. The cost difference between methods is large enough that it deserves one measurement rather than an assumption.',
+          'Um único método de produção costuma ser habito operacional, não decisao testada. A diferença de custo entre metodos e grande o bastante para merecer uma medicao em vez de uma suposicao.',
+          'Un solo método de producción suele ser un habito operativo, no una decision probada. La diferencia de costo entre metodos es lo bastante grande como para merecer una medición en vez de un supuesto.'),
+        comprobacion: otro
+          ? tbdL('There is an external reference: in '+otro.pais+', same brand, '+tbdQ(otro.roll.label)+' runs '+otro.roll.nCre+' creatives at '+tbdNK(otro.roll.l1k_adj)+' L/$1k adj. That is a different country with a different adjustment error, so it is a reason to test here, not evidence for here.',
+              'Ha uma referência externa: em '+otro.pais+', mesma marca, '+tbdQ(otro.roll.label)+' roda '+otro.roll.nCre+' criativos a '+tbdNK(otro.roll.l1k_adj)+' L/$1k adj. E outro pais com outro erro de ajuste, então e razao para testar aqui, não evidencia daqui.',
+              'Hay una referencia externa: en '+otro.pais+', misma marca, '+tbdQ(otro.roll.label)+' corre '+otro.roll.nCre+' creativos a '+tbdNK(otro.roll.l1k_adj)+' L/$1k adj. Es otro país con otro error de ajuste, así que es razon para probar acá, no evidencia de acá.')
+          : tbdL('There is no reference anywhere in this report: no country of '+ctx.marca+' runs a second production method with 2+ creatives, so this would be the first measurement of it in the whole portfolio.',
+              'Não ha referência em nenhum lugar deste relatorio: nenhum pais de '+ctx.marca+' roda um segundo método com 2+ criativos, então esta seria a primeira medicao no portfolio inteiro.',
+              'No hay referencia en ninguna parte de este reporte: ningun país de '+ctx.marca+' corre un segundo método de producción con 2+ creativos, así que esta seria la primera medición en todo el portafolio.'),
+        accion: tbdL('Produce one piece with the alternative method, same script and same offer, and alternate it against the current rotation in blocks of 3-4 days. You need about '+tbdNL(need)+' leads per arm to read a 20% difference'+(diasNec?' — roughly '+diasNec+' days per arm at '+tbdUSD(ctx.spd)+'/day':'')+'. '+tbdVentana(ctx)+'.',
+          'Produza uma peca com o método alternativo, mesmo roteiro e mesma oferta, e alterne contra a rotação atual em blocos de 3-4 dias. Precisa de cerca de '+tbdNL(need)+' leads por braco para ler 20% de diferença'+(diasNec?' — algo como '+diasNec+' dias por braco a '+tbdUSD(ctx.spd)+'/dia':'')+'. '+tbdVentana(ctx)+'.',
+          'Produce una pieza con el método alternativo, mismo guion y misma oferta, y alternala contra la rotación actual en bloques de 3-4 días. Necesitas alrededor de '+tbdNL(need)+' leads por brazo para leer una diferencia de 20%'+(diasNec?' — unos '+diasNec+' días por brazo a '+tbdUSD(ctx.spd)+'/día':'')+'. '+tbdVentana(ctx)+'.'),
+        exito: tbdL('If the alternative lands within '+tbdNP1(ctx.err)+' of '+tbdNK(unico.l1k_adj)+', switch on cost. If it lands below, '+tbdQ(unico.label)+' is confirmed as the method for '+ctx.pais+' and this stops being an open question.',
+          'Se a alternativa ficar dentro de '+tbdNP1(ctx.err)+' de '+tbdNK(unico.l1k_adj)+', troque por custo. Se ficar abaixo, '+tbdQ(unico.label)+' fica confirmado como o método de '+ctx.pais+'.',
+          'Si la alternativa queda dentro de '+tbdNP1(ctx.err)+' de '+tbdNK(unico.l1k_adj)+', cambia por costo. Si queda por debajo, '+tbdQ(unico.label)+' queda confirmado como el método de '+ctx.pais+' y esto deja de ser una pregunta abierta.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    /* nombrar los metodos concretos y su brecha: sin eso, este texto salia con
+       el mismo esqueleto en 9 paises y solo cambiaban los números. */
+    var roll = tbdRollup2(data.y26, function(r){ return r.type_of_production||null; });
+    if(!roll.length) return tbdL('In '+ctx.pais+', '+ctx.marca+': none of the '+ctx.nCre26+' creatives of the period carries a coded production method, so the format question cannot even be posed here.',
+      'Em '+ctx.pais+', '+ctx.marca+': nenhum dos '+ctx.nCre26+' criativos do periodo tem método de produção codificado, então a questao de formato nem pode ser colocada aqui.',
+      'En '+ctx.pais+', '+ctx.marca+': ninguno de los '+ctx.nCre26+' creativos del período trae método de producción codificado, así que la pregunta de formato ni siquiera se puede plantear acá.');
+    if(roll.length===1) return tbdL('In '+ctx.pais+', '+ctx.marca+' runs only '+tbdQ(roll[0].label)+' ('+roll[0].nCre+' creatives, '+tbdUSD(roll[0].s)+', '+tbdNK(roll[0].l1k_adj)+' L/$1k adj.) but fewer than the 4 pieces needed to make a format test worth its production cost.',
+      'Em '+ctx.pais+', '+ctx.marca+' roda apenas '+tbdQ(roll[0].label)+' ('+roll[0].nCre+' criativos, '+tbdUSD(roll[0].s)+', '+tbdNK(roll[0].l1k_adj)+' L/$1k adj.) mas menos que as 4 pecas necessarias para justificar o custo de um teste de formato.',
+      'En '+ctx.pais+', '+ctx.marca+' corre solo '+tbdQ(roll[0].label)+' ('+roll[0].nCre+' creativos, '+tbdUSD(roll[0].s)+', '+tbdNK(roll[0].l1k_adj)+' L/$1k adj.) pero con menos de las 4 piezas que hacen falta para que un test de formato pague su producción.');
+    var a = roll[0], b = roll[roll.length-1];
+    var gap = b.l1k_adj>0 ? (a.l1k_adj-b.l1k_adj)/b.l1k_adj*100 : 0;
+    return tbdL('In '+ctx.pais+', '+ctx.marca+' already runs both '+tbdQ(a.label)+' ('+a.nCre+' pieces, '+tbdNK(a.l1k_adj)+' L/$1k adj.) and '+tbdQ(b.label)+' ('+b.nCre+' pieces, '+tbdNK(b.l1k_adj)+'), '+tbdNP(gap)+' apart on '+tbdUSD(a.s+b.s)+'. The format question is already being answered by the rotation — read it in the dimensions table, do not spend on a test.',
+      'Em '+ctx.pais+', '+ctx.marca+' ja roda '+tbdQ(a.label)+' ('+a.nCre+' pecas, '+tbdNK(a.l1k_adj)+' L/$1k adj.) e '+tbdQ(b.label)+' ('+b.nCre+' pecas, '+tbdNK(b.l1k_adj)+'), '+tbdNP(gap)+' de diferença em '+tbdUSD(a.s+b.s)+'. A questao de formato já está sendo respondida pela rotação — leia na tabela de dimensoes, não gaste num teste.',
+      'En '+ctx.pais+', '+ctx.marca+' ya corre tanto '+tbdQ(a.label)+' ('+a.nCre+' piezas, '+tbdNK(a.l1k_adj)+' L/$1k adj.) como '+tbdQ(b.label)+' ('+b.nCre+' piezas, '+tbdNK(b.l1k_adj)+'), con '+tbdNP(gap)+' de diferencia sobre '+tbdUSD(a.s+b.s)+'. La pregunta de formato ya la esta respondiendo la rotación — leela en la tabla de dimensiones, no gastes en un test.');
+  }
+});
+
+/* ---------------- reglas adicionales ---------------- */
+TBD_RULES.push({ id:'S-CONC', dest:'STOP', prio:20,
+  run: function(ctx, data, led){
+    if(data.y26.length < 3) return null;
+    var top = data.y26.slice().sort(function(a,b){ return b.s-a.s; })[0];
+    if(!top || ctx.gastoPeriodo<=0) return null;
+    var share = top.s/ctx.gastoPeriodo*100;
+    if(share < 35) return null;
+    if(!tbdLedgerClaimPiece(led, top.nombre, 'S-CONC')) return null;
+    var w = tbdWearout2(top);
+    var resto = data.y26.filter(function(r){ return r!==top; });
+    var rs = resto.reduce(function(a,r){return a+r.s;},0), rl = resto.reduce(function(a,r){return a+r.l;},0), rdw = resto.reduce(function(a,r){return a+r.dem*r.s;},0);
+    var restoAdj = rs>0 ? rl/rs*1000/((rdw/rs)/100) : null;
+    var mover = (top.s - ctx.gastoPeriodo*0.35)/7;
+    var sp = tbdLedgerSpend(led, Math.max(0, mover), 'S-CONC');
+    return { tier:'REGLA', usd:sp.monto, delta:share/100, conf:0.85, claims:{piezas:[top.nombre],dims:[]},
+      texto: tbdCard({
+        verbo: tbdL('diversify','diversifique','diversifica'),
+        hallazgo: tbdL('In '+ctx.pais+', '+ctx.marca+' puts '+tbdNP(share)+' of its '+tbdUSD(ctx.gastoPeriodo)+' behind a single creative, '+tbdQ(top.nombre)+' ('+tbdUSD(top.s)+' over '+top.n+' days, '+tbdNK(top.l1k_adj)+' L/$1k adj.). The other '+(data.y26.length-1)+' creatives share the rest and average '+tbdNK(restoAdj)+'.',
+          'Em '+ctx.pais+', '+ctx.marca+' coloca '+tbdNP(share)+' dos seus '+tbdUSD(ctx.gastoPeriodo)+' em um único criativo, '+tbdQ(top.nombre)+' ('+tbdUSD(top.s)+' em '+top.n+' dias, '+tbdNK(top.l1k_adj)+' L/$1k adj.). Os outros '+(data.y26.length-1)+' criativos dividem o resto e tem média de '+tbdNK(restoAdj)+'.',
+          'En '+ctx.pais+', '+ctx.marca+' pone '+tbdNP(share)+' de sus '+tbdUSD(ctx.gastoPeriodo)+' detras de un solo creativo, '+tbdQ(top.nombre)+' ('+tbdUSD(top.s)+' en '+top.n+' días, '+tbdNK(top.l1k_adj)+' L/$1k adj.). Los otros '+(data.y26.length-1)+' creativos se reparten el resto y promedian '+tbdNK(restoAdj)+'.'),
+        hipotesis: tbdL('Budget follows last period’s winner until nobody is testing alternatives any more, and the day that piece tires there is no bench to bring on.',
+          'O orçamento segue o vencedor do periodo anterior ate ninguem mais testar alternativas, e no dia em que essa peca cansar não ha banco de reservas.',
+          'El presupuesto sigue al ganador del período anterior hasta que ya nadie esta probando alternativas, y el día que esa pieza se canse no hay banca para hacer entrar.'),
+        comprobacion: w.pct!=null
+          ? tbdL('Checked whether the risk is already live: over '+(w.d1+w.d2)+' unique dates it moved '+tbdNP(w.pct)+' between halves, so it is '+(w.pct<=-20?'ALREADY decaying — the concentration is sitting on a piece that is losing force right now':'not decaying yet, so the risk is the concentration itself and not fatigue')+'.',
+              'Verificado se o risco ja e real: em '+(w.d1+w.d2)+' datas únicas variou '+tbdNP(w.pct)+' entre metades, então '+(w.pct<=-20?'JA esta caindo — a concentracao esta apoiada numa peca que perde forca agora':'ainda não esta caindo, então o risco e a concentracao em si e não a fadiga')+'.',
+              'Se comprobo si el riesgo ya esta vivo: en '+(w.d1+w.d2)+' fechas únicas se movió '+tbdNP(w.pct)+' entre mitades, así que '+(w.pct<=-20?'YA viene cayendo — la concentracion esta parada sobre una pieza que esta perdiendo fuerza ahora mismo':'todavía no se esta desgastando, así que el riesgo es la concentracion en si y no la fatiga')+'.')
+          : tbdL('Fatigue cannot be checked: it has '+tbdDaysUnique(top)+' unique dates and 12 are needed. The concentration is a fact; whether it is already decaying is not measurable here yet.',
+              'A fadiga não pode ser verificada: tem '+tbdDaysUnique(top)+' datas únicas e são necessarias 12. A concentracao e um fato; se já está caindo ainda não e mensuravel aqui.',
+              'La fatiga no se puede comprobar: tiene '+tbdDaysUnique(top)+' fechas únicas y hacen falta 12. La concentracion es un hecho; si ya viene cayendo todavía no es medible acá.'),
+        accion: tbdL('Cap it at 35% of the country budget by moving '+tbdUSD(sp.monto)+'/month to the next two pieces by adjusted performance. '+tbdVentana(ctx)+'.',
+          'Limite a 35% da verba do pais movendo '+tbdUSD(sp.monto)+'/mês para as duas proximas pecas por desempenho ajustado. '+tbdVentana(ctx)+'.',
+          'Limítalo al 35% del presupuesto del país moviendo '+tbdUSD(sp.monto)+'/mes a las dos piezas siguientes por desempenio ajustado. '+tbdVentana(ctx)+'.'),
+        exito: tbdL('Country L/$1k adj. holds above '+tbdNK(ctx.l1kPort26*0.95)+' with no single piece above 35%. If it drops below '+tbdNK(ctx.l1kPort26*0.9)+', the concentration was earning its keep and can go back.',
+          'L/$1k adj. do pais acima de '+tbdNK(ctx.l1kPort26*0.95)+' sem nenhuma peca acima de 35%. Se cair abaixo de '+tbdNK(ctx.l1kPort26*0.9)+', a concentracao valia e pode voltar.',
+          'El L/$1k adj. del país se sostiene por encima de '+tbdNK(ctx.l1kPort26*0.95)+' sin ninguna pieza por encima de 35%. Si cae por debajo de '+tbdNK(ctx.l1kPort26*0.9)+', la concentracion se justificaba y puede volver.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    if(!data.y26.length) return null;
+    var top = data.y26.slice().sort(function(a,b){ return b.s-a.s; })[0];
+    var share = ctx.gastoPeriodo>0 ? top.s/ctx.gastoPeriodo*100 : 0;
+    return tbdL('In '+ctx.pais+', '+ctx.marca+': the heaviest creative, '+tbdQ(top.nombre)+', holds '+tbdNP(share)+' of the '+tbdUSD(ctx.gastoPeriodo)+' spent, under the 35% that would make the portfolio depend on one piece. Spread across '+ctx.nCre26+' creatives, concentration is not a risk here.',
+      'Em '+ctx.pais+', '+ctx.marca+': o criativo mais pesado, '+tbdQ(top.nombre)+', fica com '+tbdNP(share)+' dos '+tbdUSD(ctx.gastoPeriodo)+' gastos, abaixo dos 35% que fariam o portfolio depender de uma peca. Distribuido em '+ctx.nCre26+' criativos, a concentracao não e risco aqui.',
+      'En '+ctx.pais+', '+ctx.marca+': el creativo más pesado, '+tbdQ(top.nombre)+', se lleva '+tbdNP(share)+' de los '+tbdUSD(ctx.gastoPeriodo)+' gastados, por debajo del 35% que haria depender al portafolio de una sola pieza. Repartido entre '+ctx.nCre26+' creativos, la concentracion no es un riesgo acá.');
+  }
+});
+
+TBD_RULES.push({ id:'K-EXTEND', dest:'KEEP', prio:20,
+  run: function(ctx, data, led){
+    var cand = ctx.y26f.slice().sort(function(a,b){ return b.l1k_adj-a.l1k_adj; })[0];
+    if(!cand || cand.n < 6) return null;
+    var otros = data.y26.filter(function(r){ return r!==cand; });
+    if(!otros.length) return null;
+    var os_ = otros.reduce(function(a,r){return a+r.s;},0), ol = otros.reduce(function(a,r){return a+r.l;},0), odw = otros.reduce(function(a,r){return a+r.dem*r.s;},0);
+    var otrosAdj = os_>0 ? ol/os_*1000/((odw/os_)/100) : null;
+    if(!(otrosAdj>0)) return null;
+    var gap = (cand.l1k_adj-otrosAdj)/otrosAdj*100;
+    if(gap < Math.max(ctx.err||8, 10)) return null;
+    var yaTomada = !tbdLedgerClaimPiece(led, cand.nombre, 'K-EXTEND');
+    var w = tbdWearout2(cand);
+    var sp = yaTomada ? { monto:0 } : tbdLedgerSpend(led, cand.s/7*0.25, 'K-EXTEND');
+    var t = tbdTier(ctx.nCre26, cand.n, gap, ctx.err);
+    var segundo = otros.slice().sort(function(a,b){ return b.l1k_adj-a.l1k_adj; })[0];
+    return { tier:t.tier, usd:sp.monto, delta:gap/100, conf:0.7, claims:{piezas:[cand.nombre],dims:[]},
+      texto: tbdCard({
+        verbo: t.verbo,
+        hallazgo: tbdL(tbdQ(cand.nombre)+' (campaign '+tbdQ(cand.campaign_name)+', tone '+tbdQ(cand.tone_category)+') is the strongest piece in '+ctx.pais+' for '+ctx.marca+': '+tbdNK(cand.l1k_adj)+' L/$1k adj. over '+cand.n+' days and '+tbdNL(cand.l)+' leads, against '+tbdNK(otrosAdj)+' for the other '+otros.length+' creatives'+(segundo?' — the runner-up '+tbdQ(segundo.nombre)+' sits at '+tbdNK(segundo.l1k_adj):'')+' — '+tbdNP(gap)+' clear of the '+tbdNP1(ctx.err)+' error of the adjustment here.',
+          tbdQ(cand.nombre)+' (campanha '+tbdQ(cand.campaign_name)+', tom '+tbdQ(cand.tone_category)+') e a peca mais forte em '+ctx.pais+' para '+ctx.marca+': '+tbdNK(cand.l1k_adj)+' L/$1k adj. em '+cand.n+' dias e '+tbdNL(cand.l)+' leads, contra '+tbdNK(otrosAdj)+' dos outros '+otros.length+' criativos'+(segundo?' — o vice '+tbdQ(segundo.nombre)+' esta em '+tbdNK(segundo.l1k_adj):'')+' — '+tbdNP(gap)+' acima do erro de '+tbdNP1(ctx.err)+' do ajuste aqui.',
+          tbdQ(cand.nombre)+' (campaña '+tbdQ(cand.campaign_name)+', tono '+tbdQ(cand.tone_category)+') es la pieza más fuerte de '+ctx.pais+' para '+ctx.marca+': '+tbdNK(cand.l1k_adj)+' L/$1k adj. en '+cand.n+' días y '+tbdNL(cand.l)+' leads, contra '+tbdNK(otrosAdj)+' de los otros '+otros.length+' creativos'+(segundo?' — el segundo, '+tbdQ(segundo.nombre)+', queda en '+tbdNK(segundo.l1k_adj):'')+' — '+tbdNP(gap)+' por encima del error de '+tbdNP1(ctx.err)+' que tiene el ajuste acá.'),
+        hipotesis: tbdL('A piece that stays ahead over enough days is usually carrying something repeatable — an opening, an offer or a cast — rather than a lucky week.',
+          'Uma peca que se mantem a frente por dias suficientes costuma carregar algo repetivel — abertura, oferta ou elenco — e não uma semana de sorte.',
+          'Una pieza que se mantiene adelante durante suficientes días suele estar cargando algo repetible — una apertura, una oferta o un reparto — y no una semana con suerte.'),
+        comprobacion: w.pct!=null
+          ? tbdL('Checked for fatigue before extending: over '+(w.d1+w.d2)+' unique dates it moved '+tbdNP(w.pct)+' between halves ('+tbdNK(w.h1.l1k_adj)+' to '+tbdNK(w.h2.l1k_adj)+'), so extending '+(w.pct<=-15?'should be capped — it is already cooling':'is safe on current evidence')+'.',
+              'Verificado quanto a fadiga antes de estender: em '+(w.d1+w.d2)+' datas únicas variou '+tbdNP(w.pct)+' entre metades ('+tbdNK(w.h1.l1k_adj)+' para '+tbdNK(w.h2.l1k_adj)+'), então estender '+(w.pct<=-15?'deve ser limitado — já está esfriando':'e seguro pela evidencia atual')+'.',
+              'Se revisó fatiga antes de extender: en '+(w.d1+w.d2)+' fechas únicas se movió '+tbdNP(w.pct)+' entre mitades ('+tbdNK(w.h1.l1k_adj)+' a '+tbdNK(w.h2.l1k_adj)+'), así que extenderlo '+(w.pct<=-15?'hay que acotarlo — ya viene enfriándose':'es seguro con la evidencia actual')+'.')
+          : tbdL('Fatigue is not measurable yet: '+tbdDaysUnique(cand)+' unique dates against the 12 needed. Extend in one step and re-read, do not commit the whole quarter.',
+              'A fadiga ainda não e mensuravel: '+tbdDaysUnique(cand)+' datas únicas contra as 12 necessarias. Estenda em uma etapa e releia, não comprometa o trimestre inteiro.',
+              'La fatiga todavía no es medible: '+tbdDaysUnique(cand)+' fechas únicas contra las 12 que hacen falta. Extiende un escalon y vuelve a leer, no comprometas el trimestre entero.'),
+        accion: yaTomada
+          ? tbdL('Its budget was already claimed above, so here the instruction is editorial only: make the next '+ctx.pais+' script inherit its structure, and pull it the day it falls below '+tbdNK(otrosAdj)+'.',
+              'Sua verba ja foi reclamada acima, então aqui a instrucao e editorial: faca o próximo roteiro de '+ctx.pais+' herdar sua estrutura e retire-a no dia em que cair abaixo de '+tbdNK(otrosAdj)+'.',
+              'Su presupuesto ya lo reclamó una tarjeta de arriba, así que acá la instrucción es solo editorial: que el próximo guion de '+ctx.pais+' herede su estructura, y retírala el día que caiga por debajo de '+tbdNK(otrosAdj)+'.')
+          : tbdL('Extend its flight with '+tbdUSD(sp.monto)+'/month more. '+tbdVentana(ctx)+'. Pull it the day it falls below '+tbdNK(otrosAdj)+'.',
+              'Estenda o voo com mais '+tbdUSD(sp.monto)+'/mês. '+tbdVentana(ctx)+'. Retire no dia em que cair abaixo de '+tbdNK(otrosAdj)+'.',
+              'Extiende su vuelo con '+tbdUSD(sp.monto)+'/mes más. '+tbdVentana(ctx)+'. Retírala el día que caiga por debajo de '+tbdNK(otrosAdj)+'.'),
+        exito: tbdL('Holds above '+tbdNK(otrosAdj*(1+(ctx.err||8)/100))+' L/$1k adj. through the extensión. Below that, the extensión bought saturation.',
+          'Mantem-se acima de '+tbdNK(otrosAdj*(1+(ctx.err||8)/100))+' L/$1k adj. durante a extensao. Abaixo disso, a extensao comprou saturacao.',
+          'Se mantiene por encima de '+tbdNK(otrosAdj*(1+(ctx.err||8)/100))+' L/$1k adj. durante la extensión. Por debajo de eso, la extensión compró saturación.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    var cand = ctx.y26f.slice().sort(function(a,b){ return b.l1k_adj-a.l1k_adj; })[0];
+    if(!cand) return tbdL('In '+ctx.pais+', '+ctx.marca+': none of the '+ctx.nCre26+' creatives has the 3+ days on air needed to be considered a leader worth extending.',
+      'Em '+ctx.pais+', '+ctx.marca+': nenhum dos '+ctx.nCre26+' criativos tem os 3+ dias no ar necessarios para ser líder a estender.',
+      'En '+ctx.pais+', '+ctx.marca+': ninguno de los '+ctx.nCre26+' creativos tiene los 3+ días al aire que hacen falta para considerarlo un líder al que extenderle el vuelo.');
+    return tbdL('In '+ctx.pais+', '+ctx.marca+': the leader '+tbdQ(cand.nombre)+' ('+tbdNK(cand.l1k_adj)+' over '+cand.n+' days) does not clear the rest of the portfolio by more than '+tbdNP(Math.max(ctx.err||8,10))+', so extending it would be buying noise at '+tbdNP1(ctx.err)+' of measurement error.',
+      'Em '+ctx.pais+', '+ctx.marca+': o líder '+tbdQ(cand.nombre)+' ('+tbdNK(cand.l1k_adj)+' em '+cand.n+' dias) não supera o resto por mais de '+tbdNP(Math.max(ctx.err||8,10))+', então estende-lo seria comprar ruido com '+tbdNP1(ctx.err)+' de erro de medicao.',
+      'En '+ctx.pais+', '+ctx.marca+': el líder '+tbdQ(cand.nombre)+' ('+tbdNK(cand.l1k_adj)+' en '+cand.n+' días) no le saca al resto del portafolio más de '+tbdNP(Math.max(ctx.err||8,10))+', así que extenderlo seria comprar ruido con '+tbdNP1(ctx.err)+' de error de medición.');
+  }
+});
+
+TBD_RULES.push({ id:'U-SCALE', dest:'UPSIDE', prio:10,
+  run: function(ctx, data, led){
+    var dims = [['tone_category', function(r){return r.tone_category;}],
+                ['theme_mechanism_code', function(r){return r.theme_mechanism_code;}],
+                ['pain_point_code', function(r){return r.pain_point_code;}]];
+    var best = null;
+    dims.forEach(function(d){
+      var roll = tbdRollup2(ctx.y26f, d[1]);
+      if(roll.length < 2) return;
+      var lider = roll[0];
+      if(lider.nCre < 2) return;
+      var share = ctx.gastoPeriodo>0 ? lider.s/ctx.gastoPeriodo*100 : 0;
+      if(share > 20) return;                    // ya tiene peso
+      var resto = roll.slice(1);
+      var rs = resto.reduce(function(a,c){return a+c.s;},0), rl = resto.reduce(function(a,c){return a+c.l;},0);
+      if(rs<=0) return;
+      var restoAdj = rl/rs*1000/((ctx.factores.length? data.p26.dem : 100)/100);
+      var lift = restoAdj>0 ? (lider.l1k_adj-restoAdj)/restoAdj*100 : 0;
+      if(lift < Math.max(15, 2*(ctx.err||8))) return;
+      if(!best || lift > best.lift) best = { dimKey:d[0], lider:lider, restoAdj:restoAdj, lift:lift, share:share };
+    });
+    if(!best) return null;
+    if(!tbdLedgerClaimDim(led, best.dimKey, 'U-SCALE')) return null;
+    var objetivo = ctx.gastoPeriodo*0.20 - best.lider.s;
+    var sp = tbdLedgerSpend(led, Math.max(0, objetivo/7), 'U-SCALE');
+    var t = tbdTier(best.lider.nCre, best.lider.diasMin, best.lift, ctx.err);
+    return { tier:t.tier, usd:sp.monto, delta:best.lift/100, conf:Math.min(1,best.lider.nCre/3), claims:{piezas:[],dims:[best.dimKey]},
+      texto: tbdCard({
+        verbo: t.verbo,
+        hallazgo: tbdL('In '+ctx.pais+' for '+ctx.marca+', the '+tbdDimLabel(best.dimKey)+' '+tbdQ(best.lider.label)+' delivers '+tbdNK(best.lider.l1k_adj)+' L/$1k adj. across '+best.lider.nCre+' creatives (min '+best.lider.diasMin+' days each) against '+tbdNK(best.restoAdj)+' for everything else — '+tbdNP(best.lift)+' better — yet it only carries '+tbdNP(best.share)+' of the '+tbdUSD(ctx.gastoPeriodo)+' spent here.',
+          'Em '+ctx.pais+' para '+ctx.marca+', o '+tbdDimLabel(best.dimKey)+' '+tbdQ(best.lider.label)+' entrega '+tbdNK(best.lider.l1k_adj)+' L/$1k adj. em '+best.lider.nCre+' criativos (min '+best.lider.diasMin+' dias cada) contra '+tbdNK(best.restoAdj)+' do resto — '+tbdNP(best.lift)+' melhor — mas carrega apenas '+tbdNP(best.share)+' dos '+tbdUSD(ctx.gastoPeriodo)+' gastos aqui.',
+          'En '+ctx.pais+' para '+ctx.marca+', el '+tbdDimLabel(best.dimKey)+' '+tbdQ(best.lider.label)+' entrega '+tbdNK(best.lider.l1k_adj)+' L/$1k adj. en '+best.lider.nCre+' creativos (min '+best.lider.diasMin+' días cada uno) contra '+tbdNK(best.restoAdj)+' de todo lo demas — '+tbdNP(best.lift)+' mejor — y aun así solo carga '+tbdNP(best.share)+' de los '+tbdUSD(ctx.gastoPeriodo)+' que se gastaron acá.'),
+        hipotesis: tbdL('Efficiency measured at low weight rarely survives at full weight: small budgets buy the cheapest, most responsive inventory first. The lift is real, the question is how much of it survives scale.',
+          'Eficiencia medida com pouco peso raramente sobrevive no peso total: orcamentos pequenos compram primeiro o inventario mais barato e responsivo. O ganho e real, a duvida e quanto sobrevive a escala.',
+          'La eficiencia medida a poco peso rara vez sobrevive a peso completo: los presupuestos chicos compran primero el inventario más barato y receptivo. El lift es real, la pregunta es cuánto sobrevive a la escala.'),
+        comprobacion: (function(){
+          /* la celda más PESADA de la misma dimension es el benchmark realista
+             a peso; el rollup puede venir vacio, así que se comprueba antes */
+          var kf = null;
+          for(var i=0;i<dims.length;i++){ if(dims[i][0]===best.dimKey) kf = dims[i][1]; }
+          var pesada = kf ? tbdRollup2(ctx.y26f, kf).slice().sort(function(a,b){ return b.s-a.s; })[0] : null;
+          if(!pesada || pesada.label===best.lider.label)
+            return tbdL('No benchmark at weight inside this dimension: the leader is also the heaviest cell, so there is no example here of what this '+tbdDimLabel(best.dimKey)+' does with a full budget. Scale it in steps and build that benchmark.',
+              'Sem benchmark com peso nesta dimensao: o líder tambem e a celula mais pesada, então não ha exemplo aqui do que este '+tbdDimLabel(best.dimKey)+' faz com verba cheia. Escale por etapas e construa esse benchmark.',
+              'No hay benchmark a peso dentro de esta dimension: el líder también es la celda más pesada, así que acá no hay ejemplo de que hace este '+tbdDimLabel(best.dimKey)+' con presupuesto completo. Escalalo por escalones y construi ese benchmark.');
+          return tbdL('Cross-checked against the heaviest cell of the same dimension: '+tbdQ(pesada.label)+' carries '+tbdUSD(pesada.s)+' and still delivers '+tbdNK(pesada.l1k_adj)+', which is the realistic benchmark at weight — not the '+tbdNK(best.lider.l1k_adj)+' measured at '+tbdNP(best.share)+' of budget.',
+            'Comprovado contra a celula mais pesada da mesma dimensao: '+tbdQ(pesada.label)+' carrega '+tbdUSD(pesada.s)+' e ainda entrega '+tbdNK(pesada.l1k_adj)+', que e o benchmark realista com peso — não os '+tbdNK(best.lider.l1k_adj)+' medidos com '+tbdNP(best.share)+' da verba.',
+            'Comprobado contra la celda más pesada de la misma dimension: '+tbdQ(pesada.label)+' carga '+tbdUSD(pesada.s)+' y aun así entrega '+tbdNK(pesada.l1k_adj)+', que es el benchmark realista a peso — no los '+tbdNK(best.lider.l1k_adj)+' medidos con '+tbdNP(best.share)+' del presupuesto.');
+        })(),
+        accion: tbdL('Take it to 20% of the '+ctx.pais+' budget in steps, adding '+tbdUSD(sp.monto)+'/month. Compare each step against the benchmark at weight, not against its current small-budget figure.',
+          'Leve a 20% da verba de '+ctx.pais+' por etapas, adicionando '+tbdUSD(sp.monto)+'/mês. Compare cada etapa contra o benchmark com peso, não contra a cifra atual.',
+          'Llevalo al 20% del presupuesto de '+ctx.pais+' por escalones, agregando '+tbdUSD(sp.monto)+'/mes. Compara cada escalon contra el benchmark a peso, no contra su cifra actual de presupuesto chico.'),
+        exito: tbdL('Still above '+tbdNK(best.restoAdj*1.15)+' L/$1k adj. at double its current weight. If it falls to '+tbdNK(best.restoAdj)+', it had a scale ceiling and the budget goes back.',
+          'Ainda acima de '+tbdNK(best.restoAdj*1.15)+' L/$1k adj. com o dobro do peso atual. Se cair a '+tbdNK(best.restoAdj)+', tinha teto de escala e a verba volta.',
+          'Sigue por encima de '+tbdNK(best.restoAdj*1.15)+' L/$1k adj. al doble de su peso actual. Si cae a '+tbdNK(best.restoAdj)+', tenía techo de escala y el presupuesto se devuelve.')
+      })
+    };
+  },
+  vacio: function(ctx, data){
+    return tbdL('In '+ctx.pais+', '+ctx.marca+': no tone, mechanism or pain family leads by more than '+tbdNP(Math.max(15,2*(ctx.err||8)))+' while holding under 20% of the '+tbdUSD(ctx.gastoPeriodo)+' spent. Across '+ctx.y26f.length+' creatives with 3+ days, there is no under-funded winner to scale.',
+      'Em '+ctx.pais+', '+ctx.marca+': nenhum tom, mecanismo ou familia de dor lidera por mais de '+tbdNP(Math.max(15,2*(ctx.err||8)))+' com menos de 20% dos '+tbdUSD(ctx.gastoPeriodo)+' gastos. Em '+ctx.y26f.length+' criativos com 3+ dias, não ha vencedor subfinanciado a escalar.',
+      'En '+ctx.pais+', '+ctx.marca+': ningun tono, mecanismo ni familia de dolor lidera por más de '+tbdNP(Math.max(15,2*(ctx.err||8)))+' llevandose menos del 20% de los '+tbdUSD(ctx.gastoPeriodo)+' gastados. Entre '+ctx.y26f.length+' creativos con 3+ días, no hay ganador subfinanciado que escalar.');
+  }
+});
+
+TBD_RULES.push({ id:'B-TONO', dest:'BRIEF', prio:50,
+  run: function(ctx, data, led, T){
+    var b = tbdBriefCtx(ctx, data, T);
+    if(b.n < 3) return null;
+    var roll = tbdRollup2(b.base, function(r){ return r.tone_category||null; });
+    if(roll.length < 2) return null;
+    var top = roll[0], last = roll[roll.length-1];
+    var gap = last.l1k_adj>0 ? (top.l1k_adj-last.l1k_adj)/last.l1k_adj*100 : 0;
+    if(gap < (ctx.err||8)) return null;
+    var t = tbdTier(top.nCre, top.diasMin, gap, ctx.err);
+    return { tier:t.tier, usd:0, delta:gap/100, conf:Math.min(1,top.nCre/3), claims:{piezas:[],dims:[]},
+      texto: tbdCard({
+        verbo: t.verbo,
+        hallazgo: tbdL('Tone in '+ctx.pais+' for '+ctx.marca+' ('+T+' ads): '+tbdQ(top.label)+' runs at '+tbdNK(top.l1k_adj)+' L/$1k adj. over '+top.nCre+' piece(s) and '+tbdUSD(top.s)+', against '+tbdQ(last.label)+' at '+tbdNK(last.l1k_adj)+' — '+tbdNP(gap)+' apart, above the '+tbdNP1(ctx.err)+' error here.',
+          'Tom em '+ctx.pais+' para '+ctx.marca+' (anuncios '+T+'): '+tbdQ(top.label)+' roda a '+tbdNK(top.l1k_adj)+' L/$1k adj. em '+top.nCre+' peca(s) e '+tbdUSD(top.s)+', contra '+tbdQ(last.label)+' com '+tbdNK(last.l1k_adj)+' — '+tbdNP(gap)+' de diferença, acima do erro de '+tbdNP1(ctx.err)+'.',
+          'Tono en '+ctx.pais+' para '+ctx.marca+' (anuncios '+T+'): '+tbdQ(top.label)+' corre a '+tbdNK(top.l1k_adj)+' L/$1k adj. en '+top.nCre+' pieza(s) y '+tbdUSD(top.s)+', contra '+tbdQ(last.label)+' con '+tbdNK(last.l1k_adj)+' — '+tbdNP(gap)+' de diferencia, por encima del error de '+tbdNP1(ctx.err)+' de acá.'),
+        hipotesis: ctx.esJr
+          ? tbdL('A parent forgives humour about themselves but not about their child’s difficulty. Tone here is a trust decision before it is a creative one.',
+              'Um pai perdoa humor sobre si mesmo, mas não sobre a dificuldade do filho. Tom aqui e decisao de confiança antes de ser criativa.',
+              'Un padre perdona el humor sobre si mismo, pero no sobre la dificultad de su hijo. Aca el tono es una decision de confianza antes que creativa.')
+          : tbdL('The adult learner laughs at the situation only if the ad is clearly laughing WITH them. The same joke told at them stops the sale.',
+              'O aprendiz adulto ri da situacao so se o anuncio estiver rindo COM ele. A mesma piada contra ele mata a venda.',
+              'El aprendiz adulto se rie de la situacion solo si el anuncio se esta riendo CON el. La misma broma dirigida a el corta la venta.'),
+        comprobacion: top.nCre>=2
+          ? tbdL('Holds across '+top.nCre+' executions, so it is the tone and not one script.',
+              'Se sustenta em '+top.nCre+' execucoes, então e o tom e não um roteiro.',
+              'Se sostiene en '+top.nCre+' ejecuciones, así que es el tono y no un guion suelto.')
+          : tbdL('One execution only, so what is measured is that script and not the tone. A second piece in the same tone would settle it.',
+              'Apenas uma execução, então o que esta medido e aquele roteiro e não o tom. Uma segunda peca no mesmo tom resolveria.',
+              'Una sola ejecución, así que lo medido es ese guion y no el tono. Una segunda pieza en el mismo tono lo resolveria.'),
+        accion: tbdL('Write the next '+T+' script for '+ctx.pais+' in '+tbdQ(top.label)+', aimed at '+tbdDecisor(ctx)+'.',
+          'Escreva o próximo roteiro '+T+' de '+ctx.pais+' em '+tbdQ(top.label)+', dirigido a '+tbdDecisor(ctx)+'.',
+          'Escribe el próximo guion '+T+' de '+ctx.pais+' en '+tbdQ(top.label)+', dirigido a '+tbdDecisor(ctx)+'.'),
+        exito: tbdL('Above '+tbdNK(last.l1k_adj*(1+(ctx.err||8)/100))+' L/$1k adj. keeps '+tbdQ(top.label)+' as the default tone here.',
+          'Acima de '+tbdNK(last.l1k_adj*(1+(ctx.err||8)/100))+' L/$1k adj. mantem '+tbdQ(top.label)+' como tom padrao aqui.',
+          'Por encima de '+tbdNK(last.l1k_adj*(1+(ctx.err||8)/100))+' L/$1k adj. mantiene '+tbdQ(top.label)+' como tono default acá.')
+      })
+    };
+  },
+  vacio: function(ctx, data, T){
+    var b = tbdBriefCtx(ctx, data, T);
+    var roll = b.n ? tbdRollup2(b.base, function(r){ return r.tone_category||null; }) : [];
+    if(roll.length<2) return tbdL('In '+ctx.pais+', '+ctx.marca+', '+T+': all '+b.n+' pieces with enough days share one tone'+(roll.length?' ('+roll[0].label+', '+tbdNK(roll[0].l1k_adj)+' L/$1k adj.)':'')+', so tone cannot be compared here.',
+      'Em '+ctx.pais+', '+ctx.marca+', '+T+': as '+b.n+' pecas com dias suficientes compartilham um tom'+(roll.length?' ('+roll[0].label+', '+tbdNK(roll[0].l1k_adj)+' L/$1k adj.)':'')+', então o tom não pode ser comparado aqui.',
+      'En '+ctx.pais+', '+ctx.marca+', '+T+': las '+b.n+' piezas con días suficientes comparten un solo tono'+(roll.length?' ('+roll[0].label+', '+tbdNK(roll[0].l1k_adj)+' L/$1k adj.)':'')+', así que acá el tono no se puede comparar.');
+    var gap = roll[roll.length-1].l1k_adj>0 ? (roll[0].l1k_adj-roll[roll.length-1].l1k_adj)/roll[roll.length-1].l1k_adj*100 : 0;
+    return tbdL('In '+ctx.pais+', '+ctx.marca+', '+T+': '+tbdQ(roll[0].label)+' ('+tbdNK(roll[0].l1k_adj)+') and '+tbdQ(roll[roll.length-1].label)+' ('+tbdNK(roll[roll.length-1].l1k_adj)+') differ by '+tbdNP(gap)+', inside the '+tbdNP1(ctx.err)+' error. Tone is not the lever here.',
+      'Em '+ctx.pais+', '+ctx.marca+', '+T+': '+tbdQ(roll[0].label)+' ('+tbdNK(roll[0].l1k_adj)+') e '+tbdQ(roll[roll.length-1].label)+' ('+tbdNK(roll[roll.length-1].l1k_adj)+') diferem '+tbdNP(gap)+', dentro do erro de '+tbdNP1(ctx.err)+'. O tom não e a alavanca aqui.',
+      'En '+ctx.pais+', '+ctx.marca+', '+T+': '+tbdQ(roll[0].label)+' ('+tbdNK(roll[0].l1k_adj)+') y '+tbdQ(roll[roll.length-1].label)+' ('+tbdNK(roll[roll.length-1].l1k_adj)+') difieren '+tbdNP(gap)+', dentro del error de '+tbdNP1(ctx.err)+'. Aca el tono no es la palanca.');
+  }
+});
+
+/* ---------------- motor: corre el registro y arma la salida ---------------- */
+var TBD_TOPES = { KEEP:3, STOP:4, UPSIDE:3, GUIDE:3, BRIEF:4, TEST:4 };
+function tbdRunRules(data){
+  var ctx = tbdCtx(data);
+  var led = tbdLedgerNew(ctx);
+  var out = { ctx:ctx, ledger:led, keep:[], stop:[], upside:[], guide:[],
+              briefG:[], briefP:[], tests:[], descartes:[],
+              vacios:{keep:[],stop:[],upside:[],guide:[],briefG:[],briefP:[],tests:[]},
+              recortadas:{} };
+  var porDest = {};
+  TBD_RULES.forEach(function(r){ (porDest[r.dest] = porDest[r.dest] || []).push(r); });
+  Object.keys(porDest).forEach(function(d){ porDest[d].sort(function(a,b){ return a.prio-b.prio; }); });
+
+  /* STOP se evalua ANTES que KEEP: reclama piezas y dinero primero, para que
+     dos tarjetas no manden a mover el mismo presupuesto. */
+  ['STOP','KEEP','UPSIDE','GUIDE','TEST'].forEach(function(d){
+    (porDest[d]||[]).forEach(function(rule){
+      var c = tbdSafeRule(rule, ctx, data, led);
+      if(c){ out[ d==='STOP'?'stop': d==='KEEP'?'keep': d==='UPSIDE'?'upside': d==='GUIDE'?'guide':'tests' ].push(c); }
+      else {
+        var v = tbdSafeVacio(rule, ctx, data);
+        if(v) out.vacios[ d==='STOP'?'stop': d==='KEEP'?'keep': d==='UPSIDE'?'upside': d==='GUIDE'?'guide':'tests' ].push(v);
+      }
+    });
+  });
+  /* BRIEF se corre dos veces, una por ad_type */
+  [['GENERIC','briefG'],['PROMO','briefP']].forEach(function(pair){
+    (porDest['BRIEF']||[]).forEach(function(rule){
+      var c = null;
+      try{ c = rule.run(ctx, data, led, pair[0]); }catch(e){ led.errores++; c = null; }
+      if(c){
+        c.id = rule.id; c.dest='BRIEF'; c.prio=rule.prio;
+        c.usd=c.usd||0; c.delta=c.delta||0; c.conf=c.conf==null?0.5:c.conf;
+        c.ev = c.usd*Math.abs(c.delta)*c.conf;
+        c.claims = c.claims||{piezas:[],dims:[]};
+        out[pair[1]].push(c);
+      } else {
+        var v = null;
+        try{ v = rule.vacio ? rule.vacio(ctx, data, pair[0]) : null; }catch(e){ v = null; }
+        if(v) out.vacios[pair[1]].push(v);
+      }
+    });
+  });
+
+  /* orden: primero prioridad (respeta la precedencia del ledger), luego valor
+     esperado. Y recorte con constancia: lo que sobra se dice, no se borra en
+     silencio. */
+  function ordenarYRecortar(arr, tope, key){
+    arr.sort(function(a,b){ return a.prio!==b.prio ? a.prio-b.prio : b.ev-a.ev; });
+    if(arr.length <= tope) return arr;
+    var fuera = arr.slice(tope);
+    out.recortadas[key] = fuera.map(function(c){ return c.id; });
+    var keep = arr.slice(0, tope);
+    var ids = fuera.map(function(c){ return c.id; }).join(', ');
+    var ultimo = keep[keep.length-1];
+    ultimo.texto += '\n' + tbdL(
+      fuera.length+' more recommendation(s) did not fit here ('+ids+'), ordered by money at stake.',
+      fuera.length+' recomendacao(oes) não couberam aqui ('+ids+'), ordenadas por dinheiro em jogo.',
+      fuera.length+' recomendacion(es) más quedaron fuera por espacio ('+ids+'), ordenadas por dinero en juego.');
+    return keep;
+  }
+  out.stop   = ordenarYRecortar(out.stop,   TBD_TOPES.STOP,   'stop');
+  out.keep   = ordenarYRecortar(out.keep,   TBD_TOPES.KEEP,   'keep');
+  out.upside = ordenarYRecortar(out.upside, TBD_TOPES.UPSIDE, 'upside');
+  out.guide  = ordenarYRecortar(out.guide,  TBD_TOPES.GUIDE,  'guide');
+  out.briefG = ordenarYRecortar(out.briefG, TBD_TOPES.BRIEF,  'briefG');
+  out.briefP = ordenarYRecortar(out.briefP, TBD_TOPES.BRIEF,  'briefP');
+  out.tests  = ordenarYRecortar(out.tests,  TBD_TOPES.TEST,   'tests');
+  return out;
+}
+/* Límite de detección: lo que se dice cuando un destino queda sin nada Y sin
+   ninguna razon medida. Nunca "no hay nada": siempre "no es medible, y esto es
+   lo que falta para que lo sea". */
+function tbdLimiteDeteccion(ctx){
+  return tbdL('Detection limit in '+ctx.pais+' for '+ctx.marca+': of '+ctx.nCre26+' creatives in 2026, '+ctx.nMedibles+' have the 12+ unique dates needed to split a flight in two halves, and the adjustment carries '+tbdNP1(ctx.err)+' of error. This means NOT MEASURABLE, not "nothing here".',
+    'Limite de deteccao em '+ctx.pais+' para '+ctx.marca+': de '+ctx.nCre26+' criativos em 2026, '+ctx.nMedibles+' tem as 12+ datas únicas necessarias para dividir um voo em duas metades, e o ajuste carrega '+tbdNP1(ctx.err)+' de erro. Isto significa NAO MENSURAVEL, não "não ha nada".',
+    'Límite de detección en '+ctx.pais+' para '+ctx.marca+': de '+ctx.nCre26+' creativos de 2026, '+ctx.nMedibles+' tienen las 12+ fechas únicas que hacen falta para partir un vuelo en dos mitades, y el ajuste carga '+tbdNP1(ctx.err)+' de error. Esto significa NO MEDIBLE, no "acá no hay nada".');
+}
+function tbdSalidaDe(res, cards, vacios){
+  if(cards.length) return cards.map(function(c){ return c.texto; });
+  if(vacios.length) return vacios.slice(0,2);
+  return [tbdLimiteDeteccion(res.ctx)];
+}
+
+/* Antes esta funcion armaba los 4 bloques a mano, empujaba el .body de ~25
+   detectores (tirando su hipotesis y su comprobación) y cerraba con dos
+   bullets fijos de metodologia identicos en los 17 paises. Ahora solo consume
+   el motor de reglas, que ya trae cada tarjeta con hallazgo, hipotesis,
+   comprobación, accion y número de reversion, y con el dinero contabilizado
+   una sola vez. */
+function tbdDirectionCards(data){
+  var res = tbdRunRules(data);
+  return {
+    keep:   tbdSalidaDe(res, res.keep,   res.vacios.keep),
+    stop:   tbdSalidaDe(res, res.stop,   res.vacios.stop),
+    upside: tbdSalidaDe(res, res.upside, res.vacios.upside),
+    guide:  tbdSalidaDe(res, res.guide,  res.vacios.guide),
+    _res: res
+  };
+}
+/* tbdBriefBullets() devolvia exactamente 3 bullets en las 12 combinaciones
+   marca x pais -- siempre las mismas 3 plantillas (tono / pareja de hooks /
+   pain point), calculadas como la moda del tercio superior, sin un solo
+   numero y sin una sola referencia a la marca ni al pais. Se reemplaza por el
+   motor de reglas, que si distingue GENERIC de PROMO y al aprendiz adulto del
+   padre que decide. La firma se conserva para no tocar a los llamadores. */
+function tbdBriefBullets(itemsOfType, data, adType){
+  if(!data || !adType) return null;   // llamada vieja: sin contexto no hay brief
+  var res = data.__tbdRes || (data.__tbdRes = tbdRunRules(data));
+  var cards  = adType==='PROMO' ? res.briefP : res.briefG;
+  var vacios = adType==='PROMO' ? res.vacios.briefP : res.vacios.briefG;
+  var out = tbdSalidaDe(res, cards, vacios);
   return out.length ? out : null;
 }
 function tbdDirectionHTML(data){
   var L = LANG;
   var cards = tbdDirectionCards(data);
-  var briefGeneric = tbdBriefBullets(data.y26.filter(function(r){ return r.ad_type==='GENERIC'; }));
-  var briefPromo = tbdBriefBullets(data.y26.filter(function(r){ return r.ad_type==='PROMO'; }));
+  var briefGeneric = tbdBriefBullets(null, data, 'GENERIC');
+  var briefPromo = tbdBriefBullets(null, data, 'PROMO');
   function card(title, color, items){
     return '<div class="tbd-cd" style="border-top:3px solid '+color+';"><div class="tbd-cd-h" style="color:'+color+';">'+esc(title)+'</div>'+
       items.map(function(t){ return '<div class="tbd-cd-i">'+esc(t)+'</div>'; }).join('')+'</div>';
@@ -2922,62 +4294,49 @@ function tbdTestCardHTML(t, color, title, fields){
     fields.map(function(f){ return tbdTestFieldHTML(f[0], f[1]); }).join('')+
     '</div>';
 }
+/* tbdComputeTests() devolvia exactamente 3 testsA + 3 testsB en las 12
+   combinaciones, con A3 ("Semana 100% Generic") y B3 ("Creativo cruzado")
+   de texto COMPLETAMENTE fijo -- y B3, en su rama else, mandaba a encargar una
+   produccion nueva precisamente cuando el detector de halo no habia encontrado
+   nada. Ahora los tests salen del motor: cada uno nace de un hallazgo medido
+   de este pais, calcula cuantos leads por brazo hace falta para leerlo por
+   encima del error del ajuste local, y si no se puede leer se declara
+   descartado con lo que le falta.
+   Se mantiene la particion A/B porque la pestana y el PPT la usan: A = lo que
+   se hace moviendo la rotacion actual (produccion cero), B = lo que exige
+   producir algo nuevo. */
 function tbdComputeTests(data){
-  var L = LANG;
-  var running26 = new Set(data.y26.map(function(r){return r.nombre;}));
-  var best25NotIn26 = data.y25.filter(function(r){return !running26.has(r.nombre);})[0];
-  var wo26 = data.y26.map(function(r){return {nombre:r.nombre, w:tbdWearout(r)};}).filter(function(x){return x.w.pct!=null;}).sort(function(a,b){return a.w.pct-b.w.pct;});
-  var tone26 = tbdDimensionRollup(data.y26, function(r){return r.tone_category||null;});
-  var hooks26 = tbdDimensionRollup(data.y26, function(r){return r.hook_audio_type_code||null;});
-  var jh = tbdDetectJrHaloShare(data);
-
-  var testsA = [];
-  if(best25NotIn26){
-    testsA.push({ t:'A1', color:'var(--good)',
-      title: L==='en'?'Reactivate "'+best25NotIn26.nombre+'" — no production needed':L==='pt'?'Reativar "'+best25NotIn26.nombre+'" — sem necessidade de produção':'Reactivar "'+best25NotIn26.nombre+'" — sin producción nueva',
-      situation: L==='en'?'"'+best25NotIn26.nombre+'" was one of the strongest 2025 creatives (L/$1k adj. '+fmtNum(best25NotIn26.l1k_adj,0)+') and simply isn\'t in the 2026 rotation.':L==='pt'?'"'+best25NotIn26.nombre+'" foi um dos criativos mais fortes de 2025 (L/$1k adj. '+fmtNum(best25NotIn26.l1k_adj,0)+') e simplesmente não está na rotação de 2026.':'"'+best25NotIn26.nombre+'" fue uno de los creativos más fuertes de 2025 (L/$1k adj. '+fmtNum(best25NotIn26.l1k_adj,0)+') y simplemente no está en la rotación de 2026.',
-      what: L==='en'?'Put it back in rotation with no changes, at a similar spend share to its 2025 run.':L==='pt'?'Coloque-o de volta na rotação sem alterações, com uma participação de gasto similar à sua exibição em 2025.':'Vuelve a meterlo en rotación sin cambios, con una participación de gasto similar a la que tuvo en 2025.',
-      hypothesis: L==='en'?'If it performs within range of its 2025 number once demand-adjusted, it should outperform the current 2026 average creative — with zero production cost.':L==='pt'?'Se performar dentro da faixa do seu número de 2025 já ajustado por demanda, deve superar o criativo médio de 2026 — com custo de produção zero.':'Si rinde dentro del rango de su número de 2025 ya ajustado por demanda, debería superar al creativo promedio de 2026 — con costo de producción cero.',
-      why: L==='en'?'Reactivating a proven asset is the cheapest possible lever to pull before commissioning anything new.':L==='pt'?'Reativar um ativo comprovado é a alavanca mais barata possível antes de encomendar qualquer coisa nova.':'Reactivar un activo ya probado es la palanca más barata posible antes de encargar algo nuevo.' });
-  }
-  if(wo26.length){
-    testsA.push({ t:'A2', color:'var(--oe)',
-      title: L==='en'?'Monitor / pause "'+wo26[0].nombre+'"':L==='pt'?'Monitorar / pausar "'+wo26[0].nombre+'"':'Monitorear / pausar "'+wo26[0].nombre+'"',
-      situation: L==='en'?'"'+wo26[0].nombre+'" dropped '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% from its first half on air to its second half of 2026 (demand-adjusted) — a real wear-out signal, not a seasonal one.':L==='pt'?'"'+wo26[0].nombre+'" caiu '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% da sua primeira metade no ar para a segunda metade de 2026 (ajustado por demanda) — um sinal real de desgaste, não sazonal.':'"'+wo26[0].nombre+'" cayó '+fmtNum(Math.abs(wo26[0].w.pct),0)+'% de su primera mitad al aire a su segunda mitad de 2026 (ajustado por demanda) — una señal real de desgaste, no estacional.',
-      what: L==='en'?'Cap its remaining flight and watch the next 2 weeks of adj. L/$1k before committing more budget to it.':L==='pt'?'Limite o flight restante e observe as próximas 2 semanas de L/$1k adj. antes de comprometer mais orçamento a ele.':'Limita el flight restante y observa las próximas 2 semanas de L/$1k adj. antes de comprometer más presupuesto en él.',
-      hypothesis: L==='en'?'If the decline continues past -20% for another week, pulling it frees budget for a better-performing creative at no lead-volume cost.':L==='pt'?'Se a queda continuar além de -20% por mais uma semana, retirá-lo libera orçamento para um criativo com melhor desempenho sem custo de volume de leads.':'Si la caída sigue por debajo de -20% otra semana, retirarlo libera presupuesto para un creativo con mejor desempeño sin costo en volumen de leads.',
-      why: L==='en'?'Catching real wear-out early (vs. seasonal dips) avoids burning spend on a creative past its useful life.':L==='pt'?'Detectar o desgaste real cedo (vs. quedas sazonais) evita queimar orçamento num criativo que já passou de sua vida útil.':'Detectar el desgaste real a tiempo (vs. caídas estacionales) evita quemar presupuesto en un creativo que ya pasó su vida útil.' });
-  }
-  testsA.push({ t:'A3', color:'var(--oejr)',
-    title: L==='en'?'100% Generic week (no Promo)':L==='pt'?'Semana 100% Generic (sem Promo)':'Semana 100% Generic (sin Promo)',
-    situation: L==='en'?'In every period analyzed, Generic creatives always share rotation with Promo ones — there is no clean read on whether Generics alone sustain lead volume.':L==='pt'?'Em todos os períodos analisados, os criativos Generic sempre compartilham a rotação com os Promo — não há uma leitura limpa de se os Generic sozinhos sustentam o volume de leads.':'En todos los períodos analizados, los creativos Generic siempre comparten rotación con los Promo — no hay una lectura limpia de si los Generic solos sostienen el volumen de leads.',
-    what: L==='en'?'Run a 1-2 week window at matched total spend with Generic creatives only, no Promo in rotation.':L==='pt'?'Rode uma janela de 1-2 semanas com o mesmo gasto total, apenas com criativos Generic, sem Promo na rotação.':'Corre una ventana de 1-2 semanas con el mismo gasto total, solo con creativos Generic, sin Promo en rotación.',
-    hypothesis: L==='en'?'If adj. L/$1k stays within ~10% of the blended baseline, an explicit offer is not structurally required to sustain volume in this territory.':L==='pt'?'Se o L/$1k adj. ficar dentro de ~10% da linha de base combinada, uma oferta explícita não é estruturalmente necessária para sustentar volume neste território.':'Si el L/$1k adj. se mantiene dentro de ~10% de la línea base combinada, una oferta explícita no es estructuralmente necesaria para sostener volumen en este territorio.',
-    why: L==='en'?'Isolates whether promo discounts are a real growth lever or just margin erosion with no incremental volume benefit — same spend, zero new production.':L==='pt'?'Isola se os descontos promo são uma alavanca real de crescimento ou apenas erosão de margem sem benefício incremental de volume — mesmo gasto, produção nova zero.':'Aísla si los descuentos promo son una palanca real de crecimiento o solo erosión de margen sin beneficio incremental de volumen — mismo gasto, cero producción nueva.' });
-
-  var testsB = [];
-  if(tone26.length){
-    testsB.push({ t:'B1',
-      title: L==='en'?'New creative in "'+tone26[0].label+'" tone':L==='pt'?'Novo criativo no tom "'+tone26[0].label+'"':'Nuevo creativo con tono "'+tone26[0].label+'"',
-      what: L==='en'?'Brief a second, distinct concept in the "'+tone26[0].label+'" tone — same mechanic that already leads 2026, different execution/character.':L==='pt'?'Faça o brief de um segundo conceito distinto no tom "'+tone26[0].label+'" — mesma mecânica que já lidera em 2026, execução/personagem diferente.':'Briefea un segundo concepto distinto con tono "'+tone26[0].label+'" — misma mecánica que ya lidera en 2026, ejecución/personaje distinto.',
-      hypothesis: L==='en'?'A second execution in this tone (currently adj. L/$1k '+fmtNum(tone26[0].l1k_adj,0)+') should perform within range of the first, confirming it\'s the tone driving results, not one lucky creative.':L==='pt'?'Uma segunda execução neste tom (atualmente L/$1k adj. '+fmtNum(tone26[0].l1k_adj,0)+') deve performar dentro da faixa da primeira, confirmando que é o tom que impulsiona os resultados, não um criativo isolado com sorte.':'Una segunda ejecución en este tono (actualmente L/$1k adj. '+fmtNum(tone26[0].l1k_adj,0)+') debería rendir dentro del rango de la primera, confirmando que es el tono el que impulsa los resultados, no un creativo suelto con suerte.',
-      why: L==='en'?'De-risks the creative pipeline by proving the winning tone is repeatable before it becomes the only bet in the portfolio.':L==='pt'?'Reduz o risco do pipeline criativo ao provar que o tom vencedor é repetível antes de se tornar a única aposta do portfólio.':'Reduce el riesgo del pipeline creativo al probar que el tono ganador es repetible antes de que se vuelva la única apuesta del portafolio.' });
-  }
-  if(hooks26.length){
-    testsB.push({ t:'B2',
-      title: L==='en'?'New creative with "'+hooks26[0].label+'" audio hook':L==='pt'?'Novo criativo com hook de áudio "'+hooks26[0].label+'"':'Nuevo creativo con hook de audio "'+hooks26[0].label+'"',
-      what: L==='en'?'Produce a fresh script built specifically around the "'+hooks26[0].label+'" opening — the best-performing demand-adjusted audio hook of 2026.':L==='pt'?'Produza um roteiro novo construído especificamente em torno da abertura "'+hooks26[0].label+'" — o hook de áudio de melhor desempenho ajustado por demanda de 2026.':'Produce un guion nuevo construido específicamente alrededor de la apertura "'+hooks26[0].label+'" — el hook de audio ajustado por demanda con mejor desempeño de 2026.',
-      hypothesis: L==='en'?'If the hook mechanic itself is what drives the '+fmtNum(hooks26[0].l1k_adj,0)+' adj. L/$1k, a new script using it should land close to that number regardless of the rest of the creative.':L==='pt'?'Se o próprio mecanismo do hook é o que impulsiona o L/$1k adj. de '+fmtNum(hooks26[0].l1k_adj,0)+', um roteiro novo usando-o deve chegar perto desse número independente do resto do criativo.':'Si el mecanismo del hook en sí es lo que impulsa el L/$1k adj. de '+fmtNum(hooks26[0].l1k_adj,0)+', un guion nuevo que lo use debería acercarse a ese número sin importar el resto del creativo.',
-      why: L==='en'?'Separates "this hook works" from "this specific creative works" — the difference between a reusable creative principle and a one-off.':L==='pt'?'Separa "esse hook funciona" de "esse criativo específico funciona" — a diferença entre um princípio criativo reutilizável e algo isolado.':'Separa "este hook funciona" de "este creativo específico funciona" — la diferencia entre un principio creativo reutilizable y algo aislado.' });
-  }
-  testsB.push({ t:'B3',
-    title: L==='en'?'Cross-brand OE ↔ Junior creative':L==='pt'?'Criativo cruzado OE ↔ Junior':'Creativo cruzado OE ↔ Junior',
-    what: jh
-      ? (L==='en'?'Produce one creative explicitly designed to capture BOTH brands\' intent in the same viewing — the JR Halo tab already shows '+fmtNum(jh.strength/2,0)+'%+ worth of real cross-brand leads happening passively today.':L==='pt'?'Produza um criativo desenhado explicitamente para captar a intenção das DUAS marcas na mesma visualização — a aba JR Halo já mostra '+fmtNum(jh.strength/2,0)+'%+ de leads reais cruzados entre marcas ocorrendo hoje passivamente.':'Produce un creativo diseñado explícitamente para capturar la intención de AMBAS marcas en la misma visualización — la pestaña JR Halo ya muestra '+fmtNum(jh.strength/2,0)+'%+ de leads reales cruzados entre marcas ocurriendo hoy de forma pasiva.')
-      : (L==='en'?'Produce one creative explicitly designed to capture both OE and OE Junior intent in the same viewing, to test for a cross-brand halo beyond what happens passively today.':L==='pt'?'Produza um criativo desenhado explicitamente para captar a intenção da OE e da OE Junior na mesma visualização, para testar um halo entre marcas além do que ocorre passivamente hoje.':'Produce un creativo diseñado explícitamente para capturar la intención de OE y OE Junior en la misma visualización, para probar un halo entre marcas más allá de lo que pasa hoy de forma pasiva.'),
-    hypothesis: L==='en'?'A creative built to speak to both a parent and their child simultaneously should convert at or above the current passive cross-brand rate, at the cost of a single new production.':L==='pt'?'Um criativo feito para falar simultaneamente com um pai/mãe e seu filho deve converter na taxa passiva cruzada atual ou acima dela, ao custo de uma única produção nova.':'Un creativo hecho para hablarle a la vez a un padre/madre y a su hijo debería convertir a la tasa pasiva cruzada actual o por encima, al costo de una sola producción nueva.',
-    why: L==='en'?'Turns an accidental halo effect into a deliberate, budgeted growth channel instead of leaving it to chance.':L==='pt'?'Transforma um efeito de halo acidental em um canal de crescimento deliberado e orçado, em vez de deixá-lo ao acaso.':'Convierte un efecto de halo accidental en un canal de crecimiento deliberado y presupuestado, en vez de dejarlo al azar.' });
-  return { testsA:testsA, testsB:testsB };
+  var res = data.__tbdRes || (data.__tbdRes = tbdRunRules(data));
+  var A = [], B = [];
+  var colores = ['var(--oe)','var(--oejr)','var(--tbd-deep)','var(--bad)'];
+  res.tests.forEach(function(c){
+    var sinProduccion = (c.id==='T-REACTIVAR' || c.id==='T-SWITCH');
+    var partes = String(c.texto).split('\n');
+    var get = function(pref){
+      for(var i=0;i<partes.length;i++){ if(partes[i].indexOf(pref)===0) return partes[i].slice(pref.length).replace(/^\s*—\s*/,''); }
+      return '';
+    };
+    var card = {
+      t: c.id,
+      color: colores[(sinProduccion?0:1)],
+      title: c.id.replace(/^T-/,''),
+      situation: get(tbdL('FINDING','ACHADO','HALLAZGO')),
+      what: get(tbdL('ACTION','ACAO','ACCION')),
+      hypothesis: get(tbdL('HYPOTHESIS','HIPOTESE','HIPOTESIS')),
+      check: get(tbdL('CROSS-CHECK','COMPROVACAO','COMPROBACION')),
+      why: get(tbdL('SUCCESS / REVERT','SUCESSO / REVERSAO','EXITO / REVERSION')) ||
+           get(tbdL('CROSS-CHECK','COMPROVACAO','COMPROBACION'))
+    };
+    (sinProduccion ? A : B).push(card);
+  });
+  /* si un lado quedo vacio, se dice por que -- con cifras, nunca en blanco */
+  if(!A.length && res.vacios.tests.length) A.push({ t:'—', color:'var(--tbd-deep)',
+    title: tbdL('No zero-cost test is readable here','Nenhum teste de custo zero e legivel aqui','Ningun test de costo cero es legible aca'),
+    situation: res.vacios.tests[0], what:'', hypothesis:'', check:'', why:'' });
+  if(!B.length && res.vacios.tests.length) B.push({ t:'—', color:'var(--tbd-deep)',
+    title: tbdL('No new production is justified here yet','Nenhuma producao nova se justifica aqui ainda','Todavia no se justifica ninguna produccion nueva aca'),
+    situation: res.vacios.tests[res.vacios.tests.length-1], what:'', hypothesis:'', check:'', why:'' });
+  return { testsA:A, testsB:B };
 }
 function tbdTestsHTML(data){
   var L = LANG;
