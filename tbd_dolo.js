@@ -1085,6 +1085,7 @@ var TBD_RENDERERS = {
     var top26 = src26.slice().sort(function(a,b){return b.l1k_adj-a.l1k_adj;}).slice(0,10);
     var insight = mode==='video' ? tbdVersionSplitInsight(src26) : tbdPortfolioTakeaway(data);
     return '<h2 class="tbd-section-title">'+esc(data.territory)+' · '+esc(tbdS('title_portfolio'))+' · '+esc(tbdS('period_label'))+'</h2>'+
+      tbdLeadsDefinitionBox()+
       tbdHowToCard('portfolio')+
       '<div class="tbd-kpi-grid">'+
       tbdKpiCard(tbdS('kpi_l1k_adj'), p25.l1k_adj, p26.l1k_adj, function(v){return fmtNum(v,0);}, true)+
@@ -2683,24 +2684,137 @@ function tbdTestsHTML(data){
   return '<h2 class="tbd-section-title">'+esc(tbdS('title_tests'))+' — '+esc(data.territory)+'</h2>'+tbdHowToCard('tests')+
     colA(testsA,tbdS('tests_col_a'),introA)+'<div style="height:16px;"></div>'+colB(testsB,tbdS('tests_col_b'),introB);
 }
+
+/* ============================================================
+   DEFINICION DE LEADS -- caja de alerta destacada.
+   Verificado contra engine.js: en la construccion del dia
+   (`accum.leads += dLeads` solo cuando `mktOrg === organization`) el dashboard
+   suma UNICAMENTE los leads cuya MarketingOrganization coincide con la
+   Organization seleccionada. El halo de la otra marca NO entra en l1k ni en
+   ningun KPI ajustado: se calcula aparte y solo se muestra en la pestana de
+   halo entre marcas. El gasto es `mediaSpendReal`, siempre neto de SEM-Brand.
+   ============================================================ */
+function tbdLeadsDefinitionBox(){
+  var L = LANG, from = tbdOrgName(), other = tbdHaloTargetName();
+  var t;
+  if(L==='en'){
+    t = {
+      head:'Before you read any number: which leads are being counted',
+      l1:'<b>Organization = '+from+'</b> and <b>MarketingOrganization = '+from+'</b>. Both filters are set to the same brand.',
+      l2:'So every "Leads", "L/$1k" and "L/$1k adj." figure on this page counts <b>only leads attributed to '+from+' itself</b>.',
+      l3:'<b>The halo is NOT included.</b> Leads of '+other+' that this brand\'s spend generated are excluded from these numbers and reported separately in the Cross-brand halo tab, so they are never double-counted.',
+      l4:'<b>Spend</b> is TV media spend <b>net of SEM-Brand</b>, always \u2014 it is not a switch you can turn off here.',
+    };
+  } else if(L==='pt'){
+    t = {
+      head:'Antes de ler qualquer numero: quais leads estao sendo contados',
+      l1:'<b>Organization = '+from+'</b> e <b>MarketingOrganization = '+from+'</b>. Os dois filtros estao na mesma marca.',
+      l2:'Portanto todo "Leads", "L/$1k" e "L/$1k adj." desta pagina conta <b>apenas leads atribuidos a '+from+'</b>.',
+      l3:'<b>O halo NAO esta incluido.</b> Os leads de '+other+' que o investimento desta marca gerou ficam fora destes numeros e sao reportados a parte na aba de Halo entre marcas, para nunca serem contados duas vezes.',
+      l4:'<b>O gasto</b> e a verba de midia de TV <b>liquida de SEM-Brand</b>, sempre \u2014 nao e um interruptor que se possa desligar aqui.',
+    };
+  } else {
+    t = {
+      head:'Antes de leer cualquier numero: que leads se estan contando',
+      l1:'<b>Organization = '+from+'</b> y <b>MarketingOrganization = '+from+'</b>. Los dos filtros estan puestos en la misma marca.',
+      l2:'Por eso cada "Leads", "L/$1k" y "L/$1k adj." de esta pagina cuenta <b>solo los leads atribuidos a '+from+'</b> en si.',
+      l3:'<b>El halo NO esta incluido.</b> Los leads de '+other+' que genero la inversion de esta marca quedan fuera de estos numeros y se reportan aparte en la pestana de Halo entre marcas, para que nunca se cuenten dos veces.',
+      l4:'<b>El gasto</b> es inversion de medios de TV <b>neta de SEM-Brand</b>, siempre \u2014 no es un interruptor que se pueda apagar aqui.',
+    };
+  }
+  return '<div class="tbd-alertbox">'+
+    '<div class="tbd-alertbox-h">\u26A0 '+esc(t.head)+'</div>'+
+    '<ul class="tbd-alertbox-list"><li>'+t.l1+'</li><li>'+t.l2+'</li><li>'+t.l3+'</li><li>'+t.l4+'</li></ul>'+
+  '</div>';
+}
 function tbdAdjKpiHTML(data){
-  return '<h2 class="tbd-section-title">'+esc(tbdS('title_adjkpi'))+'</h2>'+tbdHowToCard('adjkpi')+
-    '<div class="card" style="font-size:12.5px; line-height:1.75;">'+
-    '<p>'+esc(LANG==='en'
-      ? 'English course demand is not flat across the year — it peaks around January and falls through the middle of the year. A creative that airs in January faces far more motivated prospects than the exact same creative airing in June, regardless of how good it is. Raw L/$1k will always favor whichever months happen to have higher natural demand.'
-      : LANG==='pt'
-      ? 'A demanda por cursos de inglês não é constante ao longo do ano — tem pico perto de janeiro e cai no meio do ano. Um criativo que vai ao ar em janeiro enfrenta prospects muito mais motivados do que o MESMO criativo no meio do ano, independente da qualidade do criativo. O L/$1k bruto sempre favorece os meses com maior demanda natural.'
-      : 'La demanda de cursos de inglés no es pareja durante el año — tiene un pico cerca de enero y cae hacia la mitad del año. Un creativo que sale al aire en enero se enfrenta a prospectos mucho más motivados que ese MISMO creativo en junio, sin importar qué tan bueno sea. El L/$1k crudo siempre va a favorecer a los meses que tengan más demanda natural, sin importar la calidad del creativo.')+'</p>'+
-    '<p style="margin-top:10px;"><b>'+esc(tbdS('kpi_l1k_adj'))+'</b> = Raw L/$1k ÷ (Demand Index / 100) — '+esc(LANG==='en'?'removes the seasonal tailwind/headwind.':LANG==='pt'?'remove o vento a favor/contra sazonal.':'quita el viento a favor/en contra estacional.')+'</p>'+
-    '<p><b>'+esc(tbdS('kpi_cpl_adj'))+'</b> = Raw CPL × (Demand Index / 100).</p>'+
-    '<p style="margin-top:10px;">'+esc(LANG==='en'
-      ? 'The Demand Index (see the Seasonality Index tab) is built from real Ahrefs monthly search-volume data for "open english" + "cursos de ingles", normalized to 100 = average since January 2023, specific to each country. Each creative\'s index is spend-weighted across its actual TV-on days.'
-      : LANG==='pt'
-      ? 'O Índice de Demanda (ver aba Índice de Estacionalidade) vem de dados reais de volume de busca mensal do Ahrefs para "open english" + "cursos de ingles", normalizado a 100 = média desde janeiro de 2023, específico por país. O índice de cada criativo é ponderado pelo gasto nos seus dias reais de TV-on.'
-      : 'El Índice de Demanda (ver la pestaña Índice de Estacionalidad) sale de datos reales de volumen de búsqueda mensual de Ahrefs para "open english" + "cursos de ingles", normalizado a 100 = promedio desde enero 2023, específico por país. El índice de cada creativo se pondera por gasto a través de sus días reales de TV-on.')+'</p>'+
-    '<p style="margin-top:10px;"><b>'+esc(LANG==='en'?'Use adj. KPIs for:':LANG==='pt'?'Use KPIs adj. para:':'Usa los KPI adj. para:')+'</b> '+esc(LANG==='en'?'comparing creatives that aired in different months, evaluating true wear-out vs. seasonal decline, go/no-go decisions.':LANG==='pt'?'comparar criativos que foram ao ar em meses diferentes, avaliar desgaste real vs. queda sazonal, decisões go/no-go.':'comparar creativos que salieron al aire en meses distintos, evaluar desgaste real vs. caída estacional, decisiones de go/no-go.')+'</p>'+
-    '<p><b>'+esc(LANG==='en'?'Use raw KPIs for:':LANG==='pt'?'Use KPIs brutos para:':'Usa los KPI crudos para:')+'</b> '+esc(LANG==='en'?'planning actual lead volume and budgets for a specific flight window.':LANG==='pt'?'planejar o volume real de leads e orçamentos para uma janela de flight específica.':'planear el volumen real de leads y presupuestos para una ventana de flight específica.')+'</p>'+
-    '</div>';
+  var L = LANG;
+  var s = TBD_SEASONALITY[data.territory];
+  // ejemplo trabajado con los meses reales mas alto y mas bajo del territorio
+  var hiM='-', loM='-', hiMult=1.2, loMult=0.9;
+  if(s && s.jan_jul_2026 && s.jan_jul_2026.length){
+    var months=['01','02','03','04','05','06','07'].map(mesLabel);
+    var arr=s.jan_jul_2026;
+    var hi=arr.indexOf(Math.max.apply(null,arr)), lo=arr.indexOf(Math.min.apply(null,arr));
+    hiM=months[hi]; loM=months[lo];
+    hiMult=Math.round(arr[hi])/100; loMult=Math.round(arr[lo])/100;
+  }
+  var rawEx = 60;
+  var hiAdj = rawEx/hiMult, loAdj = rawEx/loMult;
+
+  var head = L==='en'?'Why we adjust, in one sentence':L==='pt'?'Por que ajustamos, em uma frase':'Por que ajustamos, en una frase';
+  var oneLiner = L==='en'
+    ? 'Two creatives can get the same result and one of them still be much better \u2014 because the market was not equally receptive in the months each of them aired. The adjustment puts them on the same footing.'
+    : L==='pt'
+    ? 'Dois criativos podem dar o mesmo resultado e um deles ainda ser muito melhor \u2014 porque o mercado nao estava igualmente receptivo nos meses em que cada um foi ao ar. O ajuste os coloca em pe de igualdade.'
+    : 'Dos creativos pueden dar el mismo resultado y uno de los dos ser mucho mejor \u2014 porque el mercado no estaba igual de receptivo en los meses en que salio cada uno. El ajuste los pone en igualdad de condiciones.';
+
+  var stepsHead = L==='en'?'How the adjustment works, step by step':L==='pt'?'Como o ajuste funciona, passo a passo':'Como funciona el ajuste, paso a paso';
+  var steps = L==='en'
+    ? '<ol class="tbd-explain-list">'+
+      '<li><b>Start with the raw number.</b> L/$1k = leads divided by spend, times 1,000. If a creative brought '+fmtNum(rawEx,0)+' leads per $1,000, its raw L/$1k is '+fmtNum(rawEx,0)+'.</li>'+
+      '<li><b>Look up how good its months were.</b> Each month has a demand multiplier: above 1.00 means the market was hotter than usual, below 1.00 means colder. A creative that aired across several months gets the average of those multipliers, weighted by how much was spent each day.</li>'+
+      '<li><b>Divide by that multiplier.</b> That is the whole adjustment: <b>L/$1k adj. = raw L/$1k \u00f7 multiplier</b>.</li>'+
+      '<li><b>Read the direction.</b> Aired in a hot month (multiplier above 1.00) \u2192 the adjusted number goes <b>DOWN</b>, because part of the result was the market, not the ad. Aired in a cold month (below 1.00) \u2192 it goes <b>UP</b>, because the ad achieved that against the tide.</li>'+
+      '</ol>'
+    : L==='pt'
+    ? '<ol class="tbd-explain-list">'+
+      '<li><b>Comece pelo numero bruto.</b> L/$1k = leads divididos pelo gasto, vezes 1.000. Se um criativo trouxe '+fmtNum(rawEx,0)+' leads por $1.000, seu L/$1k bruto e '+fmtNum(rawEx,0)+'.</li>'+
+      '<li><b>Veja quao bons foram seus meses.</b> Cada mes tem um multiplicador de demanda: acima de 1,00 significa mercado mais quente que o normal, abaixo de 1,00 mais frio. Um criativo que passou por varios meses recebe a media desses multiplicadores, ponderada pelo gasto de cada dia.</li>'+
+      '<li><b>Divida por esse multiplicador.</b> Esse e todo o ajuste: <b>L/$1k adj. = L/$1k bruto \u00f7 multiplicador</b>.</li>'+
+      '<li><b>Leia a direcao.</b> Foi ao ar num mes quente (multiplicador acima de 1,00) \u2192 o numero ajustado <b>DESCE</b>, porque parte do resultado foi o mercado, nao o anuncio. Num mes frio (abaixo de 1,00) \u2192 <b>SOBE</b>, porque o anuncio conseguiu aquilo remando contra a mare.</li>'+
+      '</ol>'
+    : '<ol class="tbd-explain-list">'+
+      '<li><b>Arranca del numero crudo.</b> L/$1k = leads dividido entre el gasto, por 1.000. Si un creativo trajo '+fmtNum(rawEx,0)+' leads por cada $1.000, su L/$1k crudo es '+fmtNum(rawEx,0)+'.</li>'+
+      '<li><b>Mira que tan buenos fueron sus meses.</b> Cada mes tiene un multiplicador de demanda: arriba de 1,00 significa que el mercado estaba mas caliente de lo normal, abajo de 1,00 mas frio. Un creativo que estuvo al aire varios meses recibe el promedio de esos multiplicadores, ponderado por cuanto se gasto cada dia.</li>'+
+      '<li><b>Divide entre ese multiplicador.</b> Ese es todo el ajuste: <b>L/$1k adj. = L/$1k crudo \u00f7 multiplicador</b>.</li>'+
+      '<li><b>Lee la direccion.</b> Salio en un mes caliente (multiplicador arriba de 1,00) \u2192 el numero ajustado <b>BAJA</b>, porque parte del resultado fue el mercado y no el anuncio. Salio en un mes frio (abajo de 1,00) \u2192 <b>SUBE</b>, porque el anuncio logro eso remando contra la corriente.</li>'+
+      '</ol>';
+
+  var exHead = L==='en'?'The same number, two different months \u2014 with real data from '+data.territory:L==='pt'?'O mesmo numero, dois meses diferentes \u2014 com dados reais de '+data.territory:'El mismo numero, dos meses distintos \u2014 con datos reales de '+data.territory;
+  var example = '<table class="tbd-table" style="margin-top:8px;"><thead><tr>'+
+    '<th>'+esc(L==='en'?'Aired in':L==='pt'?'Foi ao ar em':'Salio al aire en')+'</th>'+
+    '<th style="text-align:right;">'+esc(L==='en'?'Multiplier':'Multiplicador')+'</th>'+
+    '<th style="text-align:right;">'+esc(L==='en'?'Raw L/$1k':L==='pt'?'L/$1k bruto':'L/$1k crudo')+'</th>'+
+    '<th style="text-align:right;">'+esc(L==='en'?'Adjusted':L==='pt'?'Ajustado':'Ajustado')+'</th>'+
+    '<th>'+esc(L==='en'?'Reading':L==='pt'?'Leitura':'Lectura')+'</th></tr></thead><tbody>'+
+    '<tr><td><b>'+esc(hiM)+'</b> '+esc(L==='en'?'(hot month)':L==='pt'?'(mes quente)':'(mes caliente)')+'</td>'+
+      '<td style="text-align:right;">x'+fmtNum(hiMult,2)+'</td><td style="text-align:right;">'+fmtNum(rawEx,0)+'</td>'+
+      '<td style="text-align:right;" class="tbd-adj"><b>'+fmtNum(hiAdj,0)+'</b></td>'+
+      '<td>'+esc(L==='en'?'Worth less than it looks: the market helped.':L==='pt'?'Vale menos do que parece: o mercado ajudou.':'Vale menos de lo que parece: el mercado ayudo.')+'</td></tr>'+
+    '<tr><td><b>'+esc(loM)+'</b> '+esc(L==='en'?'(cold month)':L==='pt'?'(mes frio)':'(mes frio)')+'</td>'+
+      '<td style="text-align:right;">x'+fmtNum(loMult,2)+'</td><td style="text-align:right;">'+fmtNum(rawEx,0)+'</td>'+
+      '<td style="text-align:right;" class="tbd-adj"><b>'+fmtNum(loAdj,0)+'</b></td>'+
+      '<td>'+esc(L==='en'?'Worth more than it looks: it swam upstream.':L==='pt'?'Vale mais do que parece: remou contra a mare.':'Vale mas de lo que parece: remo contra la corriente.')+'</td></tr>'+
+    '</tbody></table>'+
+    '<p style="font-size:12px;color:var(--ink-soft);margin-top:8px;">'+
+    esc(L==='en'?'Both creatives brought exactly the same '+fmtNum(rawEx,0)+' leads per $1,000. After adjusting, the one from '+loM+' is the better creative \u2014 and that is the comparison the whole report is built on.'
+      :L==='pt'?'Os dois criativos trouxeram exatamente os mesmos '+fmtNum(rawEx,0)+' leads por $1.000. Depois de ajustar, o de '+loM+' e o melhor criativo \u2014 e e nessa comparacao que todo o relatorio se apoia.'
+      :'Los dos creativos trajeron exactamente los mismos '+fmtNum(rawEx,0)+' leads por cada $1.000. Despues de ajustar, el de '+loM+' es el mejor creativo \u2014 y esa es la comparacion sobre la que se apoya todo el reporte.')+'</p>';
+
+  var cplHead = L==='en'?'And the adjusted CPL?':L==='pt'?'E o CPL ajustado?':'\u00bfY el CPL ajustado?';
+  var cplTxt = L==='en'?'Exactly the same logic, but the other way around, because a cost is better when it is lower: <b>CPL adj. = raw CPL \u00d7 multiplier</b>. A cheap lead bought in a hot month is not as cheap as it looks.'
+    :L==='pt'?'Exatamente a mesma logica, mas ao contrario, porque um custo e melhor quanto menor: <b>CPL adj. = CPL bruto \u00d7 multiplicador</b>. Um lead barato comprado num mes quente nao e tao barato quanto parece.'
+    :'Exactamente la misma logica pero al reves, porque un costo es mejor mientras mas bajo: <b>CPL adj. = CPL crudo \u00d7 multiplicador</b>. Un lead barato comprado en un mes caliente no es tan barato como parece.';
+
+  var useHead = L==='en'?'When to use which number':L==='pt'?'Quando usar cada numero':'Cuando usar cada numero';
+  var useTxt = L==='en'
+    ? '<ul class="tbd-explain-list"><li><b>Use the adjusted number</b> to decide which creative is better, to detect real wear-out, and for go/no-go calls.</li>'+
+      '<li><b>Use the raw number</b> to plan actual lead volume and budget for a specific window \u2014 reality does not get adjusted, you really will get fewer leads in a cold month.</li></ul>'
+    : L==='pt'
+    ? '<ul class="tbd-explain-list"><li><b>Use o numero ajustado</b> para decidir qual criativo e melhor, detectar desgaste real e decisoes de go/no-go.</li>'+
+      '<li><b>Use o numero bruto</b> para planejar volume real de leads e orcamento de uma janela especifica \u2014 a realidade nao se ajusta: voce realmente tera menos leads num mes frio.</li></ul>'
+    : '<ul class="tbd-explain-list"><li><b>Usa el numero ajustado</b> para decidir que creativo es mejor, para detectar desgaste real y para decisiones de go/no-go.</li>'+
+      '<li><b>Usa el numero crudo</b> para planear volumen real de leads y presupuesto de una ventana especifica \u2014 la realidad no se ajusta: en un mes frio de verdad vas a traer menos leads.</li></ul>';
+
+  return '<h2 class="tbd-section-title">'+esc(tbdS('title_adjkpi'))+'</h2>'+
+    tbdLeadsDefinitionBox()+
+    tbdHowToCard('adjkpi')+
+    '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(head)+'</div><p style="font-size:12.5px;line-height:1.6;color:var(--ink-soft);">'+esc(oneLiner)+'</p></div>'+
+    '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(stepsHead)+'</div>'+steps+'</div>'+
+    '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(exHead)+'</div>'+example+'</div>'+
+    '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(cplHead)+'</div><p style="font-size:12.5px;line-height:1.6;color:var(--ink-soft);">'+cplTxt+'</p></div>'+
+    '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(useHead)+'</div>'+useTxt+'</div>';
 }
 var TBD_METHODOLOGY_ITEMS = [
   { label:{en:'Data source',es:'Fuente de datos',pt:'Fonte de dados'},

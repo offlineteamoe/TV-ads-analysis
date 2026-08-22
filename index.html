@@ -145,6 +145,11 @@ html[data-tbd-brand="jr"]{ --tbd-accent:var(--oejr); --tbd-deep:#4A2E15; --tbd-d
 .tbd-switch input:checked+.tbd-switch-slider{background:var(--tbd-accent);}
 .tbd-switch input:checked+.tbd-switch-slider::before{transform:translateX(15px);}
 .tbd-layout-toggle-label{font-size:11.5px; font-weight:700; color:var(--ink-soft); white-space:nowrap;}
+.tbd-alertbox{background:var(--bad-soft); border:2px solid var(--bad); border-radius:10px; padding:13px 17px; margin:0 0 16px;}
+.tbd-alertbox-h{font-size:11.5px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:var(--bad); margin-bottom:8px;}
+.tbd-alertbox-list{margin:0; padding-left:20px; font-size:12.5px; line-height:1.6; color:var(--ink);}
+.tbd-alertbox-list li{margin-bottom:6px;}
+.tbd-alertbox-list li:last-child{margin-bottom:0;}
 .tbd-explain{background:var(--warn-soft); border:1px solid var(--warn-border); border-radius:10px; padding:13px 17px; margin:10px 0 14px;}
 .tbd-explain-h{font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--warn); margin-bottom:8px;}
 .tbd-explain-list{margin:0; padding-left:20px; font-size:12.5px; line-height:1.6; color:var(--ink-soft);}
@@ -642,7 +647,7 @@ async function boot(fetcher){
 </script>
 <script src="app.js?v=24"></script>
 <script src="tbd_seasonality.js?v=1"></script>
-<script src="tbd_dolo.js?v=21"></script>
+<script src="tbd_dolo.js?v=22"></script>
 <script>
 /* Selector de dashboard: se muestra una vez, apenas termina de cargar la
    data (boot() en el script anterior le agrega .ready a #appPicker), antes
