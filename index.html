@@ -160,6 +160,25 @@ html[data-tbd-brand="jr"]{ --tbd-accent:var(--oejr); --tbd-deep:#4A2E15; --tbd-d
 .tbd-season-bartrack{background:var(--border-soft); border-radius:4px; height:12px; min-width:60px;}
 .tbd-season-barfill{height:100%; border-radius:4px; background:var(--tbd-accent);}
 .tbd-season-barfill.y25{opacity:.5;}
+.tbd-season-barfill.grey{background:var(--ink-faint); opacity:.35;}
+.tbd-season-grey td{opacity:.62;}
+.tbd-season-grey-tag{display:inline-block; font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-faint); background:var(--border-soft); border-radius:5px; padding:2px 6px; white-space:nowrap;}
+/* semaforo de confianza del ajuste por pais */
+.tbd-gate{border-radius:10px; padding:12px 16px; margin:12px 0 14px; border:1px solid var(--border);}
+.tbd-gate-ok{background:var(--good-soft); border-color:var(--good);}
+.tbd-gate-warn{background:var(--warn-soft); border-color:var(--warn-border);}
+.tbd-gate-bad{background:var(--bad-soft); border-color:var(--bad);}
+.tbd-gate-head{font-size:12.5px; font-weight:800; color:var(--ink); margin-bottom:6px; display:flex; align-items:center; gap:9px; flex-wrap:wrap;}
+.tbd-gate-chip{font-size:10px; font-weight:900; letter-spacing:.06em; padding:3px 9px; border-radius:999px; color:#fff; background:var(--ink-faint);}
+.tbd-gate-ok .tbd-gate-chip{background:var(--good);}
+.tbd-gate-warn .tbd-gate-chip{background:var(--warn);}
+.tbd-gate-bad .tbd-gate-chip{background:var(--bad);}
+.tbd-gate-body{font-size:12.5px; line-height:1.6; color:var(--ink-soft);}
+/* variante neutra: contexto que NO es advertencia ni error */
+.tbd-explain-alt{background:var(--surface-alt, var(--surface)); border:1px solid var(--tbd-deep-soft);}
+.tbd-explain-alt .tbd-explain-h{color:var(--tbd-deep);}
+.tbd-alertbox-neutral{background:var(--surface); border:2px solid var(--tbd-deep-soft);}
+.tbd-alertbox-neutral .tbd-alertbox-h{color:var(--tbd-deep);}
 .tbd-bullets{margin:0; padding-left:18px;}
 .tbd-bullets li{margin-bottom:11px; line-height:1.55;}
 .tbd-bullets li:last-child{margin-bottom:0;}
@@ -646,8 +665,8 @@ async function boot(fetcher){
 }
 </script>
 <script src="app.js?v=24"></script>
-<script src="tbd_seasonality.js?v=1"></script>
-<script src="tbd_dolo.js?v=22"></script>
+<script src="tbd_seasonality.js?v=23"></script>
+<script src="tbd_dolo.js?v=23"></script>
 <script>
 /* Selector de dashboard: se muestra una vez, apenas termina de cargar la
    data (boot() en el script anterior le agrega .ready a #appPicker), antes
