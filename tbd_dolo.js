@@ -1,5 +1,6 @@
 /* ============================================================
-   TBD Dolo -- motor de datos ejecutivo (Ene-Jul 2025 vs Ene-Jul 2026).
+   TBD Dolo -- motor de datos ejecutivo. Los periodos ya no son fijos: los
+   define el reporte activo (ver TBD_REPORTS).
    NO toca STATE ni ninguna funcion de app.js/engine.js -- lee los mismos
    YEARS_DATA/MKTORG_MARCA/DECK_INFO ya construidos y corregidos, y agrega
    su propia capa de agregacion (equivalente a agg()/dagg()/wearout()/
@@ -11,10 +12,65 @@
    MarketingOrganization = solo la propia (igual a Organization) porque
    SEM-Brand y "gasto ajeno" no aplican a un reporte ejecutivo de inversion
    propia. ============================================================ */
-var TBD_PERIODS = {
-  '2025': { from: '2025-01-01', to: '2025-07-31' },
-  '2026': { from: '2026-01-01', to: '2026-07-31' },
-};
+/* ============================================================
+   REGISTRO DE REPORTES
+   Cada reporte define sus propios periodos. Las ranuras se siguen llamando
+   '2025' y '2026' porque asi las nombra todo el archivo, pero significan
+   "periodo anterior" y "periodo actual": el anio de calendario real de cada
+   una esta en su campo `year`. Un reporte de un solo periodo llena solo la
+   ranura '2026'.
+   ============================================================ */
+var TBD_REPORTS = [
+  { slug: 'ene-jul-2025-2026',
+    label: { en:'Jan–Jul 2025 vs 2026', es:'Ene–Jul 2025 vs 2026', pt:'Jan–Jul 2025 vs 2026' },
+    desc: { en:'Year-on-year comparison of the first seven months. The original report.',
+            es:'Comparación año contra año de los primeros siete meses. El reporte original.',
+            pt:'Comparação ano a ano dos primeiros sete meses. O relatório original.' },
+    slots: {
+      '2025': { year:'2025', from:'2025-01-01', to:'2025-07-31', label:{en:'Jan–Jul 2025',es:'Ene–Jul 2025',pt:'Jan–Jul 2025'} },
+      '2026': { year:'2026', from:'2026-01-01', to:'2026-07-31', label:{en:'Jan–Jul 2026',es:'Ene–Jul 2026',pt:'Jan–Jul 2026'} },
+    } },
+  { slug: 'ene-ago-2025-2026',
+    label: { en:'Jan–Aug 2025 vs 2026', es:'Ene–Ago 2025 vs 2026', pt:'Jan–Ago 2025 vs 2026' },
+    desc: { en:'Same comparison with August now closed — one more full month on both sides.',
+            es:'La misma comparación con agosto ya cerrado — un mes completo más de cada lado.',
+            pt:'A mesma comparação com agosto já fechado — mais um mês completo de cada lado.' },
+    slots: {
+      '2025': { year:'2025', from:'2025-01-01', to:'2025-08-31', label:{en:'Jan–Aug 2025',es:'Ene–Ago 2025',pt:'Jan–Ago 2025'} },
+      '2026': { year:'2026', from:'2026-01-01', to:'2026-08-31', label:{en:'Jan–Aug 2026',es:'Ene–Ago 2026',pt:'Jan–Ago 2026'} },
+    } },
+  { slug: 'ene-dic-2025',
+    label: { en:'Jan–Dec 2025 (full year)', es:'Ene–Dic 2025 (año completo)', pt:'Jan–Dez 2025 (ano completo)' },
+    desc: { en:'The whole of 2025 on its own. There is no prior year to compare against, so this one reads as a single period.',
+            es:'Todo 2025 por sí solo. No hay año anterior contra el cual comparar, así que este se lee como un período único.',
+            pt:'Todo o 2025 sozinho. Não há ano anterior para comparar, então este se lê como um período único.' },
+    slots: {
+      '2026': { year:'2025', from:'2025-01-01', to:'2025-12-31', label:{en:'Jan–Dec 2025',es:'Ene–Dic 2025',pt:'Jan–Dez 2025'} },
+    } },
+];
+var TBD_DEFAULT_REPORT = 'ene-ago-2025-2026';
+function tbdReportBySlug(slug){
+  for(var i=0;i<TBD_REPORTS.length;i++){ if(TBD_REPORTS[i].slug===slug) return TBD_REPORTS[i]; }
+  return null;
+}
+function tbdActiveReport(){
+  return tbdReportBySlug(TBD_STATE.report) || tbdReportBySlug(TBD_DEFAULT_REPORT) || TBD_REPORTS[0];
+}
+/* TBD_PERIODS lo recalcula tbdApplyReport(); nunca se escribe a mano. */
+var TBD_PERIODS = {};
+function tbdApplyReport(slug){
+  var r = tbdReportBySlug(slug) || tbdActiveReport();
+  TBD_STATE.report = r.slug;
+  TBD_PERIODS = {};
+  Object.keys(r.slots).forEach(function(k){ TBD_PERIODS[k] = r.slots[k]; });
+  return r;
+}
+/* Un reporte compara dos periodos solo si declaro las dos ranuras. */
+function tbdIsCompare(){ return !!(TBD_PERIODS['2025'] && TBD_PERIODS['2026']); }
+function tbdSlotLabel(slot){
+  var sl = TBD_PERIODS[slot];
+  return sl && sl.label ? tbdT(sl.label) : '';
+}
 /* Titulo y explicacion del halo, escritos segun la marca seleccionada:
    viendo adulto se mide el halo hacia Junior, viendo Junior se mide el halo
    hacia adulto. Antes el texto estaba fijo hacia Junior. */
@@ -215,11 +271,16 @@ function tbdAgg(dl){
    Dolo arma su propia lista de dias (`_dailyItems`) en vez de usar
    `recomputeCreative()`. */
 function tbdCreativesForPeriod(territory, region, yearKey, pais, adTypeFilter){
-  var yd = YEARS_DATA[yearKey];
+  /* yearKey es el nombre de la RANURA ('2025'=anterior, '2026'=actual). El
+     anio de calendario sale de la ranura, porque un reporte puede poner 2025
+     en la ranura "actual" (caso del reporte de anio completo). Si el reporte
+     no declaro esta ranura, no hay periodo que leer. */
+  var per = TBD_PERIODS[yearKey];
+  if(!per) return [];
+  var yd = YEARS_DATA[per.year];
   if(!yd) return [];
   var slice = yd.slices[tbdOrgName()+'|'+region+'|Total'];
   var rows = slice ? slice.ranking_creativos : [];
-  var per = TBD_PERIODS[yearKey];
 
   var byAdName = {}; // ad_name -> [{row, rawDays, dailyItems}, ...] (uno por Video Name)
   rows.forEach(function(row){
@@ -279,11 +340,12 @@ function tbdCreativesForPeriod(territory, region, yearKey, pais, adTypeFilter){
    demas dimensiones) usa `tbdCreativesForPeriod()` (agrupado por Ad Name)
    arriba -- esta funcion es la unica excepcion, a proposito. ---------- */
 function tbdVideoRowsForPeriod(territory, region, yearKey, pais, adTypeFilter){
-  var yd = YEARS_DATA[yearKey];
+  var per = TBD_PERIODS[yearKey];
+  if(!per) return [];
+  var yd = YEARS_DATA[per.year];
   if(!yd) return [];
   var slice = yd.slices[tbdOrgName()+'|'+region+'|Total'];
   var rows = slice ? slice.ranking_creativos : [];
-  var per = TBD_PERIODS[yearKey];
   var out = [];
   rows.forEach(function(row){
     if(adTypeFilter && adTypeFilter!=='Todos' && row.ad_type!==adTypeFilter) return;
@@ -434,7 +496,7 @@ function tbdPortfolio(items){
    completamente separado de STATE (el del dashboard original). Nunca
    escroleable: cada click de pestana reemplaza #tbd-page por completo.
    ============================================================ */
-var TBD_STATE = { territory:'Brazil', tab:'portfolio', org:'Open English', viewMode:{}, viewLayout:'continuous' };
+var TBD_STATE = { territory:'Brazil', tab:'portfolio', org:'Open English', viewMode:{}, viewLayout:'continuous', report:null };
 var TBD_ORGS = ['Open English', 'Open English Junior'];
 var TBD_TERRITORIES = null; // se llena en tbdBoot() con COUNTRIES (menos el contenedor no-pais)
 var TBD_NAV = [
@@ -486,7 +548,7 @@ function tbdPaisOf(territory){ return territory==='Brazil' ? null : territory; }
    cubre es exactamente lo que "igualar funcionalidad" pide: toda la navegacion,
    etiquetas, encabezados de tabla y titulos de seccion. */
 var TBD_STR = {
-  period_label: {en:'Jan–Jul 2025 vs Jan–Jul 2026', es:'Ene–Jul 2025 vs Ene–Jul 2026', pt:'Jan–Jul 2025 vs Jan–Jul 2026'},
+
   kpi_l1k_adj: {en:'L/$1k adj. ★', es:'L/$1k adj. ★', pt:'L/$1k adj. ★'},
   kpi_cpl_adj: {en:'CPL adj.', es:'CPL adj.', pt:'CPL adj.'},
   kpi_cvr: {en:'CVR', es:'CVR', pt:'CVR'},
@@ -545,16 +607,23 @@ var TBD_STR = {
   col_month: {en:'Month', es:'Mes', pt:'Mês'},
   title_insights: {en:'Insights', es:'Insights', pt:'Insights'},
   title_direction: {en:'Creative Direction — what works, what doesn\'t, what to build next', es:'Dirección Creativa — qué funciona, qué no, qué construir después', pt:'Direção Criativa — o que funciona, o que não, o que construir a seguir'},
-  title_tests: {en:'Recommended Tests (2026)', es:'Tests Recomendados (2026)', pt:'Testes Recomendados (2026)'},
+  title_tests: {en:'Recommended Tests', es:'Tests Recomendados', pt:'Testes Recomendados'},
   tests_col_a: {en:'A · With existing creatives (no production)', es:'A · Con creativos existentes (sin producción)', pt:'A · Com criativos existentes (sem produção)'},
   tests_col_b: {en:'B · Requires new production', es:'B · Requiere producción nueva', pt:'B · Requer nova produção'},
   title_methodology: {en:'How TBD Dolo was built', es:'Cómo se construyó TBD Dolo', pt:'Como o TBD Dolo foi construído'},
   title_adjkpi: {en:'★ What are L/$1k adj. and CPL adj.?', es:'★ ¿Qué son L/$1k adj. y CPL adj.?', pt:'★ O que são L/$1k adj. e CPL adj.?'},
   no_data: {en:'Not enough days with real TV spend in both periods to compare.', es:'No hay suficientes días con inversión real de TV en ambos períodos para comparar.', pt:'Não há dias suficientes com investimento real de TV em ambos os períodos para comparar.'},
-  y25_label: {en:'Jan–Jul 2025', es:'Ene–Jul 2025', pt:'Jan–Jul 2025'},
-  y26_label: {en:'Jan–Jul 2026', es:'Ene–Jul 2026', pt:'Jan–Jul 2026'},
 };
-function tbdS(key){ return tbdT(TBD_STR[key] || {en:key,es:key,pt:key}); }
+/* y25_label / y26_label ya no son texto fijo: los pone el reporte activo. */
+function tbdS(key){
+  if(key==='y25_label') return tbdSlotLabel('2025');
+  if(key==='y26_label') return tbdSlotLabel('2026');
+  if(key==='period_label') return tbdIsCompare() ? tbdSlotLabel('2025')+' vs '+tbdSlotLabel('2026') : tbdSlotLabel('2026');
+  /* El titulo de Tests lleva el periodo sobre el que se recomienda, que es
+     siempre el periodo actual del reporte, no un anio escrito a mano. */
+  if(key==='title_tests') return tbdT(TBD_STR.title_tests)+' ('+tbdSlotLabel('2026')+')';
+  return tbdT(TBD_STR[key] || {en:key,es:key,pt:key});
+}
 
 function tbdApplyBrandTheme(){
   var isJr = TBD_STATE.org==='Open English Junior';
@@ -596,6 +665,8 @@ function tbdSaveSession(){
   try{
     var shell = document.getElementById('tbdShell');
     localStorage.setItem(TBD_SESSION_KEY, JSON.stringify({
+      report: TBD_STATE.report,
+      carousel: TBD_STATE.carousel, carouselMode: TBD_STATE.carouselMode,
       org: TBD_STATE.org, territory: TBD_STATE.territory, tab: TBD_STATE.tab,
       viewLayout: TBD_STATE.viewLayout, viewMode: TBD_STATE.viewMode,
       sbCollapsed: !!(shell && shell.classList.contains('sb-collapsed')),
@@ -618,6 +689,8 @@ function tbdRestoreSession(){
   if(!o) return null;
   if(o.viewLayout==='isolated' || o.viewLayout==='continuous') TBD_STATE.viewLayout = o.viewLayout;
   if(o.viewMode && typeof o.viewMode==='object') TBD_STATE.viewMode = o.viewMode;
+  if(o.carousel && typeof o.carousel==='object') TBD_STATE.carousel = o.carousel;
+  if(o.carouselMode && typeof o.carouselMode==='object') TBD_STATE.carouselMode = o.carouselMode;
   return o;
 }
 function tbdApplySessionSidebar(o){
@@ -725,9 +798,105 @@ function tbdRenderStamp(){
   var L = LANG, live = (typeof window.__TVADS_RELOAD_LIVE__==='function');
   el.textContent = (L==='en'?'Data as of ':L==='pt'?'Dados de ':'Data al ')+(TBD_DATA_DAY||'—')+(live?'':(L==='en'?' · snapshot':L==='pt'?' · retrato fixo':' · foto fija'));
 }
+/* ============================================================
+   MENU DE REPORTES
+   Al entrar sin reporte en la URL se muestran las tarjetas. Elegir una fija
+   el hash, y desde ahi el enlace ya abre directo ese reporte.
+   ============================================================ */
+function tbdReportCardsHTML(){
+  var L = LANG;
+  var t = {
+    title: L==='en'?'Which report do you want to open?':L==='pt'?'Qual relatório você quer abrir?':'¿Qué reporte quieres abrir?',
+    sub: L==='en'?'All of them read the same data and the same attribution engine. What changes is the window of time they cover.'
+       : L==='pt'?'Todos leem os mesmos dados e o mesmo motor de atribuição. O que muda é a janela de tempo que cobrem.'
+       : 'Todos leen los mismos datos y el mismo motor de atribución. Lo que cambia es la ventana de tiempo que cubren.',
+    single: L==='en'?'single period':L==='pt'?'período único':'período único',
+    compare: L==='en'?'year-on-year':L==='pt'?'ano a ano':'año contra año',
+  };
+  var cards = TBD_REPORTS.map(function(r){
+    var slots = Object.keys(r.slots);
+    var esComp = slots.length>1;
+    var rango = slots.map(function(k){ return tbdT(r.slots[k].label); }).join('  ·  ');
+    return '<button class="tbd-rep-card" data-report="'+esc(r.slug)+'">'+
+      '<div class="tbd-rep-chip'+(esComp?'':' single')+'">'+esc(esComp?t.compare:t.single)+'</div>'+
+      '<div class="tbd-rep-title">'+esc(tbdT(r.label))+'</div>'+
+      '<div class="tbd-rep-range">'+esc(rango)+'</div>'+
+      '<div class="tbd-rep-desc">'+esc(tbdT(r.desc))+'</div>'+
+      '<div class="tbd-rep-go">'+esc(L==='en'?'Open →':L==='pt'?'Abrir →':'Abrir →')+'</div>'+
+    '</button>';
+  }).join('');
+  return '<div class="tbd-rep-wrap">'+
+    '<div class="tbd-rep-head">'+esc(t.title)+'</div>'+
+    '<div class="tbd-rep-sub">'+esc(t.sub)+'</div>'+
+    '<div class="tbd-rep-grid">'+cards+'</div>'+
+  '</div>';
+}
+function tbdShowReportMenu(){
+  var host = document.getElementById('tbd-report-menu');
+  if(!host) return;
+  host.innerHTML = tbdReportCardsHTML();
+  host.classList.add('ready');
+  document.getElementById('tbdShell').classList.add('menu-open');
+  if(!host.dataset.wired){
+    host.dataset.wired = '1';
+    host.addEventListener('click', function(e){
+      var b = e.target.closest('[data-report]');
+      if(!b) return;
+      tbdOpenReport(b.dataset.report);
+    });
+  }
+}
+function tbdHideReportMenu(){
+  var host = document.getElementById('tbd-report-menu');
+  if(host) host.classList.remove('ready');
+  document.getElementById('tbdShell').classList.remove('menu-open');
+}
+function tbdOpenReport(slug){
+  tbdApplyReport(slug);
+  /* al cambiar de reporte cambia el universo de creativos, asi que la pestana
+     puede dejar de tener sentido; se vuelve al portafolio salvo que la actual
+     siga existiendo */
+  if(!TBD_RENDERERS[TBD_STATE.tab]) TBD_STATE.tab = 'portfolio';
+  tbdHideReportMenu();
+  tbdApplySinglePeriodClass();
+  tbdSetHash();
+  tbdRenderReportBadge();
+  tbdRenderNav();
+  tbdRenderTab();
+  tbdSaveSession();
+}
+/* Un reporte de un solo periodo colapsa los pares de periodo a una columna. */
+function tbdApplySinglePeriodClass(){
+  var sh = document.getElementById('tbdShell');
+  if(!sh) return;
+  sh.classList.toggle('single-period', !tbdIsCompare());
+}
+/* Chip en la barra superior con el reporte activo; al hacer clic vuelve al menu. */
+function tbdRenderReportBadge(){
+  var el = document.getElementById('tbd-report-badge');
+  if(!el) return;
+  var r = tbdActiveReport();
+  el.innerHTML = '<button class="tbd-rep-badge-btn" title="'+escAttr(LANG==='en'?'Change report':LANG==='pt'?'Trocar relatório':'Cambiar de reporte')+'">'+
+    '<span class="tbd-rep-badge-lbl">'+esc(tbdT(r.label))+'</span> <span class="tbd-rep-badge-caret">▾</span></button>';
+  if(!el.dataset.wired){
+    el.dataset.wired = '1';
+    el.addEventListener('click', function(){ tbdShowReportMenu(); });
+  }
+}
 function tbdBoot(){
+  /* El idioma lo fijaba startApp() de app.js, que solo corre cuando arranca el
+     dashboard viejo. Ahora TBD Dolo es la app de entrada y puede arrancar sin
+     que aquello se ejecute nunca, asi que lee su preferencia aqui. */
+  try{ var _l = localStorage.getItem('tvads_lang'); if(_l==='es'||_l==='en'||_l==='pt') LANG = _l; }catch(e){}
   TBD_TERRITORIES = ['Brazil'].concat((COUNTRIES||[]).filter(function(c){ return c!=='TV LATAM Excl Arg Mex'; }).sort());
   if(TBD_TERRITORIES.indexOf(TBD_STATE.territory)===-1) TBD_STATE.territory = TBD_TERRITORIES[0];
+  /* El reporte se resuelve ANTES que nada: define los periodos, y sin
+     periodos no hay datos que leer. Orden de prioridad: el hash (enlace
+     directo) manda; si no, la ultima sesion; si no, se muestra el menu. */
+  var hRep = tbdParseHash().report;
+  var sRep = (tbdLoadSession()||{}).report;
+  var sinElegir = !hRep && !sRep;
+  tbdApplyReport(hRep || sRep || TBD_DEFAULT_REPORT);
   /* La sesion guardada se aplica PRIMERO y el hash la pisa despues: un enlace
      directo tiene que ganarle siempre a la ultima preferencia del usuario. */
   var sess = tbdRestoreSession();
@@ -750,20 +919,40 @@ function tbdBoot(){
   tbdWireSidebarToggle();
   tbdRenderNav();
   tbdRenderTab();
+  tbdWireCarousels();
   if(!window.__TBD_PPT_WIRED__){ window.__TBD_PPT_WIRED__ = true; document.getElementById('tbd-btn-ppt').addEventListener('click', tbdDownloadPPT); tbdWireCreativeClicks(); tbdWireModalCleanup(); tbdWireTour(); }
   tbdApplySessionSidebar(sess);
+  tbdApplySinglePeriodClass();
+  tbdRenderReportBadge();
   tbdStartDayWatcher();
   tbdRenderStamp();
   tbdSaveSession();
+  /* Primera visita sin reporte ni en la URL ni en la sesion: se elige antes de
+     mostrar numeros, para que nadie lea un periodo que no pidio. */
+  if(sinElegir) tbdShowReportMenu();
   if(!window.__TBD_APP_TOUR_DONE__){ window.__TBD_APP_TOUR_DONE__ = true; setTimeout(tbdMaybeAutoStartTour, 300); }
 }
+/* El hash ahora empieza por el slug del reporte, para que un enlace abra
+   directo el reporte correcto:
+     #/ene-ago-2025-2026/portfolio/Brazil/Open%20English
+   Se sigue aceptando el formato viejo (#/tbd/...) y se manda al reporte
+   original, para no romper enlaces ya compartidos. */
 function tbdParseHash(){
-  var m = /^#\/tbd\/([^/]+)(?:\/([^/]+))?(?:\/(.+))?$/.exec(location.hash);
+  var m = /^#\/([^/]+)(?:\/([^/]+))?(?:\/([^/]+))?(?:\/(.+))?$/.exec(location.hash);
   if(!m) return {};
-  return { tab: m[1], territory: m[2] ? decodeURIComponent(m[2]) : null, org: m[3] ? decodeURIComponent(m[3]) : null };
+  var first = m[1];
+  if(first==='tbd'){
+    return { report:'ene-jul-2025-2026', tab:m[2]||null,
+             territory: m[3] ? decodeURIComponent(m[3]) : null,
+             org: m[4] ? decodeURIComponent(m[4]) : null };
+  }
+  if(!tbdReportBySlug(first)) return {};
+  return { report:first, tab:m[2]||null,
+           territory: m[3] ? decodeURIComponent(m[3]) : null,
+           org: m[4] ? decodeURIComponent(m[4]) : null };
 }
 function tbdHashString(){
-  return '#/tbd/'+TBD_STATE.tab+'/'+encodeURIComponent(TBD_STATE.territory)+'/'+encodeURIComponent(TBD_STATE.org);
+  return '#/'+tbdActiveReport().slug+'/'+TBD_STATE.tab+'/'+encodeURIComponent(TBD_STATE.territory)+'/'+encodeURIComponent(TBD_STATE.org);
 }
 function tbdSetHash(){
   location.hash = tbdHashString();
@@ -776,6 +965,14 @@ function tbdSetHashSilent(){
   history.replaceState(null, '', tbdHashString());
 }
 function tbdOnHashChange(){
+  /* si el enlace trae otro reporte, hay que rearmar los periodos antes de
+     volver a leer datos */
+  var _h = tbdParseHash();
+  if(_h.report && _h.report !== TBD_STATE.report){
+    tbdApplyReport(_h.report);
+    tbdApplySinglePeriodClass();
+    tbdRenderReportBadge();
+  }
   if(!document.getElementById('tbdShell').classList.contains('ready')) return;
   var h = tbdParseHash();
   if(!h.tab) return;
@@ -856,7 +1053,7 @@ function tbdRenderLangBtns(){
   if(!el) return;
   el.innerHTML = ['en','es','pt'].map(function(l){ return '<button class="iconbtn'+(LANG===l?' active':'')+'" data-lang="'+l+'">'+l.toUpperCase()+'</button>'; }).join('');
   Array.from(el.querySelectorAll('button')).forEach(function(b){
-    b.addEventListener('click', function(){ LANG=b.dataset.lang; localStorage.setItem('tvads_lang',LANG); tbdRenderLangBtns(); tbdRenderLayoutToggle(); tbdApplyTooltips(); tbdRenderNav(); tbdRenderFilters(); tbdRenderTab(); });
+    b.addEventListener('click', function(){ LANG=b.dataset.lang; localStorage.setItem('tvads_lang',LANG); tbdRenderLangBtns(); tbdRenderLayoutToggle(); tbdApplyTooltips(); tbdRenderNav(); tbdRenderFilters(); tbdRenderReportBadge(); tbdRenderTab(); var m=document.getElementById('tbd-report-menu'); if(m && m.classList.contains('ready')) tbdShowReportMenu(); });
   });
 }
 /* grupos colapsables del nav -- mismo patron que SB_COLLAPSED/sbGroup() del
@@ -1074,7 +1271,7 @@ function tbdArrow(v25, v26, higherBetter){
 function tbdKpiCard(label, v25, v26, fmtFn, higherBetter){
   return '<div class="tbd-kpi-card"><div class="tbd-kpi-label">'+esc(label)+'</div>'+
     '<div class="tbd-kpi-value">'+fmtFn(v25)+' → '+fmtFn(v26)+tbdArrow(v25,v26,higherBetter)+'</div>'+
-    '<div class="tbd-kpi-sub">'+esc(tbdS('y25_label'))+' → '+esc(tbdS('y26_label'))+'</div></div>';
+    '<div class="tbd-kpi-sub">'+esc(tbdIsCompare() ? tbdS('y25_label')+' → '+tbdS('y26_label') : tbdS('y26_label'))+'</div></div>';
 }
 function tbdCreativeNameLinkHTML(r, year, showPain){
   var pain = showPain && r.pain_point ? '<br><small class="tbd-pain">'+esc(r.pain_point)+'</small>' : '';
@@ -1200,7 +1397,7 @@ function tbdOpenDimDrillModal(drillId, category){
    launch/wearout/adjkpi/insights/tests/methodology). */
 var TBD_HOWTO = {
   adjkpi: {en:'This page explains, in words, the single most important idea in the whole app: why raw numbers alone can lie about a creative\'s quality. Read it once before trusting any ranking elsewhere.', es:'Esta página explica, en palabras, la idea más importante de toda la app: por qué los números crudos solos pueden mentir sobre la calidad de un creativo. Léela una vez antes de confiar en cualquier ranking del resto del dashboard.', pt:'Esta página explica, em palavras, a ideia mais importante de todo o app: por que os números brutos sozinhos podem enganar sobre a qualidade de um criativo. Leia uma vez antes de confiar em qualquer ranking do resto do dashboard.'},
-  portfolio: {en:'The 5 cards compare the WHOLE portfolio, 2025 vs 2026 (not one creative). The two tables below show the Top 10 creatives of each year by demand-adjusted L/$1k — use them to spot which names repeat at the top across years. The toggle above the tables switches between Ad Name (versions merged) and Video Name (each version competing on its own).', es:'Las 5 tarjetas comparan el portafolio COMPLETO, 2025 vs 2026 (no un creativo puntual). Las dos tablas de abajo muestran el Top 10 de creativos de cada año por L/$1k ajustado por demanda — úsalas para ver qué nombres se repiten arriba entre años. El interruptor arriba de las tablas cambia entre Ad Name (versiones fusionadas) y Video Name (cada versión compitiendo por su cuenta).', pt:'Os 5 cartões comparam o portfólio INTEIRO, 2025 vs 2026 (não um criativo específico). As duas tabelas abaixo mostram o Top 10 de criativos de cada ano por L/$1k ajustado por demanda — use-as para ver quais nomes se repetem no topo entre os anos. O alternador acima das tabelas muda entre Ad Name (versões fundidas) e Video Name (cada versão competindo por conta própria).'},
+  portfolio: {en:'The 5 cards compare the WHOLE portfolio between the two periods of this report (not one creative). The two tables below show the Top 10 creatives of each year by demand-adjusted L/$1k — use them to spot which names repeat at the top across years. The toggle above the tables switches between Ad Name (versions merged) and Video Name (each version competing on its own).', es:'Las 5 tarjetas comparan el portafolio COMPLETO entre los dos períodos de este reporte (no un creativo puntual). Las dos tablas de abajo muestran el Top 10 de creativos de cada año por L/$1k ajustado por demanda — úsalas para ver qué nombres se repiten arriba entre años. El interruptor arriba de las tablas cambia entre Ad Name (versiones fusionadas) y Video Name (cada versión compitiendo por su cuenta).', pt:'Os 5 cartões comparam o portfólio INTEIRO, 2025 vs 2026 (não um criativo específico). As duas tabelas abaixo mostram o Top 10 de criativos de cada ano por L/$1k ajustado por demanda — use-as para ver quais nomes se repetem no topo entre os anos. O alternador acima das tabelas muda entre Ad Name (versões fundidas) e Video Name (cada versão competindo por conta própria).'},
   promo: {en:'Ranked by demand-adjusted L/$1k (★), highest first — this is the fair ranking across months. Raw L/$1k next to it is only useful for planning actual volume in a specific flight window, not for comparing creative quality. Toggle to Video Name to see V1/V2/V3 compete directly instead of merged into one Ad Name.', es:'Ordenado por L/$1k ajustado por demanda (★), de mayor a menor — ese es el ranking justo entre meses. El L/$1k crudo al lado solo sirve para planear volumen real en una ventana de flight específica, no para comparar calidad creativa. Cambia a Video Name para ver a V1/V2/V3 competir directamente en vez de fusionados en un solo Ad Name.', pt:'Ordenado por L/$1k ajustado por demanda (★), do maior para o menor — esse é o ranking justo entre meses. O L/$1k bruto ao lado só serve para planejar volume real numa janela de flight específica, não para comparar qualidade criativa. Mude para Video Name para ver V1/V2/V3 competindo diretamente em vez de fundidos num só Ad Name.'},
   generic: {en:'Same ranking logic as Promo, but only for creatives with no explicit offer — compare this list against Promo\'s to see whether an explicit offer is actually needed to perform well in this territory. Toggle to Video Name to see V1/V2/V3 compete directly.', es:'Misma lógica de ranking que Promo, pero solo para creativos sin oferta explícita — compara esta lista contra la de Promo para ver si de verdad hace falta una oferta explícita para rendir bien en este territorio. Cambia a Video Name para ver a V1/V2/V3 competir directamente.', pt:'Mesma lógica de ranking que Promo, mas só para criativos sem oferta explícita — compare esta lista com a de Promo para ver se realmente é preciso uma oferta explícita para performar bem neste território. Mude para Video Name para ver V1/V2/V3 competindo diretamente.'},
   pvg: {en:'Two one-row rollups (all Promo creatives combined vs. all Generic combined), not individual creatives — this answers "does having an offer help on average", separate from which specific creative wins.', es:'Dos rollups de una fila (todos los Promo combinados vs. todos los Generic combinados), no creativos individuales — esto responde "¿ayuda tener oferta en promedio?", aparte de cuál creativo puntual gana.', pt:'Dois rollups de uma linha (todos os Promo combinados vs. todos os Generic combinados), não criativos individuais — isso responde "ter oferta ajuda em média?", à parte de qual criativo específico vence.'},
@@ -1300,8 +1497,8 @@ function tbdDimensionTakeaway(r25, r26, title){
   return LANG==='en'
     ? '<b>Takeaway:</b> "'+best.label+'" outperforms "'+worst.label+'" by '+fmtNum(gap,0)+'% in 2026 (L/$1k adj. '+fmtNum(best.l1k_adj,0)+' vs '+fmtNum(worst.l1k_adj,0)+', '+best.n+' vs '+worst.n+' creatives). '+(consistent?'It also led in 2025 — this is a durable pattern worth briefing as a default, not a one-off result.':(prior?'In 2025 the leader was different ("'+r25[0].label+'") — treat this as an emerging signal, not yet a proven rule.':'There is no 2025 data to confirm this is consistent, treat with caution.'))
     : LANG==='pt'
-    ? '<b>Takeaway:</b> "'+best.label+'" supera "'+worst.label+'" em '+fmtNum(gap,0)+'% em 2026 (L/$1k adj. '+fmtNum(best.l1k_adj,0)+' vs '+fmtNum(worst.l1k_adj,0)+', '+best.n+' vs '+worst.n+' criativos). '+(consistent?'Também liderou em 2025 — é um padrão durável que vale a pena usar como padrão de briefing, não um resultado isolado.':(prior?'Em 2025 o líder foi outro ("'+r25[0].label+'") — trate isso como um sinal emergente, ainda não uma regra comprovada.':'Não há dados de 2025 para confirmar consistência, trate com cautela.'))
-    : '<b>Takeaway:</b> "'+best.label+'" rinde '+fmtNum(gap,0)+'% mejor que "'+worst.label+'" en 2026 (L/$1k adj. '+fmtNum(best.l1k_adj,0)+' vs '+fmtNum(worst.l1k_adj,0)+', '+best.n+' vs '+worst.n+' creativos). '+(consistent?'También lideró en 2025 — es un patrón durable, vale la pena briefearlo como default, no como resultado aislado.':(prior?'En 2025 el líder fue distinto ("'+r25[0].label+'") — trata esto como una señal emergente, todavía no una regla comprobada.':'No hay datos de 2025 para confirmar que sea consistente, trátalo con cautela.'));
+    ? '<b>Takeaway:</b> "'+best.label+'" supera "'+worst.label+'" em '+fmtNum(gap,0)+'% em '+tbdSlotLabel('2026')+' (L/$1k adj. '+fmtNum(best.l1k_adj,0)+' vs '+fmtNum(worst.l1k_adj,0)+', '+best.n+' vs '+worst.n+' criativos). '+(consistent?'Também liderou em 2025 — é um padrão durável que vale a pena usar como padrão de briefing, não um resultado isolado.':(prior?'Em 2025 o líder foi outro ("'+r25[0].label+'") — trate isso como um sinal emergente, ainda não uma regra comprovada.':'Não há dados de 2025 para confirmar consistência, trate com cautela.'))
+    : '<b>Takeaway:</b> "'+best.label+'" rinde '+fmtNum(gap,0)+'% mejor que "'+worst.label+'" en '+tbdSlotLabel('2026')+' (L/$1k adj. '+fmtNum(best.l1k_adj,0)+' vs '+fmtNum(worst.l1k_adj,0)+', '+best.n+' vs '+worst.n+' creativos). '+(consistent?'También lideró en 2025 — es un patrón durable, vale la pena briefearlo como default, no como resultado aislado.':(prior?'En 2025 el líder fue distinto ("'+r25[0].label+'") — trata esto como una señal emergente, todavía no una regla comprobada.':'No hay datos de 2025 para confirmar que sea consistente, trátalo con cautela.'));
 }
 function tbdDrillHintHTML(){
   var L = LANG;
@@ -1605,9 +1802,10 @@ var TBD_RENDERERS = {
       var dir = yoy>2 ? (L==='en'?'grew':L==='pt'?'cresceu':'creció')
               : yoy<-2 ? (L==='en'?'shrank':L==='pt'?'encolheu':'se encogió')
               : (L==='en'?'stayed flat':L==='pt'?'ficou estavel':'se mantuvo plano');
-      var mHead = L==='en'?'Separately: the market itself, Jan–Jul 2025 vs Jan–Jul 2026'
-        : L==='pt'?'Separadamente: o próprio mercado, Jan–Jul 2025 vs Jan–Jul 2026'
-        : 'Aparte: el mercado en sí, Ene–Jul 2025 vs Ene–Jul 2026';
+      var _per = tbdS('period_label');
+      var mHead = L==='en'?'Separately: the market itself, '+_per
+        : L==='pt'?'Separadamente: o próprio mercado, '+_per
+        : 'Aparte: el mercado en sí, '+_per;
       var mBody = L==='en'
         ? 'Once the repeating month pattern is removed, demand in '+data.territory+' '+dir+' '+fmtNum(Math.abs(yoy),1)+'% between the two periods (level '+fmtNum(s.market_25,1)+' → '+fmtNum(s.market_26,1)+', where 100 = the 2023 average). <b>This number is context, not a correction.</b> It is deliberately kept out of the divisor: if we also divided by it, a creative that ran in a collapsing market would look better precisely because the market collapsed. Read it as the headwind or tailwind the team was working against.'
         : L==='pt'
@@ -3808,6 +4006,9 @@ TBD_RULES.push({ id:'T-CTA', dest:'TEST', prio:20,
 
 TBD_RULES.push({ id:'T-REACTIVAR', dest:'TEST', prio:40,
   run: function(ctx, data, led){
+    /* Reactivar exige un periodo anterior del cual rescatar una pieza. En un
+       reporte de periodo unico no hay de donde. */
+    if(!tbdIsCompare()) return null;
     var vivos = {};
     data.y26.forEach(function(r){ vivos[r.nombre]=1; });
     var gasto25 = data.p25.s||0;
@@ -3838,6 +4039,10 @@ TBD_RULES.push({ id:'T-REACTIVAR', dest:'TEST', prio:40,
     };
   },
   vacio: function(ctx, data){
+    if(!tbdIsCompare()) return tbdL(
+      'This report covers a single period ('+tbdSlotLabel('2026')+'), so there is no earlier rotation to bring a proven creative back from. Open the year-on-year report to look for one.',
+      'Este relatorio cobre um unico periodo ('+tbdSlotLabel('2026')+'), entao nao ha rotacao anterior de onde resgatar um criativo ja comprovado. Abra o relatorio ano a ano para procurar um.',
+      'Este reporte cubre un solo período ('+tbdSlotLabel('2026')+'), así que no hay rotación anterior de donde rescatar un creativo ya probado. Abre el reporte año contra año para buscar uno.');
     var vivos = {}; data.y26.forEach(function(r){ vivos[r.nombre]=1; });
     var fuera = data.y25.filter(function(r){ return !vivos[r.nombre]; });
     return tbdL('In '+ctx.pais+', '+ctx.marca+': '+fuera.length+' of the '+ctx.nCre25+' creatives of 2025 are not running in 2026, but none of them combines 5+ days on air, 5% of the 2025 budget, and a number above '+tbdNK(ctx.l1kPort26*(1+(ctx.err||8)/100))+'. Nothing worth reactivating for free.',
@@ -3905,7 +4110,7 @@ TBD_RULES.push({ id:'T-FORMATO', dest:'TEST', prio:30,
     var gap = b.l1k_adj>0 ? (a.l1k_adj-b.l1k_adj)/b.l1k_adj*100 : 0;
     return tbdL('In '+ctx.pais+', '+ctx.marca+' already runs both '+tbdQ(a.label)+' ('+a.nCre+' pieces, '+tbdNK(a.l1k_adj)+' L/$1k adj.) and '+tbdQ(b.label)+' ('+b.nCre+' pieces, '+tbdNK(b.l1k_adj)+'), '+tbdNP(gap)+' apart on '+tbdUSD(a.s+b.s)+'. The format question is already being answered by the rotation — read it in the dimensions table, do not spend on a test.',
       'Em '+ctx.pais+', '+ctx.marca+' ja roda '+tbdQ(a.label)+' ('+a.nCre+' pecas, '+tbdNK(a.l1k_adj)+' L/$1k adj.) e '+tbdQ(b.label)+' ('+b.nCre+' pecas, '+tbdNK(b.l1k_adj)+'), '+tbdNP(gap)+' de diferença em '+tbdUSD(a.s+b.s)+'. A questao de formato já está sendo respondida pela rotação — leia na tabela de dimensoes, não gaste num teste.',
-      'En '+ctx.pais+', '+ctx.marca+' ya corre tanto '+tbdQ(a.label)+' ('+a.nCre+' piezas, '+tbdNK(a.l1k_adj)+' L/$1k adj.) como '+tbdQ(b.label)+' ('+b.nCre+' piezas, '+tbdNK(b.l1k_adj)+'), con '+tbdNP(gap)+' de diferencia sobre '+tbdUSD(a.s+b.s)+'. La pregunta de formato ya la esta respondiendo la rotación — leela en la tabla de dimensiones, no gastes en un test.');
+      'En '+ctx.pais+', '+ctx.marca+' ya corre tanto '+tbdQ(a.label)+' ('+a.nCre+' piezas, '+tbdNK(a.l1k_adj)+' L/$1k adj.) como '+tbdQ(b.label)+' ('+b.nCre+' piezas, '+tbdNK(b.l1k_adj)+'), con '+tbdNP(gap)+' de diferencia sobre '+tbdUSD(a.s+b.s)+'. La pregunta de formato ya la está respondiendo la rotación — léela en la tabla de dimensiones, no gastes en un test.');
   }
 });
 
@@ -4280,7 +4485,7 @@ function tbdInsightsHTML(data){
   var cards = tbdDeepInsights(data);
   if(!cards.length) return '<h2 class="tbd-section-title">'+esc(tbdS('title_insights'))+' — '+esc(data.territory)+'</h2>'+tbdHowToCard('insights')+'<p style="color:var(--ink-faint);">'+esc(tbdS('no_data'))+'</p>';
   return '<h2 class="tbd-section-title">'+esc(tbdS('title_insights'))+' — '+esc(data.territory)+'</h2>'+tbdHowToCard('insights')+
-    '<div class="tbd-two-col">'+cards.map(function(c){
+    '<div class="tbd-cards-col">'+cards.map(function(c){
     return '<div class="card" style="margin-bottom:12px;"><div style="font-size:20px;">'+c.icon+'</div><div style="font-weight:800;font-size:13px;margin:6px 0 4px;">'+esc(c.title)+'</div><div style="font-size:12px;color:var(--ink-faint);line-height:1.5;">'+esc(c.body)+'</div></div>';
   }).join('')+'</div>';
 }
@@ -4331,10 +4536,10 @@ function tbdComputeTests(data){
   });
   /* si un lado quedo vacio, se dice por que -- con cifras, nunca en blanco */
   if(!A.length && res.vacios.tests.length) A.push({ t:'—', color:'var(--tbd-deep)',
-    title: tbdL('No zero-cost test is readable here','Nenhum teste de custo zero e legivel aqui','Ningun test de costo cero es legible aca'),
+    title: tbdL('No zero-cost test is readable here','Nenhum teste de custo zero e legivel aqui','Ningún test de costo cero es legible acá'),
     situation: res.vacios.tests[0], what:'', hypothesis:'', check:'', why:'' });
   if(!B.length && res.vacios.tests.length) B.push({ t:'—', color:'var(--tbd-deep)',
-    title: tbdL('No new production is justified here yet','Nenhuma producao nova se justifica aqui ainda','Todavia no se justifica ninguna produccion nueva aca'),
+    title: tbdL('No new production is justified here yet','Nenhuma producao nova se justifica aqui ainda','Todavía no se justifica ninguna producción nueva acá'),
     situation: res.vacios.tests[res.vacios.tests.length-1], what:'', hypothesis:'', check:'', why:'' });
   return { testsA:A, testsB:B };
 }
@@ -4405,6 +4610,87 @@ function tbdLeadsDefinitionBox(){
     '<div class="tbd-alertbox-h">\u26A0 '+esc(t.head)+'</div>'+
     '<ul class="tbd-alertbox-list"><li>'+t.l1+'</li><li>'+t.l2+'</li><li>'+t.l3+'</li><li>'+t.l4+'</li></ul>'+
   '</div>';
+}
+/* ============================================================
+   CARRUSEL DE PASOS
+   Un bloque largo de explicacion se parte en pasos: pestanas arriba, un panel
+   a la vez, y anterior/siguiente para recorrerlo en orden. El interruptor
+   "Todo" lo despliega de corrido (util para leer seguido o imprimir).
+   El estado vive en TBD_STATE para que sobreviva al re-render de la pestana.
+   ============================================================ */
+function tbdCarStep(id){
+  TBD_STATE.carousel = TBD_STATE.carousel || {};
+  return TBD_STATE.carousel[id] || 0;
+}
+function tbdCarMode(id){
+  TBD_STATE.carouselMode = TBD_STATE.carouselMode || {};
+  return TBD_STATE.carouselMode[id] || 'grouped';   // agrupado por defecto
+}
+function tbdCarouselHTML(id, pasos){
+  if(!pasos || !pasos.length) return '';
+  var modo = tbdCarMode(id);
+  var idx = Math.min(tbdCarStep(id), pasos.length-1);
+  var L = LANG;
+  var tAll = L==='en'?'Show all':L==='pt'?'Ver tudo':'Ver todo';
+  var tStep = L==='en'?'Step by step':L==='pt'?'Passo a passo':'Paso a paso';
+  var tPrev = L==='en'?'Previous':L==='pt'?'Anterior':'Anterior';
+  var tNext = L==='en'?'Next':L==='pt'?'Siguiente':'Siguiente';
+  var tOf = L==='en'?'of':L==='pt'?'de':'de';
+
+  var toggle = '<div class="tbd-car-modes" data-car-modes="'+esc(id)+'">'+
+    '<button class="tbd-car-mode'+(modo==='grouped'?' on':'')+'" data-car-mode="grouped">'+esc(tStep)+'</button>'+
+    '<button class="tbd-car-mode'+(modo==='all'?' on':'')+'" data-car-mode="all">'+esc(tAll)+'</button>'+
+  '</div>';
+
+  if(modo==='all'){
+    return '<div class="tbd-car" data-car="'+esc(id)+'">'+toggle+
+      pasos.map(function(pp){
+        return '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(pp.titulo)+'</div>'+pp.html+'</div>';
+      }).join('')+
+    '</div>';
+  }
+  var tabs = pasos.map(function(pp,i){
+    return '<button class="tbd-car-tab'+(i===idx?' on':'')+'" data-car-go="'+i+'">'+
+      '<span class="tbd-car-num">'+(i+1)+'</span>'+esc(pp.titulo)+'</button>';
+  }).join('');
+  var actual = pasos[idx];
+  return '<div class="tbd-car" data-car="'+esc(id)+'">'+toggle+
+    '<div class="tbd-car-tabs">'+tabs+'</div>'+
+    '<div class="tbd-car-panel"><div class="tbd-car-panel-h">'+esc(actual.titulo)+'</div>'+actual.html+'</div>'+
+    '<div class="tbd-car-nav">'+
+      '<button class="tbd-car-btn" data-car-go="'+(idx-1)+'"'+(idx===0?' disabled':'')+'>‹ '+esc(tPrev)+'</button>'+
+      '<span class="tbd-car-count">'+(idx+1)+' '+esc(tOf)+' '+pasos.length+'</span>'+
+      '<button class="tbd-car-btn primary" data-car-go="'+(idx+1)+'"'+(idx===pasos.length-1?' disabled':'')+'>'+esc(tNext)+' ›</button>'+
+    '</div>'+
+  '</div>';
+}
+/* Un solo listener delegado para todos los carruseles de la pagina. */
+function tbdWireCarousels(){
+  if(window.__TBD_CAR_WIRED__) return;
+  window.__TBD_CAR_WIRED__ = true;
+  document.addEventListener('click', function(e){
+    var b = e.target.closest('[data-car-go],[data-car-mode]');
+    if(!b) return;
+    var wrap = b.closest('[data-car]');
+    if(!wrap) return;
+    var id = wrap.getAttribute('data-car');
+    TBD_STATE.carousel = TBD_STATE.carousel || {};
+    TBD_STATE.carouselMode = TBD_STATE.carouselMode || {};
+    if(b.hasAttribute('data-car-mode')){
+      TBD_STATE.carouselMode[id] = b.getAttribute('data-car-mode');
+    } else {
+      var i = parseInt(b.getAttribute('data-car-go'), 10);
+      if(isNaN(i) || i < 0) return;
+      TBD_STATE.carousel[id] = i;
+    }
+    tbdSaveSession();
+    /* se vuelve a pintar solo la pestana, conservando el scroll: el carrusel
+       esta a media pagina y saltar arriba seria perder el sitio */
+    var sc = document.getElementById('tbd-main');
+    var y = sc ? sc.scrollTop : 0;
+    tbdRenderTab();
+    if(sc) sc.scrollTop = y;
+  });
 }
 function tbdAdjKpiHTML(data){
   var L = LANG;
@@ -4486,14 +4772,20 @@ function tbdAdjKpiHTML(data){
     : '<ul class="tbd-explain-list"><li><b>Usa el numero ajustado</b> para decidir que creativo es mejor, para detectar desgaste real y para decisiones de go/no-go.</li>'+
       '<li><b>Usa el numero crudo</b> para planear volumen real de leads y presupuesto de una ventana especifica \u2014 la realidad no se ajusta: en un mes frio de verdad vas a traer menos leads.</li></ul>';
 
+  /* Los 5 bloques ya no se apilan: son los pasos del carrusel. El orden es el
+     de lectura -- primero por que, luego como, luego el ejemplo, luego el
+     espejo con CPL y al final cuando usar cada numero. */
+  var pasos = [
+    { titulo: head,      html: '<p style="font-size:12.5px;line-height:1.6;color:var(--ink-soft);">'+esc(oneLiner)+'</p>' },
+    { titulo: stepsHead, html: steps },
+    { titulo: exHead,    html: example },
+    { titulo: cplHead,   html: '<p style="font-size:12.5px;line-height:1.6;color:var(--ink-soft);">'+cplTxt+'</p>' },
+    { titulo: useHead,   html: useTxt },
+  ];
   return '<h2 class="tbd-section-title">'+esc(tbdS('title_adjkpi'))+'</h2>'+
     tbdLeadsDefinitionBox()+
     tbdHowToCard('adjkpi')+
-    '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(head)+'</div><p style="font-size:12.5px;line-height:1.6;color:var(--ink-soft);">'+esc(oneLiner)+'</p></div>'+
-    '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(stepsHead)+'</div>'+steps+'</div>'+
-    '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(exHead)+'</div>'+example+'</div>'+
-    '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(cplHead)+'</div><p style="font-size:12.5px;line-height:1.6;color:var(--ink-soft);">'+cplTxt+'</p></div>'+
-    '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(useHead)+'</div>'+useTxt+'</div>';
+    tbdCarouselHTML('adjkpi', pasos);
 }
 var TBD_METHODOLOGY_ITEMS = [
   { label:{en:'Data source',es:'Fuente de datos',pt:'Fonte de dados'},
@@ -4641,7 +4933,7 @@ function tbdPptDividerSlide(pres, pal, territory){
   var s = pres.addSlide();
   s.background = { color:pal.bg };
   s.addText(esc0(territory), { x:0,y:3.1,w:13.3,h:1.3, fontSize:44, bold:true, color:'FFFFFF', align:'center', fontFace:'Calibri' });
-  s.addText('Jan–Jul 2025 vs Jan–Jul 2026', { x:0,y:4.35,w:13.3,h:0.5, fontSize:14, italic:true, color:pal.boxLabel, align:'center', fontFace:'Calibri' });
+  s.addText(tbdS('period_label'), { x:0,y:4.35,w:13.3,h:0.5, fontSize:14, italic:true, color:pal.boxLabel, align:'center', fontFace:'Calibri' });
 }
 function esc0(s){ return s==null ? '' : String(s); }
 /* Slide A: KPIs (5 tarjetas) + hasta 6 hallazgos reales (nunca relleno --
@@ -5074,7 +5366,7 @@ function tbdPptCoverSlide(pres, brand, territories){
   s.background = { color:pal.bg };
   s.addText('TBD Dolo', { x:0,y:2.1,w:13.3,h:1.0, fontSize:40, bold:true, color:'FFFFFF', align:'center', fontFace:'Calibri' });
   s.addText(brand+' · TV Creatives Performance Analysis', { x:0,y:3.05,w:13.3,h:0.5, fontSize:16, color:pal.boxLabel, align:'center', fontFace:'Calibri' });
-  s.addText('Jan–Jul 2025 vs Jan–Jul 2026 · Brand TV Channels · Demand-adjusted KPIs (★ adj.)', { x:0,y:3.6,w:13.3,h:0.4, fontSize:12, italic:true, color:pal.boxLabel, align:'center', fontFace:'Calibri' });
+  s.addText(tbdS('period_label')+' · Brand TV Channels · Demand-adjusted KPIs (★ adj.)', { x:0,y:3.6,w:13.3,h:0.4, fontSize:12, italic:true, color:pal.boxLabel, align:'center', fontFace:'Calibri' });
   s.addText(territories.join(' · '), { x:1,y:4.6,w:11.3,h:1.6, fontSize:10, color:'FFFFFF', align:'center', valign:'top', fontFace:'Calibri' });
   s.addText('TBD Dolo — TV Ads Performance', { x:0.35,y:7.15,w:12.6,h:0.3, fontSize:8, color:pal.boxLabel, fontFace:'Calibri' });
 }
@@ -5226,9 +5518,9 @@ function tbdWireModalCleanup(){
 var TBD_TOUR_IDX = 0;
 var TBD_TOUR_STEPS = [
   { title:{en:'Welcome to TBD Dolo',es:'Bienvenido a TBD Dolo',pt:'Bem-vindo ao TBD Dolo'},
-    body:{en:'An executive report comparing Jan–Jul 2025 vs Jan–Jul 2026, demand-adjusted, by country. This tour covers every tab and control. Replay it anytime from the 🎓 icon.',
-      es:'Un reporte ejecutivo que compara Ene–Jul 2025 vs Ene–Jul 2026, ajustado por demanda, por país. Este recorrido cubre cada pestaña y control. Repítelo cuando quieras desde el ícono 🎓.',
-      pt:'Um relatório executivo que compara Jan–Jul 2025 vs Jan–Jul 2026, ajustado por demanda, por país. Este tour cobre cada aba e controle. Repita quando quiser pelo ícone 🎓.'} },
+    body:{en:'An executive report for {PERIODO}, demand-adjusted, by country. This tour covers every tab and control. Replay it anytime from the 🎓 icon.',
+      es:'Un reporte ejecutivo de {PERIODO}, ajustado por demanda, por país. Este recorrido cubre cada pestaña y control. Repítelo cuando quieras desde el ícono 🎓.',
+      pt:'Um relatório executivo de {PERIODO}, ajustado por demanda, por país. Este tour cobre cada aba e controle. Repita quando quiser pelo ícone 🎓.'} },
   { selector:'#tbd-sel-org', tab:'portfolio', title:{en:'Brand switch: Open English / Open English Junior',es:'Interruptor de marca: Open English / Open English Junior',pt:'Alternador de marca: Open English / Open English Junior'},
     body:{en:'Every tab, KPI, insight and the PPT export follow this switch — pick Open English or Open English Junior to see that brand\'s own creatives. The color theme (blue vs. orange) and the "Cross-brand · JR Halo" tab change with it too (JR Halo only applies with Open English selected).',
       es:'Cada pestaña, KPI, insight y la descarga de PPT siguen este interruptor — elige Open English u Open English Junior para ver los creativos de esa marca. El tema de color (azul vs. naranja) y la pestaña "Cruce de marca · JR Halo" también cambian con él (JR Halo solo aplica con Open English seleccionado).',
@@ -5355,7 +5647,9 @@ function tbdRenderTourStep(){
   var finishT = LANG==='en'?'Finish':LANG==='pt'?'Concluir':'Finalizar';
   document.getElementById('tbd-tour-progress').textContent = (TBD_TOUR_IDX+1)+' / '+TBD_TOUR_STEPS.length;
   document.getElementById('tbd-tour-title').textContent = tbdT(step.title);
-  document.getElementById('tbd-tour-body').textContent = tbdT(step.body);
+  /* {PERIODO} se resuelve al pintar, no al definir el array: los periodos
+     dependen del reporte y ese se elige despues de cargar el script. */
+  document.getElementById('tbd-tour-body').textContent = String(tbdT(step.body)).replace('{PERIODO}', tbdS('period_label'));
   document.getElementById('tbd-tour-skip').textContent = skipT;
   document.getElementById('tbd-tour-prev').textContent = backT;
   document.getElementById('tbd-tour-prev').style.visibility = TBD_TOUR_IDX===0 ? 'hidden' : 'visible';
@@ -5375,7 +5669,13 @@ function tbdEndTour(){
   document.getElementById('tbd-tour-highlight').style.display='none';
   localStorage.setItem('tbd_dolo_tour_seen','1');
 }
-function tbdMaybeAutoStartTour(){ if(!localStorage.getItem('tbd_dolo_tour_seen')) tbdStartTour(); }
+function tbdMaybeAutoStartTour(){
+  /* si todavia no se eligio reporte, el menu esta arriba: el tour tendria que
+     explicar una pantalla que el usuario aun no ve */
+  var m = document.getElementById('tbd-report-menu');
+  if(m && m.classList.contains('ready')) return;
+  if(!localStorage.getItem('tbd_dolo_tour_seen')) tbdStartTour();
+}
 function tbdWireTour(){
   document.getElementById('tbd-tour-next').addEventListener('click', function(){
     if(TBD_TOUR_IDX >= TBD_TOUR_STEPS.length-1) tbdEndTour(); else { TBD_TOUR_IDX++; tbdRenderTourStep(); }
