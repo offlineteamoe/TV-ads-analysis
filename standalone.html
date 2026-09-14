@@ -216,6 +216,22 @@ html[data-tbd-brand="jr"]{ --tbd-accent:var(--oejr); --tbd-deep:#4A2E15; --tbd-d
 #tbdShell.single-period .tbd-two-col > div:first-child{display:none;}
 .tbd-cards-col{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px;}
 /* ---------- carrusel de pasos ---------- */
+/* La barra de TBD lleva mas controles que la del dashboard viejo (filtros,
+   marca, layout, reporte, PPT, conmutador, tour, tema, idiomas). En pantallas
+   angostas se envuelve en dos lineas en vez de empujar botones fuera de la
+   vista, que era lo que pasaba. Solo aplica a TBD: la barra del dashboard
+   original no se toca. */
+#tbdShell .topbar-inner{flex-wrap:wrap; row-gap:8px;}
+#tbdShell .topbar-inner > div[style*="flex:1"]{flex:1 1 0; min-width:0;}
+#tbdShell .iconbtns{flex-wrap:wrap; row-gap:6px;}
+.tbd-brand-stamp{padding:0 14px 10px; margin-top:-8px;}
+.tbd-brand-stamp .tbd-stamp{white-space:normal; line-height:1.35;}
+.tbd-rep-badge-btn{max-width:170px;}
+.tbd-rep-badge-lbl{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+/* nombre del reporte activo bajo la marca, en la barra lateral */
+#tbd-brand-report{padding:0 14px 12px; margin-top:-6px;}
+.tbd-brand-rep-name{font-size:13px; font-weight:800; color:var(--tbd-accent); line-height:1.3;}
+.tbd-brand-rep-kind{font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-top:2px;}
 /* ---------- bloques plegables (explicaciones) ---------- */
 .tbd-fold{border:1px solid var(--border); border-radius:10px; margin:0 0 8px; background:var(--surface); overflow:hidden;}
 .tbd-fold-h{display:flex; align-items:center; gap:9px; width:100%; border:none; background:transparent; padding:9px 13px; cursor:pointer; font:inherit; text-align:left; color:var(--ink-soft);}
@@ -549,19 +565,19 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
 <div id="tbd-report-menu"></div>
   <button id="tbd-sidebar-toggle">☰</button>
   <div id="tbd-sidebar">
-    <div class="sb-brand"><span class="dot" style="background:var(--tbd-accent)"></span><span>TBD DOLO</span></div>
+    <div class="sb-brand tbd-brand"><span class="dot" style="background:var(--tbd-accent)"></span><span>TBD DOLO</span></div>
+    <div id="tbd-brand-report"></div>
+    <div class="tbd-brand-stamp"><span class="tbd-stamp" id="tbd-data-stamp"></span></div>
     <div id="tbd-nav"></div>
   </div>
   <div id="tbd-main">
     <div class="topbar"><div class="topbar-inner">
-      <div id="tbd-report-badge"></div>
       <div id="tbd-filters"></div>
       <div style="flex:1"></div>
       <div class="iconbtns">
-        <span class="tbd-stamp" id="tbd-data-stamp"></span>
-        <div class="tbd-topbar-divider"></div>
         <div id="tbd-layout-toggle-wrap"></div>
         <div class="tbd-topbar-divider"></div>
+        <div id="tbd-report-badge"></div>
         <button class="iconbtn tbd-ppt-btn" id="tbd-btn-ppt">⬇ PPT</button>
         <div class="tbd-topbar-divider"></div>
         <div id="app-switcher-tbd"></div>
@@ -2139,6 +2155,7 @@ window.__TBD_SEASONALITY__ = {"Argentina":{"model":"v2026","factors":[1.06322,1.
 var TBD_REPORTS = [
   { slug: 'ene-jul-2025-2026',
     label: { en:'Jan–Jul 2025 vs 2026', es:'Ene–Jul 2025 vs 2026', pt:'Jan–Jul 2025 vs 2026' },
+    corto: { en:'Jan–Jul 25/26', es:'Ene–Jul 25/26', pt:'Jan–Jul 25/26' },
     desc: { en:'Year-on-year comparison of the first seven months. The original report.',
             es:'Comparación año contra año de los primeros siete meses. El reporte original.',
             pt:'Comparação ano a ano dos primeiros sete meses. O relatório original.' },
@@ -2148,6 +2165,7 @@ var TBD_REPORTS = [
     } },
   { slug: 'ene-ago-2025-2026',
     label: { en:'Jan–Aug 2025 vs 2026', es:'Ene–Ago 2025 vs 2026', pt:'Jan–Ago 2025 vs 2026' },
+    corto: { en:'Jan–Aug 25/26', es:'Ene–Ago 25/26', pt:'Jan–Ago 25/26' },
     desc: { en:'Same comparison with August now closed — one more full month on both sides.',
             es:'La misma comparación con agosto ya cerrado — un mes completo más de cada lado.',
             pt:'A mesma comparação com agosto já fechado — mais um mês completo de cada lado.' },
@@ -2157,6 +2175,7 @@ var TBD_REPORTS = [
     } },
   { slug: 'ene-dic-2025',
     label: { en:'Jan–Dec 2025 (full year)', es:'Ene–Dic 2025 (año completo)', pt:'Jan–Dez 2025 (ano completo)' },
+    corto: { en:'Jan–Dec 2025', es:'Ene–Dic 2025', pt:'Jan–Dez 2025' },
     desc: { en:'The whole of 2025 on its own. There is no prior year to compare against, so this one reads as a single period.',
             es:'Todo 2025 por sí solo. No hay año anterior contra el cual comparar, así que este se lee como un período único.',
             pt:'Todo o 2025 sozinho. Não há ano anterior para comparar, então este se lê como um período único.' },
@@ -2910,6 +2929,8 @@ function tbdStartDayWatcher(){
 }
 /* Sello visible de a que dia corresponde la data que se esta viendo. */
 function tbdRenderStamp(){
+  /* Vive en la barra lateral, bajo el nombre del reporte: es contexto de los
+     datos, no un control, y arriba solo le quitaba sitio a los botones. */
   var el = document.getElementById('tbd-data-stamp');
   if(!el) return;
   var L = LANG, live = (typeof window.__TVADS_RELOAD_LIVE__==='function');
@@ -2990,14 +3011,30 @@ function tbdApplySinglePeriodClass(){
 }
 /* Chip en la barra superior con el reporte activo; al hacer clic vuelve al menu. */
 function tbdRenderReportBadge(){
-  var el = document.getElementById('tbd-report-badge');
-  if(!el) return;
   var r = tbdActiveReport();
-  el.innerHTML = '<button class="tbd-rep-badge-btn" title="'+escAttr(LANG==='en'?'Change report':LANG==='pt'?'Trocar relatório':'Cambiar de reporte')+'">'+
-    '<span class="tbd-rep-badge-lbl">'+esc(tbdT(r.label))+'</span> <span class="tbd-rep-badge-caret">▾</span></button>';
-  if(!el.dataset.wired){
-    el.dataset.wired = '1';
-    el.addEventListener('click', function(){ tbdShowReportMenu(); });
+  var tit = LANG==='en'?'Change report':LANG==='pt'?'Trocar relatório':'Cambiar de reporte';
+  /* El chip vive junto al boton de PPT, con el resto de controles. Lleva el
+     nombre del reporte, que es su rango de fechas -- no "TBD Dolo", que es el
+     nombre del producto y no dice cual de los tres se esta viendo. */
+  var el = document.getElementById('tbd-report-badge');
+  if(el){
+    el.innerHTML = '<button class="tbd-rep-badge-btn" title="'+escAttr(tit+' — '+tbdT(r.label))+'">'+
+      '<span class="tbd-rep-badge-lbl">'+esc(tbdT(r.corto||r.label))+'</span> <span class="tbd-rep-badge-caret">▾</span></button>';
+    if(!el.dataset.wired){
+      el.dataset.wired = '1';
+      el.addEventListener('click', function(){ tbdShowReportMenu(); });
+    }
+  }
+  /* y el mismo nombre en la barra lateral, debajo de la marca, para que al
+     mirar la pantalla se sepa siempre que periodo se esta leyendo */
+  var lb = document.getElementById('tbd-brand-report');
+  if(lb){
+    var slots = Object.keys(r.slots);
+    var tipo = slots.length>1
+      ? (LANG==='en'?'year-on-year':LANG==='pt'?'ano a ano':'año contra año')
+      : (LANG==='en'?'single period':LANG==='pt'?'período único':'período único');
+    lb.innerHTML = '<div class="tbd-brand-rep-name">'+esc(tbdT(r.label))+'</div>'+
+                   '<div class="tbd-brand-rep-kind">'+esc(tipo)+'</div>';
   }
 }
 function tbdBoot(){

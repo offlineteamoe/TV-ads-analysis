@@ -23,6 +23,7 @@
 var TBD_REPORTS = [
   { slug: 'ene-jul-2025-2026',
     label: { en:'Jan–Jul 2025 vs 2026', es:'Ene–Jul 2025 vs 2026', pt:'Jan–Jul 2025 vs 2026' },
+    corto: { en:'Jan–Jul 25/26', es:'Ene–Jul 25/26', pt:'Jan–Jul 25/26' },
     desc: { en:'Year-on-year comparison of the first seven months. The original report.',
             es:'Comparación año contra año de los primeros siete meses. El reporte original.',
             pt:'Comparação ano a ano dos primeiros sete meses. O relatório original.' },
@@ -32,6 +33,7 @@ var TBD_REPORTS = [
     } },
   { slug: 'ene-ago-2025-2026',
     label: { en:'Jan–Aug 2025 vs 2026', es:'Ene–Ago 2025 vs 2026', pt:'Jan–Ago 2025 vs 2026' },
+    corto: { en:'Jan–Aug 25/26', es:'Ene–Ago 25/26', pt:'Jan–Ago 25/26' },
     desc: { en:'Same comparison with August now closed — one more full month on both sides.',
             es:'La misma comparación con agosto ya cerrado — un mes completo más de cada lado.',
             pt:'A mesma comparação com agosto já fechado — mais um mês completo de cada lado.' },
@@ -41,6 +43,7 @@ var TBD_REPORTS = [
     } },
   { slug: 'ene-dic-2025',
     label: { en:'Jan–Dec 2025 (full year)', es:'Ene–Dic 2025 (año completo)', pt:'Jan–Dez 2025 (ano completo)' },
+    corto: { en:'Jan–Dec 2025', es:'Ene–Dic 2025', pt:'Jan–Dez 2025' },
     desc: { en:'The whole of 2025 on its own. There is no prior year to compare against, so this one reads as a single period.',
             es:'Todo 2025 por sí solo. No hay año anterior contra el cual comparar, así que este se lee como un período único.',
             pt:'Todo o 2025 sozinho. Não há ano anterior para comparar, então este se lê como um período único.' },
@@ -794,6 +797,8 @@ function tbdStartDayWatcher(){
 }
 /* Sello visible de a que dia corresponde la data que se esta viendo. */
 function tbdRenderStamp(){
+  /* Vive en la barra lateral, bajo el nombre del reporte: es contexto de los
+     datos, no un control, y arriba solo le quitaba sitio a los botones. */
   var el = document.getElementById('tbd-data-stamp');
   if(!el) return;
   var L = LANG, live = (typeof window.__TVADS_RELOAD_LIVE__==='function');
@@ -874,14 +879,30 @@ function tbdApplySinglePeriodClass(){
 }
 /* Chip en la barra superior con el reporte activo; al hacer clic vuelve al menu. */
 function tbdRenderReportBadge(){
-  var el = document.getElementById('tbd-report-badge');
-  if(!el) return;
   var r = tbdActiveReport();
-  el.innerHTML = '<button class="tbd-rep-badge-btn" title="'+escAttr(LANG==='en'?'Change report':LANG==='pt'?'Trocar relatório':'Cambiar de reporte')+'">'+
-    '<span class="tbd-rep-badge-lbl">'+esc(tbdT(r.label))+'</span> <span class="tbd-rep-badge-caret">▾</span></button>';
-  if(!el.dataset.wired){
-    el.dataset.wired = '1';
-    el.addEventListener('click', function(){ tbdShowReportMenu(); });
+  var tit = LANG==='en'?'Change report':LANG==='pt'?'Trocar relatório':'Cambiar de reporte';
+  /* El chip vive junto al boton de PPT, con el resto de controles. Lleva el
+     nombre del reporte, que es su rango de fechas -- no "TBD Dolo", que es el
+     nombre del producto y no dice cual de los tres se esta viendo. */
+  var el = document.getElementById('tbd-report-badge');
+  if(el){
+    el.innerHTML = '<button class="tbd-rep-badge-btn" title="'+escAttr(tit+' — '+tbdT(r.label))+'">'+
+      '<span class="tbd-rep-badge-lbl">'+esc(tbdT(r.corto||r.label))+'</span> <span class="tbd-rep-badge-caret">▾</span></button>';
+    if(!el.dataset.wired){
+      el.dataset.wired = '1';
+      el.addEventListener('click', function(){ tbdShowReportMenu(); });
+    }
+  }
+  /* y el mismo nombre en la barra lateral, debajo de la marca, para que al
+     mirar la pantalla se sepa siempre que periodo se esta leyendo */
+  var lb = document.getElementById('tbd-brand-report');
+  if(lb){
+    var slots = Object.keys(r.slots);
+    var tipo = slots.length>1
+      ? (LANG==='en'?'year-on-year':LANG==='pt'?'ano a ano':'año contra año')
+      : (LANG==='en'?'single period':LANG==='pt'?'período único':'período único');
+    lb.innerHTML = '<div class="tbd-brand-rep-name">'+esc(tbdT(r.label))+'</div>'+
+                   '<div class="tbd-brand-rep-kind">'+esc(tipo)+'</div>';
   }
 }
 function tbdBoot(){
