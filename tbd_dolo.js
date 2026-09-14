@@ -666,7 +666,7 @@ function tbdSaveSession(){
     var shell = document.getElementById('tbdShell');
     localStorage.setItem(TBD_SESSION_KEY, JSON.stringify({
       report: TBD_STATE.report,
-      carousel: TBD_STATE.carousel, carouselMode: TBD_STATE.carouselMode,
+      carousel: TBD_STATE.carousel, carouselMode: TBD_STATE.carouselMode, folds: TBD_STATE.folds,
       org: TBD_STATE.org, territory: TBD_STATE.territory, tab: TBD_STATE.tab,
       viewLayout: TBD_STATE.viewLayout, viewMode: TBD_STATE.viewMode,
       sbCollapsed: !!(shell && shell.classList.contains('sb-collapsed')),
@@ -691,6 +691,7 @@ function tbdRestoreSession(){
   if(o.viewMode && typeof o.viewMode==='object') TBD_STATE.viewMode = o.viewMode;
   if(o.carousel && typeof o.carousel==='object') TBD_STATE.carousel = o.carousel;
   if(o.carouselMode && typeof o.carouselMode==='object') TBD_STATE.carouselMode = o.carouselMode;
+  if(o.folds && typeof o.folds==='object') TBD_STATE.folds = o.folds;
   return o;
 }
 function tbdApplySessionSidebar(o){
@@ -920,6 +921,7 @@ function tbdBoot(){
   tbdRenderNav();
   tbdRenderTab();
   tbdWireCarousels();
+  tbdWireFolds();
   if(!window.__TBD_PPT_WIRED__){ window.__TBD_PPT_WIRED__ = true; document.getElementById('tbd-btn-ppt').addEventListener('click', tbdDownloadPPT); tbdWireCreativeClicks(); tbdWireModalCleanup(); tbdWireTour(); }
   tbdApplySessionSidebar(sess);
   tbdApplySinglePeriodClass();
@@ -1129,6 +1131,7 @@ function tbdCurrentData(){
 }
 var TBD_LAST_DATA = null;
 function tbdRenderTab(){
+  TBD_LEADS_BOX_SHOWN = false;   // una vez por pantalla, no una por pestana
   var data = tbdCurrentData();
   TBD_LAST_DATA = data;
   TBD_DRILL = {}; // el DOM anterior se descarta entero: los ids viejos ya no existen
@@ -1417,6 +1420,63 @@ var TBD_HOWTO = {
   tests: {en:'Column A costs nothing to try (existing creatives/rotation changes only); Column B requires new production. Both lists are generated from this territory\'s own real numbers on every load — not a fixed checklist.', es:'La columna A no cuesta nada probar (solo creativos existentes/cambios de rotación); la columna B requiere producción nueva. Ambas listas se generan desde los números reales de este territorio en cada carga — no es un checklist fijo.', pt:'A coluna A não custa nada testar (só criativos existentes/mudanças de rotação); a coluna B requer nova produção. Ambas as listas são geradas a partir dos números reais deste território a cada carregamento — não é um checklist fixo.'},
   methodology: {en:'This is the audit trail, not an analysis — cite it whenever someone asks "where does this number come from". It never changes based on territory or period.', es:'Esto es el rastro de auditoría, no un análisis — cítalo cuando alguien pregunte "¿de dónde sale este número?". No cambia según territorio o período.', pt:'Isto é a trilha de auditoria, não uma análise — cite quando alguém perguntar "de onde vem esse número?". Não muda conforme território ou período.'},
 };
+/* ============================================================
+   BLOQUE PLEGABLE
+   Todo lo explicativo (definiciones, "como se lee") va cerrado por defecto:
+   la pantalla abre con numeros, no con parrafos. El estado se recuerda por id,
+   asi que si alguien deja abierta una definicion, sigue abierta la proxima vez.
+   ============================================================ */
+function tbdFoldOpen(id){
+  TBD_STATE.folds = TBD_STATE.folds || {};
+  return !!TBD_STATE.folds[id];
+}
+function tbdFoldHTML(id, icono, titulo, cuerpo, resumenCorto){
+  var abierto = tbdFoldOpen(id);
+  return '<div class="tbd-fold'+(abierto?' open':'')+'" data-fold="'+esc(id)+'">'+
+    '<button class="tbd-fold-h" data-fold-t="'+esc(id)+'">'+
+      '<span class="tbd-fold-ico">'+icono+'</span>'+
+      '<span class="tbd-fold-title">'+esc(titulo)+'</span>'+
+      (resumenCorto ? '<span class="tbd-fold-sum">'+esc(resumenCorto)+'</span>' : '')+
+      '<span class="tbd-fold-caret">›</span>'+
+    '</button>'+
+    (abierto ? '<div class="tbd-fold-body">'+cuerpo+'</div>' : '')+
+  '</div>';
+}
+function tbdWireFolds(){
+  if(window.__TBD_FOLD_WIRED__) return;
+  window.__TBD_FOLD_WIRED__ = true;
+  document.addEventListener('click', function(e){
+    var b = e.target.closest('[data-fold-t]');
+    if(!b) return;
+    var id = b.getAttribute('data-fold-t');
+    TBD_STATE.folds = TBD_STATE.folds || {};
+    TBD_STATE.folds[id] = !TBD_STATE.folds[id];
+    tbdSaveSession();
+    var sc = document.getElementById('tbd-main');
+    var y = sc ? sc.scrollTop : 0;
+    tbdRenderTab();
+    if(sc) sc.scrollTop = y;
+  });
+}
+/* La definicion de leads se pinta UNA sola vez por render: en vista continua
+   las dos pestanas de Resumen van seguidas y salia duplicada. */
+var TBD_LEADS_BOX_SHOWN = false;
+function tbdLeadsFold(){
+  if(TBD_LEADS_BOX_SHOWN) return '';
+  TBD_LEADS_BOX_SHOWN = true;
+  var L = LANG, from = tbdOrgName();
+  var t = L==='en' ? { tit:'Which leads are being counted', sum:'Organization = MarketingOrganization = '+from+' · halo excluded' }
+        : L==='pt' ? { tit:'Quais leads estao sendo contados', sum:'Organization = MarketingOrganization = '+from+' · halo de fora' }
+        : { tit:'Qué leads se están contando', sum:'Organization = MarketingOrganization = '+from+' · halo excluido' };
+  return tbdFoldHTML('leadsdef', '🎯', t.tit, tbdLeadsDefinitionBox(), t.sum);
+}
+function tbdHowToFold(tabId){
+  var h = TBD_HOWTO[tabId];
+  if(!h) return '';
+  var label = LANG==='en'?'How to read this tab':LANG==='pt'?'Como ler esta aba':'Cómo leer esta pestaña';
+  return tbdFoldHTML('howto:'+tabId, '📖', label,
+    '<div class="tbd-fold-text">'+esc(tbdT(h))+'</div>', null);
+}
 function tbdHowToCard(tabId){
   var h = TBD_HOWTO[tabId];
   if(!h) return '';
@@ -1535,8 +1595,8 @@ var TBD_RENDERERS = {
     var top26 = src26.slice().sort(function(a,b){return b.l1k_adj-a.l1k_adj;}).slice(0,10);
     var insight = mode==='video' ? tbdVersionSplitInsight(src26) : tbdPortfolioTakeaway(data);
     return '<h2 class="tbd-section-title">'+esc(data.territory)+' · '+esc(tbdS('title_portfolio'))+' · '+esc(tbdS('period_label'))+'</h2>'+
-      tbdLeadsDefinitionBox()+
-      tbdHowToCard('portfolio')+
+      tbdLeadsFold()+
+      tbdHowToFold('portfolio')+
       '<div class="tbd-kpi-grid">'+
       tbdKpiCard(tbdS('kpi_l1k_adj'), p25.l1k_adj, p26.l1k_adj, function(v){return fmtNum(v,0);}, true)+
       tbdKpiCard(tbdS('kpi_cpl_adj'), p25.cpl_adj, p26.cpl_adj, function(v){return fmt$(v,2);}, false)+
@@ -1563,7 +1623,7 @@ var TBD_RENDERERS = {
     var f25 = f(mode==='video' ? data.v25 : data.y25), f26 = f(mode==='video' ? data.v26 : data.y26);
     var insight = mode==='video' ? tbdVersionSplitInsight(f26) : tbdCreativeTypeInsight(f26, f25, 'PROMO');
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_promo'))+'</h2>'+
-      tbdHowToCard('promo')+
+      tbdHowToFold('promo')+
       tbdViewToggleHTML('promo')+
       '<div class="tbd-two-col"><div>'+tbdCreativeTableHTML(f25, 'Promo · '+tbdS('y25_label'), '2025')+'</div><div>'+tbdCreativeTableHTML(f26, 'Promo · '+tbdS('y26_label'), '2026')+'</div></div>'+
       tbdTabInsights(data, 'pain_point', [insight, tbdSafeDetect(tbdDetectVolumeMarginDecouple,data,['pain_point'])]);
@@ -1574,7 +1634,7 @@ var TBD_RENDERERS = {
     var f25 = f(mode==='video' ? data.v25 : data.y25), f26 = f(mode==='video' ? data.v26 : data.y26);
     var insight = mode==='video' ? tbdVersionSplitInsight(f26) : tbdCreativeTypeInsight(f26, f25, 'GENERIC');
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_generic'))+'</h2>'+
-      tbdHowToCard('generic')+
+      tbdHowToFold('generic')+
       tbdViewToggleHTML('generic')+
       '<div class="tbd-two-col"><div>'+tbdCreativeTableHTML(f25, 'Generic · '+tbdS('y25_label'), '2025')+'</div><div>'+tbdCreativeTableHTML(f26, 'Generic · '+tbdS('y26_label'), '2026')+'</div></div>'+
       tbdTabInsights(data, 'theme_mechanism_code', [insight, tbdSafeDetect(tbdDetectDimRowFragility,data,['theme_mechanism_code'])]);
@@ -1583,7 +1643,7 @@ var TBD_RENDERERS = {
   tone: function(data){ return tbdDimensionPage(data, function(r){ return r.tone_category||'—'; }, tbdS('title_tone'), tbdS('sub_tone'), 'tone', null, null, [tbdSafeDetect(tbdDetectFearNeedsHumor,data), tbdSafeDetect(tbdDetectVolumeMarginDecouple,data,['tone_category']), tbdSafeDetect(tbdDetectDimRowFragility,data,['tone_category']), tbdSafeDetect(tbdDetectDimScaleCeiling,data,['tone_category'])], 'tone_category'); },
   hooks: function(data){
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_hooks'))+'</h2>'+
-      tbdHowToCard('hooks')+
+      tbdHowToFold('hooks')+
       tbdDimensionPage(data, function(r){ return r.hook_audio_type_code||'—'; }, tbdS('title_hook_audio'), tbdS('sub_hook_audio'), null)+
       '<div style="height:18px;"></div>'+
       tbdDimensionPage(data, function(r){ return r.hook_visual_type_code||'—'; }, tbdS('title_hook_visual'), tbdS('sub_hook_visual'), null)+
@@ -1612,7 +1672,7 @@ var TBD_RENDERERS = {
       }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>'; };
     return '<h2 class="tbd-section-title">'+esc(tbdHaloTitle())+'</h2>'+
       '<p style="font-size:12px;color:var(--ink-faint);margin-top:-8px;">'+esc(tbdHaloSub())+'</p>'+
-      tbdHowToCard('jrhalo')+tbdViewToggleHTML('jrhalo')+
+      tbdHowToFold('jrhalo')+tbdViewToggleHTML('jrhalo')+
       '<div class="tbd-two-col"><div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y25_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead><tr><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdHaloColLeads())+'</th><th>'+esc(tbdHaloColAdj())+'</th><th>'+esc(tbdHaloColRef())+'</th></tr></thead><tbody>'+rows(r25,'2025')+'</tbody></table></div></div>'+
       '<div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y26_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead><tr><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdHaloColLeads())+'</th><th>'+esc(tbdHaloColAdj())+'</th><th>'+esc(tbdHaloColRef())+'</th></tr></thead><tbody>'+rows(r26,'2026')+'</tbody></table></div></div></div>'+
       tbdTabInsights(data, 'ad_type', [{title:null, body:tbdJrHaloInsight(data)}]);
@@ -1629,7 +1689,7 @@ var TBD_RENDERERS = {
       }).join('') || '<tr><td colspan="4" style="text-align:center;color:var(--ink-faint);padding:16px;">'+T('sin_datos_filtro')+'</td></tr>'; };
     var head = '<tr><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdS('col_tvon_days'))+'</th><th>'+esc(tbdS('col_l1k_adj'))+'</th><th>'+esc(tbdS('col_cpl_adj'))+'</th></tr>';
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_launch'))+'</h2>'+
-      tbdHowToCard('launch')+tbdViewToggleHTML('launch')+
+      tbdHowToFold('launch')+tbdViewToggleHTML('launch')+
       '<div class="tbd-two-col"><div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y25_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead>'+head+'</thead><tbody>'+rows(build(src25),'2025')+'</tbody></table></div></div>'+
       '<div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y26_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead>'+head+'</thead><tbody>'+rows(build(src26),'2026')+'</tbody></table></div></div></div>'+
       tbdTabInsights(data, 'ad_type', [{title:null, body:tbdLaunchInsight(data)}]);
@@ -1652,7 +1712,7 @@ var TBD_RENDERERS = {
     var head = '<tr><th>'+esc(tbdS('col_creative'))+'</th><th>'+esc(tbdS('col_h1'))+'</th><th>'+esc(tbdS('col_h2'))+'</th><th>'+esc(tbdS('col_delta'))+'</th></tr>';
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_wearout'))+'</h2>'+
       '<p style="font-size:12px;color:var(--ink-faint);margin-top:-8px;">'+esc(tbdS('sub_wearout'))+'</p>'+
-      tbdHowToCard('wearout')+tbdViewToggleHTML('wearout')+
+      tbdHowToFold('wearout')+tbdViewToggleHTML('wearout')+
       '<div class="tbd-two-col"><div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y25_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead>'+head+'</thead><tbody>'+rows(build(src25),'2025')+'</tbody></table></div></div>'+
       '<div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y26_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead>'+head+'</thead><tbody>'+rows(build(src26),'2026')+'</tbody></table></div></div></div>'+
       tbdTabInsights(data, 'theme_mechanism_code', [{title:null, body:tbdWearoutInsight(data)}]);
@@ -1841,7 +1901,7 @@ var TBD_RENDERERS = {
       '<ul class="tbd-alertbox-list"><li>'+w1+'</li><li>'+w2+'</li>'+(w3?'<li>'+w3+'</li>':'')+'</ul></div>';
 
     return '<h2 class="tbd-section-title">'+esc(tbdS('title_seasonality'))+' - '+esc(data.territory)+'</h2>'+
-      tbdHowToCard('seasonality')+
+      tbdHowToFold('seasonality')+
       explain+
       factorTable+
       gateCard+
@@ -4470,7 +4530,7 @@ function tbdDirectionHTML(data){
     briefPromo: L==='en'?'For Promo ads:':L==='pt'?'Para anúncios Promo:':'Para anuncios Promo:',
     noBrief: L==='en'?'Not enough creatives of this type yet to synthesize a reliable brief.':L==='pt'?'Ainda não há criativos suficientes deste tipo para sintetizar um brief confiável.':'Todavía no hay suficientes creativos de este tipo para sintetizar un brief confiable.',
   };
-  return '<h2 class="tbd-section-title">'+esc(tbdS('title_direction'))+' — '+esc(data.territory)+'</h2>'+tbdHowToCard('direction')+
+  return '<h2 class="tbd-section-title">'+esc(tbdS('title_direction'))+' — '+esc(data.territory)+'</h2>'+tbdHowToFold('direction')+
     '<div class="tbd-cd-grid">'+
     card(titles.keep,'var(--good)',cards.keep)+card(titles.stop,'var(--bad)',cards.stop)+
     card(titles.upside,'var(--oe)',cards.upside)+card(titles.guide,'var(--tbd-deep)',cards.guide)+
@@ -4483,8 +4543,8 @@ function tbdDirectionHTML(data){
 }
 function tbdInsightsHTML(data){
   var cards = tbdDeepInsights(data);
-  if(!cards.length) return '<h2 class="tbd-section-title">'+esc(tbdS('title_insights'))+' — '+esc(data.territory)+'</h2>'+tbdHowToCard('insights')+'<p style="color:var(--ink-faint);">'+esc(tbdS('no_data'))+'</p>';
-  return '<h2 class="tbd-section-title">'+esc(tbdS('title_insights'))+' — '+esc(data.territory)+'</h2>'+tbdHowToCard('insights')+
+  if(!cards.length) return '<h2 class="tbd-section-title">'+esc(tbdS('title_insights'))+' — '+esc(data.territory)+'</h2>'+tbdHowToFold('insights')+'<p style="color:var(--ink-faint);">'+esc(tbdS('no_data'))+'</p>';
+  return '<h2 class="tbd-section-title">'+esc(tbdS('title_insights'))+' — '+esc(data.territory)+'</h2>'+tbdHowToFold('insights')+
     '<div class="tbd-cards-col">'+cards.map(function(c){
     return '<div class="card" style="margin-bottom:12px;"><div style="font-size:20px;">'+c.icon+'</div><div style="font-weight:800;font-size:13px;margin:6px 0 4px;">'+esc(c.title)+'</div><div style="font-size:12px;color:var(--ink-faint);line-height:1.5;">'+esc(c.body)+'</div></div>';
   }).join('')+'</div>';
@@ -4565,7 +4625,7 @@ function tbdTestsHTML(data){
   }
   var introA = L==='en'?'Zero production cost — reshuffle existing creatives/rotation only.':L==='pt'?'Custo de produção zero — apenas reorganiza criativos/rotação existentes.':'Costo de producción cero — solo reordena creativos/rotación ya existentes.';
   var introB = L==='en'?'Requires briefing and shooting a new creative — higher cost, tests a specific hypothesis a reshuffle can\'t.':L==='pt'?'Requer brief e produção de um criativo novo — custo maior, testa uma hipótese específica que uma reorganização não consegue.':'Requiere briefear y producir un creativo nuevo — costo mayor, prueba una hipótesis específica que un reordenamiento no puede.';
-  return '<h2 class="tbd-section-title">'+esc(tbdS('title_tests'))+' — '+esc(data.territory)+'</h2>'+tbdHowToCard('tests')+
+  return '<h2 class="tbd-section-title">'+esc(tbdS('title_tests'))+' — '+esc(data.territory)+'</h2>'+tbdHowToFold('tests')+
     colA(testsA,tbdS('tests_col_a'),introA)+'<div style="height:16px;"></div>'+colB(testsB,tbdS('tests_col_b'),introB);
 }
 
@@ -4599,11 +4659,11 @@ function tbdLeadsDefinitionBox(){
     };
   } else {
     t = {
-      head:'Antes de leer cualquier numero: que leads se estan contando',
-      l1:'<b>Organization = '+from+'</b> y <b>MarketingOrganization = '+from+'</b>. Los dos filtros estan puestos en la misma marca.',
-      l2:'Por eso cada "Leads", "L/$1k" y "L/$1k adj." de esta pagina cuenta <b>solo los leads atribuidos a '+from+'</b> en si.',
-      l3:'<b>El halo NO esta incluido.</b> Los leads de '+other+' que genero la inversion de esta marca quedan fuera de estos numeros y se reportan aparte en la pestana de Halo entre marcas, para que nunca se cuenten dos veces.',
-      l4:'<b>El gasto</b> es inversion de medios de TV <b>neta de SEM-Brand</b>, siempre \u2014 no es un interruptor que se pueda apagar aqui.',
+      head:'Antes de leer cualquier número: que leads se están contando',
+      l1:'<b>Organization = '+from+'</b> y <b>MarketingOrganization = '+from+'</b>. Los dos filtros están puestos en la misma marca.',
+      l2:'Por eso cada "Leads", "L/$1k" y "L/$1k adj." de esta página cuenta <b>solo los leads atribuidos a '+from+'</b> en sí.',
+      l3:'<b>El halo NO esta incluido.</b> Los leads de '+other+' que generó la inversión de esta marca quedan fuera de estos números y se reportan aparte en la pestaña de Halo entre marcas, para que nunca se cuenten dos veces.',
+      l4:'<b>El gasto</b> es inversión de medios de TV <b>neta de SEM-Brand</b>, siempre \u2014 no es un interruptor que se pueda apagar aquí.',
     };
   }
   return '<div class="tbd-alertbox">'+
@@ -4783,8 +4843,8 @@ function tbdAdjKpiHTML(data){
     { titulo: useHead,   html: useTxt },
   ];
   return '<h2 class="tbd-section-title">'+esc(tbdS('title_adjkpi'))+'</h2>'+
-    tbdLeadsDefinitionBox()+
-    tbdHowToCard('adjkpi')+
+    tbdLeadsFold()+
+    tbdHowToFold('adjkpi')+
     tbdCarouselHTML('adjkpi', pasos);
 }
 var TBD_METHODOLOGY_ITEMS = [
@@ -4849,7 +4909,7 @@ var TBD_METHODOLOGY_ITEMS = [
     text:{en:'Generated automatically from each territory\'s real numbers on every load — not fixed text.', es:'Generados automáticamente a partir de los números reales de cada territorio en cada carga — no son texto fijo.', pt:'Gerados automaticamente a partir dos números reais de cada território a cada carregamento — não são texto fixo.'} },
 ];
 function tbdMethodologyHTML(){
-  return '<h2 class="tbd-section-title">'+esc(tbdS('title_methodology'))+'</h2>'+tbdHowToCard('methodology')+
+  return '<h2 class="tbd-section-title">'+esc(tbdS('title_methodology'))+'</h2>'+tbdHowToFold('methodology')+
     '<div class="card" style="font-size:12.5px; line-height:1.7;">'+
     TBD_METHODOLOGY_ITEMS.map(function(it){ return '<p><b>'+esc(tbdT(it.label))+':</b> '+(it.dynamic ? it.dynamic() : tbdT(it.text))+'</p>'; }).join('')+
     '</div>';
