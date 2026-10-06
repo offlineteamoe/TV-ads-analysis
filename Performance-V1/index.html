@@ -8,7 +8,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TV Ads Performance · Open English</title>
-<script>document.title = /\/Performance-V1\/?$/i.test(location.pathname) ? 'TV Ads Performance · Open English' : 'TBD Dolo · Open English';</script>
+<script>document.title = /\/Performance-V1\/?$/i.test(location.pathname) ? 'TV Ads Performance · Open English' : 'New TV Ads Performance · Open English';</script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root{
@@ -93,7 +93,7 @@ a{color:inherit;}
    quedarian transparentes/invisibles. */
 :root{ --tbd-accent:var(--oe); --tbd-deep:#12234f; --tbd-deep-soft:#9FB3E0; }
 html[data-tbd-brand="jr"]{ --tbd-accent:var(--oejr); --tbd-deep:#4A2E15; --tbd-deep-soft:#F5C89A; }
-/* dentro de TBD Dolo cualquier control "activo" usa el acento de la marca
+/* dentro de New TV Ads Performance cualquier control "activo" usa el acento de la marca
    seleccionada, no el azul global de --accent */
 #tbdShell .iconbtn.active{background:var(--tbd-accent); color:#fff; border-color:var(--tbd-accent);}
 #tbdShell .iconbtn:hover{border-color:var(--tbd-accent);}
@@ -529,8 +529,8 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
       </div>
       <div class="picker-card tbd" id="picker-card-tbd">
         <div class="picker-card-icon">🧭</div>
-        <div class="picker-card-title" id="picker-card-tbd-title">TBD Dolo</div>
-        <div class="picker-card-desc" id="picker-card-tbd-desc">Reporte ejecutivo Enero–Julio 2025 vs 2026, ajustado por estacionalidad de demanda (Ahrefs), con conclusiones y descarga a PowerPoint.</div>
+        <div class="picker-card-title" id="picker-card-tbd-title">New TV Ads Performance</div>
+        <div class="picker-card-desc" id="picker-card-tbd-desc">Reportes ejecutivos 2025 vs 2026 (hasta Ene–Sep), ajustados por estacionalidad medida con los leads propios de Open English, con conclusiones y descarga a PowerPoint.</div>
         <div class="picker-card-cta">Abrir →</div>
       </div>
     </div>
@@ -570,7 +570,7 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
 <div id="tbd-report-menu"></div>
   <button id="tbd-sidebar-toggle">☰</button>
   <div id="tbd-sidebar">
-    <div class="sb-brand tbd-brand"><span class="dot" style="background:var(--tbd-accent)"></span><span>TBD DOLO</span></div>
+    <div class="sb-brand tbd-brand"><span class="dot" style="background:var(--tbd-accent)"></span><span>NEW TV ADS PERFORMANCE</span></div>
     <div id="tbd-brand-report"></div>
     <div class="tbd-brand-stamp"><span class="tbd-stamp" id="tbd-data-stamp"></span></div>
     <div id="tbd-nav"></div>
@@ -637,7 +637,7 @@ footer{border-top:1px solid var(--border-soft); padding:14px 22px; font-size:11p
   </div>
 </div>
 
-<script src="engine.js?v=11"></script>
+<script src="engine.js?v=12"></script>
 <script>
 "use strict";
 
@@ -648,7 +648,7 @@ var ALLOWED_EMAIL_DOMAIN = 'openenglish.com';
 var DECK_FILES = ['OE-LATAM.json', 'OE-BR.json', 'JR-LATAM.json', 'JR-BR.json', 'tvads-rotation.json', 'tvads-creative-taxonomy.json'];
 /* Que dashboard arranca lo decide la RUTA, no una pantalla de seleccion:
      .../Performance-V1/  -> TV Ads Performance (el reporte original)
-     cualquier otra ruta  -> TBD Dolo
+     cualquier otra ruta  -> New TV Ads Performance
    El archivo es el mismo en las dos rutas; la copia de Performance-V1 solo
    agrega <base href="../"> para que los assets resuelvan contra la raiz. */
 var TVADS_APP = /\/Performance-V1\/?$/i.test(location.pathname) ? 'main' : 'tbd';
@@ -785,8 +785,8 @@ async function boot(fetcher){
 }
 </script>
 <script src="app.js?v=24"></script>
-<script src="tbd_seasonality.js?v=24"></script>
-<script src="tbd_dolo.js?v=28"></script>
+<script src="tbd_seasonality.js?v=26"></script>
+<script src="tbd_dolo.js?v=30"></script>
 <script>
 /* Selector de dashboard: se muestra una vez, apenas termina de cargar la
    data (boot() en el script anterior le agrega .ready a #appPicker), antes
@@ -807,7 +807,7 @@ function tvadsAppUrl(app){
 }
 var APP_LIST = [
   { id:'main', label:'TV Ads Performance', icon:'📊' },
-  { id:'tbd', label:'TBD Dolo', icon:'🧭' },
+  { id:'tbd', label:'New TV Ads Performance', icon:'🧭' },
 ];
 function renderAppSwitcher(containerId, currentId){
   var el = document.getElementById(containerId);

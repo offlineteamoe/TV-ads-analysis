@@ -1,11 +1,11 @@
 /* ============================================================
-   TBD Dolo -- motor de datos ejecutivo. Los periodos ya no son fijos: los
+   New TV Ads Performance (antes "TBD Dolo") -- motor de datos ejecutivo. Los periodos ya no son fijos: los
    define el reporte activo (ver TBD_REPORTS).
    NO toca STATE ni ninguna funcion de app.js/engine.js -- lee los mismos
    YEARS_DATA/MKTORG_MARCA/DECK_INFO ya construidos y corregidos, y agrega
    su propia capa de agregacion (equivalente a agg()/dagg()/wearout()/
    launch_week() del proyecto de referencia en Python), mas el indice de
-   estacionalidad de Ahrefs (reemplaza Google Trends) y el JR Halo.
+   estacionalidad (modelo v4: demanda externa Ahrefs + GA4, ver tbd_seasonality.js) y el JR Halo.
    Organization es seleccionable (Open English / Open English Junior, ver
    TBD_STATE.org y tbdOrgName()) -- toda la matematica de abajo es identica
    para ambas marcas, solo cambia que slice de YEARS_DATA se lee.
@@ -41,6 +41,16 @@ var TBD_REPORTS = [
       '2025': { year:'2025', from:'2025-01-01', to:'2025-08-31', label:{en:'Jan–Aug 2025',es:'Ene–Ago 2025',pt:'Jan–Ago 2025'} },
       '2026': { year:'2026', from:'2026-01-01', to:'2026-08-31', label:{en:'Jan–Aug 2026',es:'Ene–Ago 2026',pt:'Jan–Ago 2026'} },
     } },
+  { slug: 'ene-sep-2025-2026',
+    label: { en:'Jan–Sep 2025 vs 2026', es:'Ene–Sep 2025 vs 2026', pt:'Jan–Set 2025 vs 2026' },
+    corto: { en:'Jan–Sep 25/26', es:'Ene–Sep 25/26', pt:'Jan–Set 25/26' },
+    desc: { en:'Nine closed months on each side, with September 2026 included. Seasonality model v4 (Ahrefs + GA4).',
+            es:'Nueve meses cerrados de cada lado, con septiembre 2026 incluido. Estacionalidad modelo v4 (Ahrefs + GA4).',
+            pt:'Nove meses fechados de cada lado, com setembro de 2026 incluído. Sazonalidade modelo v4 (Ahrefs + GA4).' },
+    slots: {
+      '2025': { year:'2025', from:'2025-01-01', to:'2025-09-30', label:{en:'Jan–Sep 2025',es:'Ene–Sep 2025',pt:'Jan–Set 2025'} },
+      '2026': { year:'2026', from:'2026-01-01', to:'2026-09-30', label:{en:'Jan–Sep 2026',es:'Ene–Sep 2026',pt:'Jan–Set 2026'} },
+    } },
   { slug: 'ene-dic-2025',
     label: { en:'Jan–Dec 2025 (full year)', es:'Ene–Dic 2025 (año completo)', pt:'Jan–Dez 2025 (ano completo)' },
     corto: { en:'Jan–Dec 2025', es:'Ene–Dic 2025', pt:'Jan–Dez 2025' },
@@ -51,7 +61,7 @@ var TBD_REPORTS = [
       '2026': { year:'2025', from:'2025-01-01', to:'2025-12-31', label:{en:'Jan–Dec 2025',es:'Ene–Dic 2025',pt:'Jan–Dez 2025'} },
     } },
 ];
-var TBD_DEFAULT_REPORT = 'ene-ago-2025-2026';
+var TBD_DEFAULT_REPORT = 'ene-sep-2025-2026';
 function tbdReportBySlug(slug){
   for(var i=0;i<TBD_REPORTS.length;i++){ if(TBD_REPORTS[i].slug===slug) return TBD_REPORTS[i]; }
   return null;
@@ -105,40 +115,96 @@ function tbdHaloSub(){
 }
 function tbdOrgName(){ return TBD_STATE.org === 'Open English Junior' ? 'Open English Junior' : 'Open English'; }
 
-/* ---------- estacionalidad: modelo v2026 (ver tbd_seasonality.js) ---------- */
-var TBD_SEASONALITY = window.__TBD_SEASONALITY__ || {};
-/* Divisor de demanda = factor de estacionalidad FIJO del mes (modelo v2026).
-   Antes se leia index_by_month, que es el volumen del mes concreto: eso
-   mezclaba DOS cosas distintas en un solo numero -- la epoca del anio (que
-   si hay que neutralizar, porque nadie elige nacer en enero) y el nivel del
-   mercado de ese anio (que NO hay que neutralizar, porque un mercado que se
-   cayo 20% es un hecho del negocio, no un sesgo de medicion). Al dividir por
-   los dos a la vez, un creativo de un anio flojo salia premiado por la
-   division. Ahora se divide UNICAMENTE por el patron de mes, que es igual en
-   2025 y en 2026, y el movimiento del mercado se reporta aparte. */
+/* ---------- estacionalidad: modelo v4 (ver tbd_seasonality.js y Scripts/build_seasonality_v4.py) ----------
+   QUE ES EL FACTOR DE UN MES: cuanta gente interesada hay en ese mes frente a un
+   mes normal del anio (100 = el promedio de los 12 meses), medido con DEMANDA
+   EXTERNA: busquedas de Google en Ahrefs ("open english" + "cursos de ingles") y
+   visitas de marca al sitio en GA4 (SEM-Brand + SEO + Direct), 2023-2026.
+     factor > 100 -> temporada alta: el ajuste BAJA el numero.
+     factor < 100 -> temporada baja: el ajuste SUBE el numero al nivel de un mes normal.
+   Cada mes se compara contra la media movil centrada de 12 meses (quita la
+   tendencia) y se promedian los anios. Donde Ahrefs repite una plantilla (no
+   mide), se usa solo GA4. Reglas para no inventar nada:
+     - solo se aplica el factor de un mes si es distinto de un mes normal al 95%;
+     - un pais solo se ajusta si su patron explica >=10% de como se mueve mes a mes
+       el rendimiento real de su TV (los leads solo COMPRUEBAN, no arman el factor).
+   Los factores son FIJOS por mes: enero vale lo mismo en 2025 y en 2026. */
+var TBD_SEASON_DATA = window.__TBD_SEASONALITY__ || {};
+var TBD_MM = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+function tbdSeaOf(territory, org){
+  var orgs = TBD_SEASON_DATA.orgs || {};
+  var o = orgs[org || tbdOrgName()] || {};
+  return o[territory] || null;
+}
+/* true si en este pais/marca se aplica algun ajuste (el patron paso la validacion) */
+function tbdSeasonApplied(territory){
+  var t = tbdSeaOf(territory);
+  return !!(t && t.source!=='none' && t.source!=='nodata' && t.source!=='noval' &&
+    (t.factorsIndex||[]).some(function(v){ return v!==100; }));
+}
+/* Divisor de demanda = factor FIJO del mes. El movimiento real del mercado entre
+   anios nunca entra aqui (un mercado que cae es un hecho del negocio). */
 function tbdDemandIndex(territory, fecha){
-  var t = TBD_SEASONALITY[territory];
+  var t = tbdSeaOf(territory);
   if(!t || !t.factorsIndex) return 100;
-  var m = Number(fecha.slice(5,7)) - 1;
-  var v = t.factorsIndex[m];
+  var v = t.factorsIndex[Number(fecha.slice(5,7)) - 1];
   return v==null ? 100 : v;
 }
-/* meses cuyo factor NO es distinguible de 1.000 al 95% -- se marcan en gris:
-   el ajuste se aplica igual (es la mejor estimacion puntual), pero el lector
-   tiene que saber que ahi el ajuste es ruido y no debe rankear por decimas. */
+/* mes cuyo efecto NO se distingue de un mes normal al 95% -> no se ajusta (vale 100) */
 function tbdSeasonMonthIsGrey(territory, monthIdx0){
-  var t = TBD_SEASONALITY[territory];
+  var t = tbdSeaOf(territory);
   return !!(t && t.grey && t.grey[monthIdx0]);
 }
 function tbdSeasonGate(territory){
-  var t = TBD_SEASONALITY[territory];
-  return t ? { label: t.gate, skill: t.skill, seLog: t.seLog, lambda: t.lambda } : null;
+  var t = tbdSeaOf(territory);
+  return t ? { label: t.gate, skill: t.skill, seLog: t.seLog, lambda: t.lambda, source: t.source } : null;
 }
-/* margen de error del ajuste, en %, para el rotulo "no rankees por debajo de esto" */
+/* margen de error del ajuste, en %, para el rotulo "no rankees por debajo de esto".
+   Donde no se aplica ajuste no hay margen que reportar. */
 function tbdSeasonErrPct(territory){
-  var t = TBD_SEASONALITY[territory];
-  if(!t || t.seLog==null) return null;
+  var t = tbdSeaOf(territory);
+  if(!t || t.seLog==null || !tbdSeasonApplied(territory)) return null;
   return (Math.exp(1.96*t.seLog)-1)*100;
+}
+/* meses (1-12) que cubre una ranura del reporte activo */
+function tbdSlotMonths(slot){
+  var p = TBD_PERIODS[slot||'2026'];
+  if(!p) return [];
+  var a = Number(p.from.slice(5,7)), b = Number(p.to.slice(5,7)), out = [];
+  for(var m=a; m<=b; m++) out.push(m);
+  return out;
+}
+function tbdPeriodMonthsCount(){ return Math.max(1, tbdSlotMonths('2026').length); }
+/* "Ene–Sep" a partir de una lista de meses 1-12 */
+function tbdMonthsSpanLabel(ms){
+  if(!ms || !ms.length) return '';
+  return ms.length===1 ? mesLabel(TBD_MM[ms[0]-1]) : mesLabel(TBD_MM[ms[0]-1])+'–'+mesLabel(TBD_MM[ms[ms.length-1]-1]);
+}
+/* factores APLICADOS de los meses del periodo del reporte: [{m, label, f, grey}] */
+function tbdReportFactors(territory, slot){
+  var t = tbdSeaOf(territory);
+  var f = (t && t.factorsIndex) || [], g = (t && t.grey) || [];
+  return tbdSlotMonths(slot).map(function(m){ return { m:m, label: mesLabel(TBD_MM[m-1]), f: f[m-1]==null?100:f[m-1], grey: !!g[m-1] }; });
+}
+/* Contexto de mercado EXTERNO (busquedas de cursos de ingles, Ahrefs, sin su
+   estacionalidad). Nunca entra al divisor: solo dice si el equipo tuvo viento a
+   favor o en contra. Se promedia sobre los meses del reporte que existen en los
+   dos anios de la serie de Ahrefs. */
+function tbdMarketLevels(territory){
+  var mk = (TBD_SEASON_DATA.market_ahrefs||{})[territory];
+  if(!mk || !tbdIsCompare()) return null;
+  var p25 = TBD_PERIODS['2025'], p26 = TBD_PERIODS['2026'];
+  var ms25 = tbdSlotMonths('2025');
+  var a = [], b = [], used = [];
+  tbdSlotMonths('2026').forEach(function(m){
+    if(ms25.indexOf(m)===-1) return;
+    var v25 = mk[p25.year+'-'+TBD_MM[m-1]], v26 = mk[p26.year+'-'+TBD_MM[m-1]];
+    if(v25!=null && v26!=null){ a.push(v25); b.push(v26); used.push(m); }
+  });
+  if(used.length < 3) return null;
+  var m25 = a.reduce(function(x,y){return x+y;},0)/a.length, m26 = b.reduce(function(x,y){return x+y;},0)/b.length;
+  return { m25:m25, m26:m26, yoy:(m26/m25-1)*100, months:used, span: tbdMonthsSpanLabel(used),
+           partial: used.length < tbdSlotMonths('2026').length };
 }
 
 /* ---------- filtro de dias: rango de fecha explicito + pais ---------- */
@@ -605,15 +671,15 @@ var TBD_STR = {
   col_h1: {en:'1st half (adj)', es:'1ª mitad (adj)', pt:'1ª metade (adj)'},
   col_h2: {en:'2nd half (adj)', es:'2ª mitad (adj)', pt:'2ª metade (adj)'},
   col_delta: {en:'Δ%', es:'Δ%', pt:'Δ%'},
-  title_seasonality: {en:'Seasonality Factors (model v2026)', es:'Factores de Estacionalidad (modelo v2026)', pt:'Fatores de Sazonalidade (modelo v2026)'},
-  sub_seasonality: {en:'12 fixed month factors, the same ones for 2025 and 2026. 100 = a normal month; a month at 130 carries 30% more natural demand than normal, with zero TV on air. Estimated over 44 months of Ahrefs volume with the market trend removed, so the year a month belongs to does not change its factor.', es:'12 factores de mes fijos, los mismos para 2025 y 2026. 100 = un mes normal; un mes en 130 carga 30% más demanda natural que lo normal, con cero TV al aire. Estimados sobre 44 meses de volumen de Ahrefs con la tendencia del mercado removida, para que el año al que pertenece un mes no cambie su factor.', pt:'12 fatores de mês fixos, os mesmos para 2025 e 2026. 100 = um mês normal; um mês em 130 carrega 30% mais demanda natural que o normal, com zero TV no ar. Estimados sobre 44 meses de volume Ahrefs com a tendência do mercado removida, para que o ano a que um mês pertence não mude seu fator.'},
+  title_seasonality: {en:'Seasonality Factors (model v4 · Ahrefs + GA4)', es:'Factores de Estacionalidad (modelo v4 · Ahrefs + GA4)', pt:'Fatores de Sazonalidade (modelo v4 · Ahrefs + GA4)'},
+  sub_seasonality: {en:'12 fixed month factors, the same for 2025 and 2026. 100 = a normal month; 130 = 30% more interest than normal. Measured with outside demand: Google searches (Ahrefs) and brand visits to the site (GA4: SEM-Brand + SEO + Direct).', es:'12 factores de mes fijos, los mismos para 2025 y 2026. 100 = un mes normal; 130 = 30% más interés que lo normal. Medidos con demanda externa: búsquedas en Google (Ahrefs) y visitas de marca al sitio (GA4: SEM-Brand + SEO + Direct).', pt:'12 fatores de mês fixos, os mesmos para 2025 e 2026. 100 = mês normal; 130 = 30% mais interesse que o normal. Medidos com demanda externa: buscas no Google (Ahrefs) e visitas de marca ao site (GA4: SEM-Brand + SEO + Direct).'},
   col_month: {en:'Month', es:'Mes', pt:'Mês'},
   title_insights: {en:'Insights', es:'Insights', pt:'Insights'},
   title_direction: {en:'Creative Direction — what works, what doesn\'t, what to build next', es:'Dirección Creativa — qué funciona, qué no, qué construir después', pt:'Direção Criativa — o que funciona, o que não, o que construir a seguir'},
   title_tests: {en:'Recommended Tests', es:'Tests Recomendados', pt:'Testes Recomendados'},
   tests_col_a: {en:'A · With existing creatives (no production)', es:'A · Con creativos existentes (sin producción)', pt:'A · Com criativos existentes (sem produção)'},
   tests_col_b: {en:'B · Requires new production', es:'B · Requiere producción nueva', pt:'B · Requer nova produção'},
-  title_methodology: {en:'How TBD Dolo was built', es:'Cómo se construyó TBD Dolo', pt:'Como o TBD Dolo foi construído'},
+  title_methodology: {en:'How New TV Ads Performance was built', es:'Cómo se construyó New TV Ads Performance', pt:'Como o New TV Ads Performance foi construído'},
   title_adjkpi: {en:'★ What are L/$1k adj. and CPL adj.?', es:'★ ¿Qué son L/$1k adj. y CPL adj.?', pt:'★ O que são L/$1k adj. e CPL adj.?'},
   no_data: {en:'Not enough days with real TV spend in both periods to compare.', es:'No hay suficientes días con inversión real de TV en ambos períodos para comparar.', pt:'Não há dias suficientes com investimento real de TV em ambos os períodos para comparar.'},
 };
@@ -1435,7 +1501,7 @@ var TBD_HOWTO = {
   jrhalo: {en:'The halo column holds REAL leads of the OTHER brand (from Junior\'s own deck) tagged as generated by Open English\'s spend, prorated per creative-day. Compare "JR L/$1k adj" against "OE L/$1k adj (ref)" on the same row to see which creatives punch above their own weight once you count their cross-brand halo too.', es:'"Leads JR" son leads REALES de Open English Junior (de su propio deck) etiquetados como generados por la inversión de Open English, prorrateados por día de creativo. Compara "JR L/$1k adj" contra "OE L/$1k adj (ref)" en la misma fila para ver qué creativos rinden más de lo que parecen una vez que cuentas también su halo entre marcas.', pt:'"Leads JR" são leads REAIS de Open English Junior (do próprio deck da Junior) marcados como gerados pelo investimento da Open English, prorrateados por dia de criativo. Compare "JR L/$1k adj" com "OE L/$1k adj (ref)" na mesma linha para ver quais criativos rendem mais do que parecem quando você conta também o halo entre marcas.'},
   launch: {en:'"TV-on days" here is capped at the creative\'s first 7 calendar days on air, not its whole flight — this isolates first-impression performance from how it holds up later (see Wear-Out for that).', es:'"Días TV-on" aquí queda limitado a los primeros 7 días calendario del creativo al aire, no todo su flight — esto aísla el desempeño de primera impresión de cómo se sostiene después (ver Desgaste para eso).', pt:'"Dias TV-on" aqui fica limitado aos primeiros 7 dias corridos do criativo no ar, não o flight inteiro — isso isola a performance de primeira impressão de como ele se sustenta depois (ver Desgaste para isso).'},
   wearout: {en:'Each creative\'s own run is split in half by day count (not calendar week), each half independently demand-adjusted — a real drop of more than 20% from its first half on air to its second half (flagged "⚠ pull") means the creative itself is tiring out, not that a slow month made it look worse.', es:'El recorrido de cada creativo se parte por la mitad por conteo de días (no semana calendario), cada mitad ajustada por demanda de forma independiente — una caída real de más de 20% de su primera mitad al aire a su segunda mitad (marcada "⚠ pull") significa que el creativo en sí se está desgastando, no que un mes flojo lo hizo ver peor.', pt:'O percurso de cada criativo é dividido ao meio por contagem de dias (não semana corrida), cada metade ajustada por demanda de forma independente — uma queda real de mais de 20% da primeira metade no ar para a segunda metade (marcada "⚠ pull") significa que o criativo em si está se desgastando, não que um mês fraco o fez parecer pior.'},
-  seasonality: {en:'This is NOT TV performance — it is pure organic search interest, independent of any ad spend, and it is the divisor behind every "adj." number in the app. Read the table top to bottom: the factor is what a month is normally worth, the margin is how much of that is noise, and a month tagged "not significant" is one where the adjustment cannot be told apart from doing nothing. There is ONE table because the factors are fixed — the same January applies to 2025 and to 2026. The market rising or falling between years is a different thing and lives in its own card below, on purpose.', es:'Esto NO es performance de TV — es puro interés de búsqueda orgánica, independiente de cualquier inversión publicitaria, y es el divisor detrás de cada número "adj." de la app. Lee la tabla de arriba a abajo: el factor es lo que vale normalmente ese mes, el margen es cuánto de eso es ruido, y un mes marcado como "no significativo" es uno donde el ajuste no se distingue de no hacer nada. Hay UNA sola tabla porque los factores son fijos — el mismo enero aplica a 2025 y a 2026. Que el mercado suba o baje entre años es otra cosa distinta y vive en su propia tarjeta más abajo, a propósito.', pt:'Isto NÃO é performance de TV — é puro interesse de busca orgânica, independente de qualquer investimento, e é o divisor por trás de cada número "adj." do app. Leia a tabela de cima a baixo: o fator é o que aquele mês vale normalmente, a margem é quanto disso é ruído, e um mês marcado como "não significativo" é um onde o ajuste não se distingue de não fazer nada. Há UMA tabela só porque os fatores são fixos — o mesmo janeiro vale para 2025 e para 2026. O mercado subir ou cair entre anos é outra coisa e fica no seu próprio card abaixo, de propósito.'},
+  seasonality: {en:'This page is the divisor behind every "adj." number in the app. Read the table top to bottom: "Factor applied" is what each month is divided by, "Combined" is the measured value with its 95% range, and the last two columns are Ahrefs and GA4 on their own, so you can see both sources agree. A month at 100 is a normal month and is not adjusted.', es:'Esta página es el divisor detrás de cada número "adj." de la app. Lee la tabla de arriba a abajo: "Factor aplicado" es entre lo que se divide cada mes, "Combinado" es el valor medido con su rango de 95%, y las dos últimas columnas son Ahrefs y GA4 por separado, para que veas que las dos fuentes coinciden. Un mes en 100 es un mes normal y no se ajusta.', pt:'Esta página é o divisor por trás de cada número "adj." do app. Leia a tabela de cima para baixo: "Fator aplicado" é pelo que cada mês é dividido, "Combinado" é o valor medido com sua faixa de 95%, e as duas últimas colunas são Ahrefs e GA4 separados, para ver que as duas fontes coincidem. Um mês em 100 é um mês normal e não é ajustado.'},
   insights: {en:'Every card below crosses at least two signals and only appears when the effect is large enough to act on — sorted strongest-first. This is the closest thing to an automated "what should I actually do differently" page in the whole app.', es:'Cada tarjeta de abajo cruza al menos dos señales y solo aparece cuando el efecto es lo bastante grande para actuar sobre él — ordenadas de más a menos fuerte. Es lo más cercano a una página automática de "qué debería hacer distinto de verdad" en toda la app.', pt:'Cada cartão abaixo cruza pelo menos dois sinais e só aparece quando o efeito é grande o suficiente para agir — ordenados do mais forte para o mais fraco. É o mais próximo de uma página automática de "o que eu deveria realmente fazer diferente" em todo o app.'},
   direction: {en:'The 4 cards translate the data into a creative direction (keep/stop/untested/rules); the "Brief" box below turns that into plain-language instructions you can hand directly to a creative team, split by Generic vs. Promo since the winning formula differs between them.', es:'Las 4 tarjetas traducen los datos en una dirección creativa (mantener/parar/sin probar/reglas); la caja de "Brief" de abajo convierte eso en instrucciones en lenguaje simple que puedes entregarle directo a un equipo creativo, separadas por Generic vs. Promo porque la fórmula ganadora es distinta entre los dos.', pt:'Os 4 cartões traduzem os dados numa direção criativa (manter/parar/não testado/regras); a caixa de "Brief" abaixo transforma isso em instruções em linguagem simples que você pode entregar direto a uma equipe criativa, separadas por Generic vs. Promo porque a fórmula vencedora é diferente entre os dois.'},
   tests: {en:'Column A costs nothing to try (existing creatives/rotation changes only); Column B requires new production. Both lists are generated from this territory\'s own real numbers on every load — not a fixed checklist.', es:'La columna A no cuesta nada probar (solo creativos existentes/cambios de rotación); la columna B requiere producción nueva. Ambas listas se generan desde los números reales de este territorio en cada carga — no es un checklist fijo.', pt:'A coluna A não custa nada testar (só criativos existentes/mudanças de rotação); a coluna B requer nova produção. Ambas as listas são geradas a partir dos números reais deste território a cada carregamento — não é um checklist fixo.'},
@@ -1738,204 +1804,268 @@ var TBD_RENDERERS = {
       '<div><div style="font-weight:700;font-size:12px;margin-bottom:6px;">'+esc(tbdS('y26_label'))+'</div><div style="overflow-x:auto;"><table class="tbd-table"><thead>'+head+'</thead><tbody>'+rows(build(src26),'2026')+'</tbody></table></div></div></div>'+
       tbdTabInsights(data, 'theme_mechanism_code', [{title:null, body:tbdWearoutInsight(data)}]);
   },
-  seasonality: function(data){
-    var s = TBD_SEASONALITY[data.territory];
-    if(!s || !s.factorsIndex) return '<p>'+esc(tbdS('no_data'))+'</p>';
-    var L = LANG;
-    var MM = ['01','02','03','04','05','06','07','08','09','10','11','12'];
-    var months = MM.map(mesLabel);
-    var f = s.factorsIndex;              // 12 factores fijos, promedian 100
-    var grey = s.grey || [];
-    var errPct = tbdSeasonErrPct(data.territory);   // +/- % al 95%
-    var maxv = Math.max.apply(null, f);
-
-    /* ---------- tabla unica de 12 factores ---------- */
-    var frows = f.map(function(v,i){
-      var pct = Math.max(2, v/maxv*100);
-      var isGrey = !!grey[i];
-      var tone = isGrey ? 'var(--ink-faint)' : (v>=105 ? 'var(--good)' : (v<=95 ? 'var(--bad)' : 'var(--ink)'));
-      var band = errPct==null ? '' : '&plusmn;'+fmtNum(errPct,1)+'%';
-      var mark = isGrey
-        ? '<span class="tbd-season-grey-tag" title="'+esc(L==='en'?'Not distinguishable from a normal month at 95% confidence':L==='pt'?'Não distinguível de um mês normal com 95% de confiança':'No se distingue de un mes normal con 95% de confianza')+'">'+esc(L==='en'?'not significant':L==='pt'?'não significativo':'no significativo')+'</span>'
-        : '';
-      return '<tr'+(isGrey?' class="tbd-season-grey"':'')+'>'+
-        '<td style="width:78px;font-weight:700;">'+esc(months[i])+'</td>'+
-        '<td style="width:56px;text-align:right;font-weight:800;color:'+tone+';">'+fmtNum(v,0)+'</td>'+
-        '<td style="width:70px;text-align:right;font-size:11px;color:var(--ink-faint);">x'+fmtNum(v/100,2)+'</td>'+
-        '<td style="width:64px;text-align:right;font-size:11px;color:var(--ink-faint);">'+band+'</td>'+
-        '<td><div class="tbd-season-bartrack"><div class="tbd-season-barfill '+(isGrey?'grey':'y26')+'" style="width:'+pct+'%;"></div></div></td>'+
-        '<td style="width:110px;font-size:11px;">'+mark+'</td>'+
-      '</tr>';
-    }).join('');
-
-    var tblHead = '<tr>'+
-      '<th>'+esc(L==='en'?'Month':'Mes')+'</th>'+
-      '<th style="text-align:right;">'+esc(L==='en'?'Factor':'Factor')+'</th>'+
-      '<th style="text-align:right;">'+esc(L==='en'?'Multiplier':L==='pt'?'Multiplicador':'Multiplicador')+'</th>'+
-      '<th style="text-align:right;">'+esc(L==='en'?'Margin':L==='pt'?'Margem':'Margen')+'</th>'+
-      '<th></th><th></th></tr>';
-
-    var tblTitle = L==='en'
-      ? 'The 12 seasonal factors of '+data.territory+' &mdash; the same ones for 2025 and for 2026'
-      : L==='pt'
-      ? 'Os 12 fatores sazonais de '+data.territory+' &mdash; os mesmos para 2025 e para 2026'
-      : 'Los 12 factores de estacionalidad de '+data.territory+' &mdash; los mismos para 2025 y para 2026';
-    var tblSub = L==='en'
-      ? 'These are fixed. January is worth the same in 2025 as in 2026, so any number published here can be reproduced later. The 12 average exactly 100.'
-      : L==='pt'
-      ? 'São fixos. Janeiro vale o mesmo em 2025 e em 2026, então qualquer número publicado aqui pode ser reproduzido depois. Os 12 têm média exatamente 100.'
-      : 'Son fijos. Enero vale lo mismo en 2025 que en 2026, así que cualquier número que se publique acá se puede reproducir después. Los 12 promedian exactamente 100.';
-
-    var factorTable = '<div class="tbd-season-year">'+
-      '<div class="tbd-season-year-head">'+tblTitle+'</div>'+
-      '<div style="font-size:11px;color:var(--ink-faint);margin:-2px 0 8px;">'+tblSub+'</div>'+
-      '<div style="overflow-x:auto;"><table class="tbd-table"><thead>'+tblHead+'</thead><tbody>'+frows+'</tbody></table></div>'+
-    '</div>';
-
-    /* ---------- semaforo del pais ---------- */
-    var gate = tbdSeasonGate(data.territory) || {};
-    var gLbl = gate.label || '-';
-    var gCls = gLbl==='VERDE' ? 'ok' : (gLbl==='AMBAR' ? 'warn' : 'bad');
-    var gName = L==='en' ? (gLbl==='VERDE'?'GREEN':gLbl==='AMBAR'?'AMBER':'RED')
-              : L==='pt' ? (gLbl==='VERDE'?'VERDE':gLbl==='AMBAR'?'AMBAR':'VERMELHO') : gLbl;
-    var gTxt = L==='en'
-      ? (gLbl==='VERDE'
-          ? 'Tested on months the model had never seen, the seasonal pattern of '+data.territory+' predicted '+fmtNum(gate.skill,0)+'% better than assuming every month is the same. The adjustment is trustworthy here.'
-          : gLbl==='AMBAR'
-          ? 'Tested on months the model had never seen, the pattern of '+data.territory+' only beat "every month is the same" by '+fmtNum(gate.skill,0)+'%. The adjustment points the right way but is weak: use it for direction, not for close calls.'
-          : 'Out of sample the pattern did not beat assuming every month is the same, so the factors were forced to 1.00 and no seasonal adjustment is applied to '+data.territory+'.')
-      : L==='pt'
-      ? (gLbl==='VERDE'
-          ? 'Testado em meses que o modelo nunca tinha visto, o padrão sazonal de '+data.territory+' acertou '+fmtNum(gate.skill,0)+'% melhor do que supor que todo mês é igual. O ajuste é confiável aqui.'
-          : gLbl==='AMBAR'
-          ? 'Testado em meses que o modelo nunca tinha visto, o padrão de '+data.territory+' superou "todo mês é igual" em apenas '+fmtNum(gate.skill,0)+'%. O ajuste aponta a direção certa mas é fraco: use para direção, não para decidir empates.'
-          : 'Fora da amostra o padrão não superou supor que todo mês é igual, então os fatores foram forçados a 1,00 e nenhum ajuste sazonal é aplicado a '+data.territory+'.')
-      : (gLbl==='VERDE'
-          ? 'Probado contra meses que el modelo nunca había visto, el patrón estacional de '+data.territory+' acertó '+fmtNum(gate.skill,0)+'% mejor que suponer que todos los meses son iguales. Acá el ajuste es confiable.'
-          : gLbl==='AMBAR'
-          ? 'Probado contra meses que el modelo nunca había visto, el patrón de '+data.territory+' le ganó a "todos los meses son iguales" por apenas '+fmtNum(gate.skill,0)+'%. El ajuste apunta en la dirección correcta pero es débil: úsalo para dirección, no para desempatar.'
-          : 'Fuera de muestra el patrón no le ganó a suponer que todos los meses son iguales, así que los factores se forzaron a 1,00 y a '+data.territory+' no se le aplica ningún ajuste estacional.');
-    var gateHead = L==='en'?'How much can you trust this adjustment in '+data.territory+'?'
-      : L==='pt'?'Quanto dá para confiar neste ajuste em '+data.territory+'?'
-      : 'Cuánto se puede confiar en este ajuste en '+data.territory+'?';
-    var gateCard = '<div class="tbd-gate tbd-gate-'+gCls+'">'+
-      '<div class="tbd-gate-head"><span class="tbd-gate-chip">'+esc(gName)+'</span> '+esc(gateHead)+'</div>'+
-      '<div class="tbd-gate-body">'+esc(gTxt)+
-      (errPct!=null ? ' <b>'+esc(L==='en'?'Practical rule: do not rank two creatives apart on an adjusted difference smaller than '+fmtNum(errPct,1)+'% — that is the error of the adjustment itself.'
-        : L==='pt'?'Regra prática: não separe dois criativos no ranking por uma diferença ajustada menor que '+fmtNum(errPct,1)+'% — esse é o erro do próprio ajuste.'
-        : 'Regla práctica: no separes a dos creativos en el ranking por una diferencia ajustada menor a '+fmtNum(errPct,1)+'% — ese es el error del ajuste mismo.')+'</b>' : '')+
-      '</div></div>';
-
-    /* ---------- explicacion con manzanas ---------- */
-    var explain = L==='en'
-      ? '<div class="tbd-explain"><div class="tbd-explain-h">What this number is, in plain terms</div><ul class="tbd-explain-list">'+
-        '<li><b>Think of an ice-cream shop.</b> It sells more in December than in June. If you want to know whether the new flavour is any good, you cannot compare a December week against a June week &mdash; December would win even with a bad flavour. First you strip out "how much December usually sells", and only then you compare flavours. That is exactly what this index does with creatives.</li>'+
-        '<li><b>The factor</b> is how much a given month usually moves versus a normal month, in '+esc(data.territory)+'. <b>100 = a normal month.</b> It comes from real Ahrefs search volume for "open english" + "cursos de ingles", using every month since January 2023.</li>'+
-        '<li><b>Why "usually" matters.</b> We do not use what happened in that one month. We use the pattern that repeats every year, after removing the market\'s own upward or downward drift. That is why the same January is worth the same in 2025 and in 2026 &mdash; and why the number does not move again next time you open this dashboard.</li>'+
-        '<li><b>Nothing to do with TV.</b> This is the market moving on its own: with zero ads on air, more people still look for courses in some months than in others.</li>'+
-        '</ul></div>'
-      : L==='pt'
-      ? '<div class="tbd-explain"><div class="tbd-explain-h">O que e este numero, em termos simples</div><ul class="tbd-explain-list">'+
-        '<li><b>Pense numa sorveteria.</b> Ela vende mais em dezembro do que em junho. Se você quer saber se o sabor novo é bom, não pode comparar uma semana de dezembro com uma de junho &mdash; dezembro venceria até com um sabor ruim. Primeiro você tira "quanto dezembro costuma vender", e só então compara os sabores. É exatamente isso que este índice faz com os criativos.</li>'+
-        '<li><b>O fator</b> é quanto um mês costuma se mover em relação a um mês normal, em '+esc(data.territory)+'. <b>100 = mês normal.</b> Vem do volume real de busca do Ahrefs para "open english" + "cursos de ingles", usando todos os meses desde janeiro de 2023.</li>'+
-        '<li><b>Por que "costuma" importa.</b> Não usamos o que aconteceu naquele mês específico. Usamos o padrão que se repete todo ano, depois de remover a subida ou queda do próprio mercado. Por isso o mesmo janeiro vale o mesmo em 2025 e em 2026 &mdash; e por isso o número não muda de novo na próxima vez que você abrir este dashboard.</li>'+
-        '<li><b>Nada a ver com TV.</b> É o mercado se movendo sozinho: com zero anúncios no ar, mais gente ainda procura cursos em alguns meses do que em outros.</li>'+
-        '</ul></div>'
-      : '<div class="tbd-explain"><div class="tbd-explain-h">Que es este numero, explicado con manzanas</div><ul class="tbd-explain-list">'+
-        '<li><b>Piensa en una heladería.</b> Vende más en diciembre que en junio. Si quieres saber si el sabor nuevo es bueno, no puedes comparar una semana de diciembre contra una de junio &mdash; diciembre ganaría incluso con un sabor malo. Primero le quitas "cuánto suele vender diciembre", y recién ahí comparas sabores. Eso es exactamente lo que hace este índice con los creativos.</li>'+
-        '<li><b>El factor</b> es cuánto se suele mover un mes frente a un mes normal, en '+esc(data.territory)+'. <b>100 = un mes normal.</b> Sale del volumen real de búsquedas de Ahrefs para "open english" + "cursos de ingles", usando todos los meses desde enero de 2023.</li>'+
-        '<li><b>Por qué importa el "suele".</b> No usamos lo que pasó en ese mes puntual. Usamos el patrón que se repite todos los años, después de quitarle la subida o la caída propia del mercado. Por eso el mismo enero vale igual en 2025 y en 2026 &mdash; y por eso el número no se vuelve a mover la próxima vez que abras este dashboard.</li>'+
-        '<li><b>No tiene nada que ver con la TV.</b> Es el mercado moviéndose solo: aunque no salga ni un anuncio al aire, en unos meses la gente busca cursos más que en otros.</li>'+
-        '</ul></div>';
-
-    /* ---------- mecanica paso a paso, con el ejemplo del mes real mas alto y mas bajo ---------- */
-    var hiIdx = f.indexOf(Math.max.apply(null, f)), loIdx = f.indexOf(Math.min.apply(null, f));
-    var hiM = months[hiIdx], loM = months[loIdx], hiV = f[hiIdx], loV = f[loIdx];
-    var baseLeads = 1000;
-    var hiMult = Math.round(hiV)/100, loMult = Math.round(loV)/100;
-    var hiProj = Math.round(baseLeads*hiMult), loProj = Math.round(baseLeads*loMult);
-
-    var mechanics = L==='en'
-      ? '<div class="tbd-explain"><div class="tbd-explain-h">How the factor is applied, step by step</div><ol class="tbd-explain-list">'+
-        '<li><b>To forecast the leads of a month:</b> take your baseline expectation and MULTIPLY by that month\'s multiplier. With a baseline of '+fmtNum(baseLeads,0)+' leads: in <b>'+esc(hiM)+'</b> (factor '+fmtNum(hiV,0)+') you would expect '+fmtNum(baseLeads,0)+' x '+fmtNum(hiMult,2)+' = <b>'+fmtNum(hiProj,0)+' leads</b>; in <b>'+esc(loM)+'</b> (factor '+fmtNum(loV,0)+'), '+fmtNum(baseLeads,0)+' x '+fmtNum(loMult,2)+' = <b>'+fmtNum(loProj,0)+' leads</b>. Same budget, same creatives &mdash; the month alone explains the gap.</li>'+
-        '<li><b>To judge a creative fairly (what the adj. columns do):</b> go the other way and DIVIDE, to strip the month out. L/$1k adj. = raw L/$1k / multiplier. A creative that scored 60 in <b>'+esc(hiM)+'</b> is really worth '+fmtNum(60/hiMult,0)+' once the tailwind is removed; one that scored 60 in <b>'+esc(loM)+'</b> is really worth '+fmtNum(60/loMult,0)+'.</li>'+
-        '<li><b>Which multiplier each creative gets:</b> not the month it launched, but a blend of every day it was on air, weighted by the spend of each day. A creative that spent most of its budget in a peak month carries a high multiplier even if it also aired in the valley.</li>'+
-        '<li><b>What is NOT in the divisor:</b> the market going up or down between years. That is a real business fact, not a measurement bias, so it is reported separately below and never divided out.</li>'+
-        '</ol></div>'
-      : L==='pt'
-      ? '<div class="tbd-explain"><div class="tbd-explain-h">Como o fator e aplicado, passo a passo</div><ol class="tbd-explain-list">'+
-        '<li><b>Para projetar os leads de um mes:</b> pegue sua expectativa base e MULTIPLIQUE pelo multiplicador daquele mes. Com base de '+fmtNum(baseLeads,0)+' leads: em <b>'+esc(hiM)+'</b> (fator '+fmtNum(hiV,0)+') voce esperaria '+fmtNum(baseLeads,0)+' x '+fmtNum(hiMult,2)+' = <b>'+fmtNum(hiProj,0)+' leads</b>; em <b>'+esc(loM)+'</b> (fator '+fmtNum(loV,0)+'), '+fmtNum(baseLeads,0)+' x '+fmtNum(loMult,2)+' = <b>'+fmtNum(loProj,0)+' leads</b>. Mesmo orcamento, mesmos criativos &mdash; so o mes explica a diferenca.</li>'+
-        '<li><b>Para julgar um criativo de forma justa (o que fazem as colunas adj.):</b> faca o contrario e DIVIDA. L/$1k adj. = L/$1k bruto / multiplicador. Um criativo que fez 60 em <b>'+esc(hiM)+'</b> na verdade vale '+fmtNum(60/hiMult,0)+'; um que fez 60 em <b>'+esc(loM)+'</b> vale '+fmtNum(60/loMult,0)+'.</li>'+
-        '<li><b>Qual multiplicador cada criativo recebe:</b> nao e o do mes de estreia, e sim uma mistura de todos os dias no ar, ponderada pelo gasto de cada dia.</li>'+
-        '<li><b>O que NAO entra no divisor:</b> o mercado subir ou cair entre anos. Isso e um fato real do negocio, nao um vies de medicao, entao e reportado separadamente abaixo e nunca dividido.</li>'+
-        '</ol></div>'
-      : '<div class="tbd-explain"><div class="tbd-explain-h">Como se aplica el factor, paso a paso</div><ol class="tbd-explain-list">'+
-        '<li><b>Para proyectar los leads de un mes:</b> tomas tu expectativa base y la MULTIPLICAS por el multiplicador de ese mes. Con una base de '+fmtNum(baseLeads,0)+' leads: en <b>'+esc(hiM)+'</b> (factor '+fmtNum(hiV,0)+') esperarías '+fmtNum(baseLeads,0)+' x '+fmtNum(hiMult,2)+' = <b>'+fmtNum(hiProj,0)+' leads</b>; en <b>'+esc(loM)+'</b> (factor '+fmtNum(loV,0)+'), '+fmtNum(baseLeads,0)+' x '+fmtNum(loMult,2)+' = <b>'+fmtNum(loProj,0)+' leads</b>. Mismo presupuesto, mismos creativos &mdash; la diferencia la explica solo el mes.</li>'+
-        '<li><b>Para juzgar un creativo de forma justa (esto hacen las columnas adj.):</b> vas al revés y DIVIDES, para quitarle el mes. L/$1k adj. = L/$1k crudo / multiplicador. Un creativo que hizo 60 en <b>'+esc(hiM)+'</b> en realidad vale '+fmtNum(60/hiMult,0)+' una vez le quitas el viento a favor; uno que hizo 60 en <b>'+esc(loM)+'</b> en realidad vale '+fmtNum(60/loMult,0)+'.</li>'+
-        '<li><b>Que multiplicador le toca a cada creativo:</b> no el del mes en que se lanzó, sino una mezcla de todos los días que estuvo al aire, ponderada por cuánto se gastó cada día. Un creativo que gastó casi todo su presupuesto en un mes pico carga un multiplicador alto aunque también haya salido en el valle.</li>'+
-        '<li><b>Que NO entra en el divisor:</b> que el mercado suba o baje entre años. Eso es un hecho real del negocio, no un sesgo de medición, así que se reporta aparte acá abajo y nunca se divide.</li>'+
-        '</ol></div>';
-
-    /* ---------- nivel de mercado: CONTEXTO, no divisor ---------- */
-    var mkt = '';
-    if(s.market_25!=null && s.market_26!=null){
-      var yoy = s.market_yoy;
-      var dir = yoy>2 ? (L==='en'?'grew':L==='pt'?'cresceu':'creció')
-              : yoy<-2 ? (L==='en'?'shrank':L==='pt'?'encolheu':'se encogió')
-              : (L==='en'?'stayed flat':L==='pt'?'ficou estavel':'se mantuvo plano');
-      var _per = tbdS('period_label');
-      var mHead = L==='en'?'Separately: the market itself, '+_per
-        : L==='pt'?'Separadamente: o próprio mercado, '+_per
-        : 'Aparte: el mercado en sí, '+_per;
-      var mBody = L==='en'
-        ? 'Once the repeating month pattern is removed, demand in '+data.territory+' '+dir+' '+fmtNum(Math.abs(yoy),1)+'% between the two periods (level '+fmtNum(s.market_25,1)+' → '+fmtNum(s.market_26,1)+', where 100 = the 2023 average). <b>This number is context, not a correction.</b> It is deliberately kept out of the divisor: if we also divided by it, a creative that ran in a collapsing market would look better precisely because the market collapsed. Read it as the headwind or tailwind the team was working against.'
-        : L==='pt'
-        ? 'Removido o padrão de mês que se repete, a demanda em '+data.territory+' '+dir+' '+fmtNum(Math.abs(yoy),1)+'% entre os dois periodos (nivel '+fmtNum(s.market_25,1)+' → '+fmtNum(s.market_26,1)+', onde 100 = media de 2023). <b>Este número é contexto, não correção.</b> Fica de propósito fora do divisor: se dividíssemos por ele também, um criativo que rodou num mercado em queda pareceria melhor justamente porque o mercado caiu. Leia como o vento contra ou a favor que o time enfrentou.'
-        : 'Una vez removido el patrón de mes que se repite, la demanda en '+data.territory+' '+dir+' '+fmtNum(Math.abs(yoy),1)+'% entre los dos periodos (nivel '+fmtNum(s.market_25,1)+' → '+fmtNum(s.market_26,1)+', donde 100 = el promedio de 2023). <b>Este número es contexto, no una corrección.</b> Se deja a propósito fuera del divisor: si también dividiéramos por él, un creativo que corrió en un mercado que se derrumbó se vería mejor justamente porque el mercado se derrumbó. Léelo como el viento en contra o a favor que tuvo el equipo.';
-      mkt = '<div class="tbd-explain tbd-explain-alt"><div class="tbd-explain-h">'+esc(mHead)+'</div>'+
-        '<div style="font-size:12px;line-height:1.55;">'+mBody+'</div></div>';
-    }
-
-    /* ---------- advertencias honestas ---------- */
-    var wHead = L==='en'?'Three limits you should know before leaning on this'
-      : L==='pt'?'Três limites que você deve saber antes de se apoiar nisto'
-      : 'Tres límites que conviene saber antes de apoyarse en esto';
-    var w1 = L==='en'
-      ? '<b>The signal is search, not sales.</b> We measure how many people searched, and assume that translates one-to-one into how many would convert. If in some months searchers are more casual than in others, the adjustment is slightly off.'
-      : L==='pt'
-      ? '<b>O sinal é busca, não venda.</b> Medimos quantas pessoas buscaram e assumimos que isso se traduz um-para-um em quantas converteriam. Se em alguns meses quem busca é mais casual, o ajuste fica levemente errado.'
-      : '<b>La señal es búsqueda, no venta.</b> Medimos cuánta gente buscó y asumimos que eso se traduce uno a uno en cuánta convertiría. Si en algunos meses el que busca es más casual que en otros, el ajuste queda ligeramente corrido.';
-    var w2 = L==='en'
-      ? '<b>Part of the search is caused by us.</b> Brand searches for "open english" go up partly because our own TV is on air. So the index is not a perfectly clean outside measure of the market &mdash; in heavy TV months it is inflated by our own activity, which makes the adjustment slightly conservative.'
-      : L==='pt'
-      ? '<b>Parte da busca é causada por nós.</b> Buscas de marca por "open english" sobem em parte porque nossa própria TV está no ar. Então o índice não é uma medida externa perfeitamente limpa do mercado &mdash; em meses de TV pesada ele é inflado pela nossa própria atividade, o que torna o ajuste levemente conservador.'
-      : '<b>Parte de la búsqueda la causamos nosotros.</b> Las búsquedas de marca de "open english" suben en parte porque nuestra propia TV está al aire. Así que el índice no es una medida externa perfectamente limpia del mercado &mdash; en meses de TV pesada está inflado por nuestra propia actividad, lo que vuelve el ajuste ligeramente conservador.';
-    var w3 = errPct!=null
-      ? (L==='en'
-        ? '<b>Grey months are noise.</b> The rows marked "not significant" have a factor that cannot be told apart from a normal month at 95% confidence. The adjustment is still applied there (it is the best single estimate we have), but do not build an argument on a difference smaller than '+fmtNum(errPct,1)+'%.'
-        : L==='pt'
-        ? '<b>Meses cinzas são ruído.</b> As linhas marcadas como "não significativo" têm um fator que não se distingue de um mês normal com 95% de confiança. O ajuste continua sendo aplicado ali (é a melhor estimativa única que temos), mas não construa um argumento sobre uma diferença menor que '+fmtNum(errPct,1)+'%.'
-        : '<b>Los meses en gris son ruido.</b> Las filas marcadas como "no significativo" tienen un factor que no se distingue de un mes normal con 95% de confianza. El ajuste igual se aplica ahí (es la mejor estimación puntual que tenemos), pero no armes un argumento sobre una diferencia menor a '+fmtNum(errPct,1)+'%.')
-      : '';
-    var warn = '<div class="tbd-alertbox tbd-alertbox-neutral">'+
-      '<div class="tbd-alertbox-h">⚠ '+esc(wHead)+'</div>'+
-      '<ul class="tbd-alertbox-list"><li>'+w1+'</li><li>'+w2+'</li>'+(w3?'<li>'+w3+'</li>':'')+'</ul></div>';
-
-    return '<h2 class="tbd-section-title">'+esc(tbdS('title_seasonality'))+' - '+esc(data.territory)+'</h2>'+
-      tbdHowToFold('seasonality')+
-      explain+
-      factorTable+
-      gateCard+
-      mechanics+
-      mkt+
-      warn+
-      tbdTakeawayBox(tbdSeasonalityTakeaway(data.territory));
-  },
+  seasonality: function(data){ return tbdSeasonalityHTML(data); },
   insights: function(data){ return tbdInsightsHTML(data)+tbdTakeawayBox(tbdInsightsMetaInsight(data)); },
   direction: function(data){ return tbdDirectionHTML(data); },
   tests: function(data){ return tbdTestsHTML(data)+tbdTakeawayBox(tbdTestsInsight(data)); },
   methodology: function(data){ return tbdMethodologyHTML(); },
 };
+
+/* ============================================================
+   PESTANA DE ESTACIONALIDAD (modelo v4: demanda externa, Ahrefs + GA4).
+   Todo sale de los numeros reales del pais y la marca seleccionados.
+   ============================================================ */
+function tbdSeaSourceTxt(t, terr, org){
+  if(t.fuente==='ahrefs+ga4') return tbdL(
+    'Ahrefs (Google searches) and GA4 (brand visits to the Open English site) combined',
+    'Ahrefs (buscas no Google) e GA4 (visitas de marca ao site da Open English) combinados',
+    'Ahrefs (búsquedas en Google) y GA4 (visitas de marca al sitio de Open English) combinados');
+  if(t.fuente==='ga4') return tbdL(
+    'GA4 only — in '+terr+' Ahrefs does not measure: it repeats the same template every year',
+    'só GA4 — em '+terr+' o Ahrefs não mede: repete o mesmo molde todo ano',
+    'solo GA4 — en '+terr+' Ahrefs no mide: repite la misma plantilla cada año');
+  if(t.fuente==='ahrefs') return tbdL('Ahrefs only','só Ahrefs','solo Ahrefs');
+  return '';
+}
+function tbdSeaNoAdjustReason(t, terr, org){
+  if(t.skill==null) return tbdL(
+    'There are not enough months with TV on air in '+terr+' ('+esc(org)+') to check whether the demand pattern really moves its TV results. Without that check, no adjustment is applied.',
+    'Não há meses suficientes com TV no ar em '+terr+' ('+esc(org)+') para checar se o padrão de demanda realmente move os resultados da TV. Sem essa checagem, nenhum ajuste é aplicado.',
+    'No hay suficientes meses con TV al aire en '+terr+' ('+esc(org)+') para comprobar si el patrón de demanda de verdad mueve los resultados de su TV. Sin esa comprobación, no se aplica ningún ajuste.');
+  return tbdL(
+    'The demand pattern of '+terr+' does not explain how its TV results move month to month: it explains '+fmtNum(t.skill,0)+'% (at least 10% is required; negative = worse than assuming every month is the same). Applying it here would be inventing a correction.',
+    'O padrão de demanda de '+terr+' não explica como os resultados da TV se movem mês a mês: explica '+fmtNum(t.skill,0)+'% (exige-se pelo menos 10%; negativo = pior que supor que todo mês é igual). Aplicá-lo aqui seria inventar uma correção.',
+    'El patrón de demanda de '+terr+' no explica cómo se mueven mes a mes los resultados de su TV: explica '+fmtNum(t.skill,0)+'% (se exige al menos 10%; negativo = peor que suponer que todos los meses son iguales). Aplicarlo acá sería inventar una corrección.');
+}
+function tbdSeasonalityHTML(data){
+  var terr = data.territory, org = tbdOrgName();
+  var t = tbdSeaOf(terr);
+  if(!t || !t.factorsIndex) return '<p>'+esc(tbdS('no_data'))+'</p>';
+  var months = TBD_MM.map(mesLabel);
+  var f = t.factorsIndex, est = t.estIndex || f, ci = t.ci95 || [];
+  var fa = t.ahrefsIndex || [], fg = t.ga4Index || [];
+  var applied = tbdSeasonApplied(terr);
+  var errPct = tbdSeasonErrPct(terr);
+  var dFrom = TBD_SEASON_DATA.data_from || '2023-01', dTo = TBD_SEASON_DATA.data_through || '';
+  var kw = terr==='Brazil' ? '"open english" + "curso de ingles"' : '"open english" + "cursos de ingles"';
+
+  /* ---------- 1. la idea ---------- */
+  var idea = '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(tbdL('The idea, in plain terms','A ideia, em termos simples','La idea, en simple'))+'</div><ul class="tbd-explain-list">'+
+    '<li>'+tbdL(
+      '<b>In some months more people are interested in learning English</b> (high season) and in others fewer (low season), whatever creative is on air. The factor measures that interest so every creative can be compared <b>as if it had aired in a normal month</b> — apples with apples.',
+      '<b>Em alguns meses mais gente se interessa por aprender inglês</b> (alta temporada) e em outros menos (baixa), seja qual for o criativo no ar. O fator mede esse interesse para comparar todo criativo <b>como se tivesse ido ao ar num mês normal</b> — maçã com maçã.',
+      '<b>En algunos meses hay más gente interesada en aprender inglés</b> (temporada alta) y en otros menos (temporada baja), sea cual sea el creativo al aire. El factor mide ese interés para comparar todos los creativos <b>como si hubieran salido en un mes normal</b> — peras con peras.')+'</li>'+
+    '<li>'+tbdL(
+      '<b>Where it comes from (two outside sources, '+dFrom+' to '+dTo+'):</b> <b>Ahrefs</b> = Google searches for '+kw+' in '+esc(terr)+'; <b>GA4</b> = brand visits to the Open English site ('+esc(org)+') = SEM-Brand + SEO + Direct. It does NOT use leads.',
+      '<b>De onde vem (duas fontes externas, '+dFrom+' a '+dTo+'):</b> <b>Ahrefs</b> = buscas no Google por '+kw+' em '+esc(terr)+'; <b>GA4</b> = visitas de marca ao site da Open English ('+esc(org)+') = SEM-Brand + SEO + Direct. NÃO usa leads.',
+      '<b>De dónde sale (dos fuentes externas, '+dFrom+' a '+dTo+'):</b> <b>Ahrefs</b> = búsquedas en Google de '+kw+' en '+esc(terr)+'; <b>GA4</b> = visitas de marca al sitio de Open English ('+esc(org)+') = SEM-Brand + SEO + Direct. NO usa leads.')+'</li>'+
+    '<li>'+tbdL(
+      '<b>What the number means:</b> 100 = a normal month (the average of the 12). 130 = 30% more interest than normal; 85 = 15% less.',
+      '<b>O que o número significa:</b> 100 = mês normal (a média dos 12). 130 = 30% mais interesse que o normal; 85 = 15% menos.',
+      '<b>Qué significa el número:</b> 100 = un mes normal (el promedio de los 12). 130 = 30% más interés que lo normal; 85 = 15% menos.')+'</li>'+
+    '<li>'+tbdL(
+      '<b>How it is applied:</b> L/$1k adj. = L/$1k ÷ (factor/100). Factor above 100 → the adjusted number goes <b>DOWN</b> (the month helped). Below 100 → it goes <b>UP</b> (the month worked against it). Exactly 100 → it does not change.',
+      '<b>Como se aplica:</b> L/$1k adj. = L/$1k ÷ (fator/100). Fator acima de 100 → o ajustado <b>DESCE</b> (o mês ajudou). Abaixo de 100 → <b>SOBE</b> (o mês jogou contra). Exatamente 100 → não muda.',
+      '<b>Cómo se aplica:</b> L/$1k adj. = L/$1k ÷ (factor/100). Factor arriba de 100 → el ajustado <b>BAJA</b> (el mes ayudó). Abajo de 100 → <b>SUBE</b> (el mes jugó en contra). Exactamente 100 → no cambia.')+'</li>'+
+    '</ul></div>';
+
+  /* ---------- 2. sin ajuste ---------- */
+  var noAdj = '';
+  if(!applied){
+    noAdj = '<div class="tbd-alertbox"><div class="tbd-alertbox-h">'+esc(tbdL('No seasonal adjustment in '+terr+' ('+org+')','Sem ajuste sazonal em '+terr+' ('+org+')','Sin ajuste estacional en '+terr+' ('+org+')'))+'</div>'+
+      '<ul class="tbd-alertbox-list"><li>'+tbdSeaNoAdjustReason(t, terr, org)+'</li><li>'+tbdL(
+        'Consequence: in this country every <b>adj.</b> number equals the raw one. Compare creatives that aired in similar months.',
+        'Consequência: neste país todo número <b>adj.</b> é igual ao bruto. Compare criativos que foram ao ar em meses parecidos.',
+        'Consecuencia: en este país todo número <b>adj.</b> es igual al crudo. Compara creativos que salieron en meses parecidos.')+'</li></ul></div>';
+  }
+
+  /* ---------- 3. tabla de los 12 meses ---------- */
+  var maxv = Math.max.apply(null, est.concat(fa).concat(fg).concat([100]));
+  function bar(v, cls){ return v==null ? '' : '<div class="tbd-season-bartrack"><div class="tbd-season-barfill '+cls+'" style="width:'+Math.max(2, v/maxv*100)+'%;"></div></div>'; }
+  var rows = f.map(function(v, i){
+    var isAdj = applied && v!==100;
+    var c = ci[i] || [];
+    var tone = !isAdj ? 'var(--ink-faint)' : (v>100 ? 'var(--good)' : 'var(--bad)');
+    var status = !applied ? tbdL('No · no adjustment in this country','Não · sem ajuste neste país','No · sin ajuste en este país')
+      : v>100 ? tbdL('Yes · high season','Sim · alta temporada','Sí · temporada alta')
+      : v<100 ? tbdL('Yes · low season','Sim · baixa temporada','Sí · temporada baja')
+      : tbdL('No · same as a normal month','Não · igual a um mês normal','No · igual a un mes normal');
+    return '<tr'+(isAdj?'':' class="tbd-season-grey"')+'>'+
+      '<td style="width:60px;font-weight:700;">'+esc(months[i])+'</td>'+
+      '<td style="text-align:right;font-weight:800;color:'+tone+';">'+fmtNum(v,0)+'</td>'+
+      '<td style="text-align:right;">'+fmtNum(est[i],0)+(c.length?' <span style="color:var(--ink-faint);font-size:10.5px;">['+fmtNum(c[0],0)+'–'+fmtNum(c[1],0)+']</span>':'')+'</td>'+
+      '<td style="font-size:11px;'+(isAdj?'font-weight:700;':'color:var(--ink-faint);')+'">'+esc(status)+'</td>'+
+      '<td style="text-align:right;'+(t.ahrefsPlantilla?'color:var(--ink-faint);text-decoration:line-through;':'')+'">'+(fa[i]!=null?fmtNum(fa[i],0):'—')+'</td>'+
+      '<td style="text-align:right;">'+(fg[i]!=null?fmtNum(fg[i],0):'—')+'</td>'+
+      '<td style="min-width:70px;">'+bar(est[i], isAdj?'y26':'grey')+'</td>'+
+    '</tr>';
+  }).join('');
+  var head = '<tr>'+
+    '<th>'+esc(tbdL('Month','Mês','Mes'))+'</th>'+
+    '<th style="text-align:right;">'+esc(tbdL('Factor applied','Fator aplicado','Factor aplicado'))+'</th>'+
+    '<th style="text-align:right;">'+esc(tbdL('Combined [95% range]','Combinado [faixa 95%]','Combinado [rango 95%]'))+'</th>'+
+    '<th>'+esc(tbdL('Adjusted?','Ajusta?','¿Se ajusta?'))+'</th>'+
+    '<th style="text-align:right;">'+esc(tbdL('Ahrefs alone','Só Ahrefs','Solo Ahrefs'))+'</th>'+
+    '<th style="text-align:right;">'+esc(tbdL('GA4 alone','Só GA4','Solo GA4'))+'</th>'+
+    '<th></th></tr>';
+  var tblTitle = tbdL('The 12 month factors of '+terr+' · '+org+' — the same for 2025 and 2026',
+    'Os 12 fatores de mês de '+terr+' · '+org+' — os mesmos para 2025 e 2026',
+    'Los 12 factores de mes de '+terr+' · '+org+' — los mismos para 2025 y 2026');
+  var tblSub = tbdL(
+    'The last two columns are each source on its own; "Combined" is the average of both. Only months PROVEN to differ from a normal month are adjusted (95% range does not include 100); the rest stay at 100.'+(t.ahrefsPlantilla?' Ahrefs is crossed out: in this country it does not measure, it repeats the same template every year, so only GA4 is used.':''),
+    'As duas últimas colunas são cada fonte sozinha; "Combinado" é a média das duas. Só se ajustam os meses COMPROVADAMENTE diferentes de um mês normal (a faixa de 95% não inclui 100); os demais ficam em 100.'+(t.ahrefsPlantilla?' O Ahrefs está riscado: neste país ele não mede, repete o mesmo molde todo ano, então só se usa o GA4.':''),
+    'Las dos últimas columnas son cada fuente por separado; "Combinado" es el promedio de las dos. Solo se ajustan los meses DEMOSTRADOS distintos de un mes normal (su rango de 95% no incluye el 100); los demás quedan en 100.'+(t.ahrefsPlantilla?' Ahrefs aparece tachado: en este país no mide, repite la misma plantilla cada año, así que se usa solo GA4.':''));
+  var factorTable = '<div class="tbd-season-year">'+
+    '<div class="tbd-season-year-head">'+esc(tblTitle)+'</div>'+
+    '<div style="font-size:11px;color:var(--ink-faint);margin:-2px 0 8px;line-height:1.5;">'+esc(tblSub)+'</div>'+
+    '<div style="overflow-x:auto;"><table class="tbd-table"><thead>'+head+'</thead><tbody>'+rows+'</tbody></table></div>'+
+  '</div>';
+
+  /* ---------- 4. semaforo ---------- */
+  var gLbl = t.gate || 'ROJO';
+  var gCls = gLbl==='VERDE' ? 'ok' : (gLbl==='AMBAR' ? 'warn' : 'bad');
+  var gName = LANG==='en' ? (gLbl==='VERDE'?'GREEN':gLbl==='AMBAR'?'AMBER':'RED') : (LANG==='pt' ? (gLbl==='ROJO'?'VERMELHO':gLbl) : gLbl);
+  var gTxt = !applied ? tbdSeaNoAdjustReason(t, terr, org)
+    : tbdL('This demand pattern explains '+fmtNum(t.skill,0)+'% of how the real TV results of '+terr+' move month to month (leads per day at the same spend, 2025–2026). '+(gLbl==='VERDE'?'It is reliable here.':'It points the right way but use it for direction, not to break ties.')+' Source: '+tbdSeaSourceTxt(t,terr,org)+'.',
+        'Este padrão de demanda explica '+fmtNum(t.skill,0)+'% de como os resultados reais da TV de '+terr+' se movem mês a mês (leads por dia com o mesmo gasto, 2025–2026). '+(gLbl==='VERDE'?'Aqui é confiável.':'Aponta a direção certa, mas use para direção, não para desempatar.')+' Fonte: '+tbdSeaSourceTxt(t,terr,org)+'.',
+        'Este patrón de demanda explica el '+fmtNum(t.skill,0)+'% de cómo se mueven mes a mes los resultados reales de la TV de '+terr+' (leads por día con el mismo gasto, 2025–2026). '+(gLbl==='VERDE'?'Acá es confiable.':'Apunta en la dirección correcta, pero úsalo para dirección, no para desempatar.')+' Fuente: '+tbdSeaSourceTxt(t,terr,org)+'.');
+  var gateCard = '<div class="tbd-gate tbd-gate-'+gCls+'">'+
+    '<div class="tbd-gate-head"><span class="tbd-gate-chip">'+esc(gName)+'</span> '+esc(tbdL('How much can you trust this adjustment in '+terr+'?','Quanto dá para confiar neste ajuste em '+terr+'?','¿Cuánto se puede confiar en este ajuste en '+terr+'?'))+'</div>'+
+    '<div class="tbd-gate-body">'+gTxt+
+    (errPct!=null ? ' <b>'+esc(tbdL('Practical rule: do not rank two creatives apart on an adjusted difference smaller than '+fmtNum(errPct,1)+'%.',
+      'Regra prática: não separe dois criativos no ranking por uma diferença ajustada menor que '+fmtNum(errPct,1)+'%.',
+      'Regla práctica: no separes a dos creativos en el ranking por una diferencia ajustada menor a '+fmtNum(errPct,1)+'%.'))+'</b>' : '')+
+    '</div></div>';
+
+  /* ---------- 5. ejemplo con los meses reales ---------- */
+  var example = '';
+  if(applied){
+    var hiI = -1, loI = -1;
+    f.forEach(function(v,i){ if(v>100 && (hiI<0 || v>f[hiI])) hiI = i; if(v<100 && (loI<0 || v<f[loI])) loI = i; });
+    var raw = 60, rowsEx = [];
+    function exRow(i, kind){
+      var v = f[i], adj = raw/(v/100);
+      var lect = kind==='hi' ? tbdL('Worth less than it looks: there was more interest that month.','Vale menos do que parece: havia mais interesse naquele mês.','Vale menos de lo que parece: ese mes había más interés.')
+        : kind==='lo' ? tbdL('Worth more than it looks: there was less interest that month.','Vale mais do que parece: havia menos interesse naquele mês.','Vale más de lo que parece: ese mes había menos interés.')
+        : tbdL('Unchanged: a normal month.','Não muda: um mês normal.','No cambia: un mes normal.');
+      return '<tr><td><b>'+esc(months[i])+'</b></td><td style="text-align:right;">'+fmtNum(v,0)+'</td><td style="text-align:right;">'+raw+' ÷ '+fmtNum(v/100,2)+'</td>'+
+        '<td style="text-align:right;" class="tbd-adj"><b>'+fmtNum(adj,0)+'</b></td><td>'+esc(lect)+'</td></tr>';
+    }
+    if(hiI>=0) rowsEx.push(exRow(hiI,'hi'));
+    var normI = f.indexOf(100);
+    if(normI>=0) rowsEx.push(exRow(normI,'norm'));
+    if(loI>=0) rowsEx.push(exRow(loI,'lo'));
+    example = '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(tbdL('Same raw result, different months — real factors of '+terr,'Mesmo resultado bruto, meses diferentes — fatores reais de '+terr,'Mismo resultado crudo, meses distintos — factores reales de '+terr))+'</div>'+
+      '<div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">'+esc(tbdL('Creatives that each aired in only one month, all with '+raw+' leads per $1,000:','Criativos que foram ao ar em um só mês, todos com '+raw+' leads por $1.000:','Creativos que salieron cada uno en un solo mes, todos con '+raw+' leads por cada $1.000:'))+'</div>'+
+      '<table class="tbd-table"><thead><tr><th>'+esc(tbdL('Aired only in','Só no ar em','Salió solo en'))+'</th><th style="text-align:right;">'+esc(tbdL('Factor','Fator','Factor'))+'</th><th style="text-align:right;">'+esc(tbdL('Math','Conta','Cuenta'))+'</th><th style="text-align:right;">L/$1k adj.</th><th>'+esc(tbdL('Reading','Leitura','Lectura'))+'</th></tr></thead><tbody>'+rowsEx.join('')+'</tbody></table>'+
+      '<div style="font-size:12px;color:var(--ink-soft);margin-top:8px;">'+esc(tbdL(
+        'A creative that aired in several months gets the blend of their factors, weighted by what was spent each day.',
+        'Um criativo que passou por vários meses recebe a mistura dos seus fatores, ponderada pelo que se gastou em cada dia.',
+        'Un creativo que estuvo al aire varios meses recibe la mezcla de sus factores, ponderada por lo que se gastó cada día.'))+'</div></div>';
+  }
+
+  /* ---------- 6. noviembre ---------- */
+  var nv = f[10], ne = est[10], nc = ci[10] || [], na = fa[10], ng = fg[10];
+  var novTxt;
+  if(!applied){
+    novTxt = tbdL('In '+terr+' no month is adjusted, November included: a creative that only aired in November keeps L/$1k adj. = L/$1k.',
+      'Em '+terr+' nenhum mês é ajustado, novembro incluído: um criativo que só foi ao ar em novembro mantém L/$1k adj. = L/$1k.',
+      'En '+terr+' no se ajusta ningún mes, noviembre incluido: un creativo que solo salió en noviembre queda con L/$1k adj. = L/$1k.');
+  } else if(nv===100){
+    novTxt = tbdL('November is a normal month here (combined '+fmtNum(ne,0)+', range '+fmtNum(nc[0],0)+'–'+fmtNum(nc[1],0)+'): it is not adjusted.',
+      'Novembro é um mês normal aqui (combinado '+fmtNum(ne,0)+', faixa '+fmtNum(nc[0],0)+'–'+fmtNum(nc[1],0)+'): não é ajustado.',
+      'Noviembre es un mes normal acá (combinado '+fmtNum(ne,0)+', rango '+fmtNum(nc[0],0)+'–'+fmtNum(nc[1],0)+'): no se ajusta.');
+  } else if(nv<100){
+    novTxt = tbdL('November feels like a high month because of Black Friday and because it comes after October, but both sources say that in '+terr+' fewer people look for English that month than in a normal month (Ahrefs '+(na!=null?fmtNum(na,0):'—')+', GA4 '+(ng!=null?fmtNum(ng,0):'—')+'). So a creative that only aired in November goes UP a little when adjusted (÷'+fmtNum(nv/100,2)+'): it got its leads with less interest than usual.',
+      'Novembro parece um mês alto pela Black Friday e por vir depois de outubro, mas as duas fontes dizem que em '+terr+' menos gente procura inglês nesse mês do que num mês normal (Ahrefs '+(na!=null?fmtNum(na,0):'—')+', GA4 '+(ng!=null?fmtNum(ng,0):'—')+'). Por isso um criativo que só foi ao ar em novembro SOBE um pouco ao ajustar (÷'+fmtNum(nv/100,2)+'): conseguiu seus leads com menos interesse do que o normal.',
+      'Noviembre se siente como un mes alto por el Black Friday y porque viene después de octubre, pero las dos fuentes dicen que en '+terr+' ese mes hay menos gente buscando inglés que en un mes normal (Ahrefs '+(na!=null?fmtNum(na,0):'—')+', GA4 '+(ng!=null?fmtNum(ng,0):'—')+'). Por eso un creativo que solo salió en noviembre SUBE un poco al ajustarlo (÷'+fmtNum(nv/100,2)+'): consiguió sus leads con menos interés que lo normal.');
+  } else {
+    novTxt = tbdL('In '+terr+' November is proven high season (factor '+fmtNum(nv,0)+'): a creative that only aired in November goes DOWN when adjusted.',
+      'Em '+terr+' novembro é alta temporada comprovada (fator '+fmtNum(nv,0)+'): um criativo que só foi ao ar em novembro DESCE ao ajustar.',
+      'En '+terr+' noviembre es temporada alta demostrada (factor '+fmtNum(nv,0)+'): un creativo que solo salió en noviembre BAJA al ajustarlo.');
+  }
+  var novBox = '<div class="tbd-explain tbd-explain-alt"><div class="tbd-explain-h">'+esc(tbdL('And November?','E novembro?','¿Y noviembre?'))+'</div><div style="font-size:12.5px;line-height:1.6;">'+novTxt+'</div></div>';
+
+  /* ---------- 7. como se calculo ---------- */
+  var steps = '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(tbdL('How the factor was calculated, step by step','Como o fator foi calculado, passo a passo','Cómo se calculó el factor, paso a paso'))+'</div><ol class="tbd-explain-list">'+
+    '<li>'+tbdL('<b>Two monthly series</b>, January 2023 to '+dTo+': Ahrefs searches and GA4 brand visits (SEM-Brand + SEO + Direct).',
+      '<b>Duas séries mensais</b>, janeiro de 2023 a '+dTo+': buscas no Ahrefs e visitas de marca no GA4 (SEM-Brand + SEO + Direct).',
+      '<b>Dos series mensuales</b>, enero 2023 a '+dTo+': búsquedas de Ahrefs y visitas de marca de GA4 (SEM-Brand + SEO + Direct).')+'</li>'+
+    '<li>'+tbdL('<b>Each month is compared with the average of the 12 months around it</b> (a centred moving average). That removes the long-run trend — the market or the site growing or shrinking — and leaves only the effect of the month.',
+      '<b>Cada mês é comparado com a média dos 12 meses ao redor dele</b> (média móvel centrada). Isso tira a tendência de fundo — o mercado ou o site crescendo ou encolhendo — e deixa só o efeito do mês.',
+      '<b>Cada mes se compara con el promedio de los 12 meses a su alrededor</b> (media móvil centrada). Eso quita la tendencia de fondo — el mercado o el sitio que crece o se achica — y deja solo el efecto del mes.')+'</li>'+
+    '<li>'+tbdL('<b>The years are averaged</b> (2023–2026): the factor of January is what January usually is, not what one January was.',
+      '<b>Os anos são promediados</b> (2023–2026): o fator de janeiro é o que janeiro costuma ser, não o que foi um janeiro.',
+      '<b>Se promedian los años</b> (2023–2026): el factor de enero es lo que suele ser enero, no lo que fue un enero puntual.')+'</li>'+
+    '<li>'+tbdL('<b>The two sources are combined</b> (average). Where Ahrefs does not really measure (small countries where it repeats the same template every year), only GA4 is used.',
+      '<b>As duas fontes são combinadas</b> (média). Onde o Ahrefs não mede de verdade (países pequenos em que repete o mesmo molde todo ano), usa-se só o GA4.',
+      '<b>Se combinan las dos fuentes</b> (promedio). Donde Ahrefs no mide de verdad (países chicos en que repite la misma plantilla cada año), se usa solo GA4.')+'</li>'+
+    '<li>'+tbdL('<b>It is scaled so that 100 = the average of the 12 months</b> (the normal month).',
+      '<b>Escala-se para que 100 = a média dos 12 meses</b> (o mês normal).',
+      '<b>Se escala para que 100 = el promedio de los 12 meses</b> (el mes normal).')+'</li>'+
+    '<li>'+tbdL('<b>Two truth filters.</b> (a) A month is adjusted only if its 95% range excludes 100. (b) A country is adjusted only if its demand pattern explains at least 10% of how its real TV results move month to month — leads are used only to CHECK the factor, never to build it.',
+      '<b>Dois filtros de verdade.</b> (a) Um mês só é ajustado se sua faixa de 95% exclui 100. (b) Um país só é ajustado se seu padrão de demanda explica pelo menos 10% de como seus resultados reais de TV se movem mês a mês — os leads só servem para CHECAR o fator, nunca para construí-lo.',
+      '<b>Dos filtros de verdad.</b> (a) Un mes solo se ajusta si su rango de 95% excluye el 100. (b) Un país solo se ajusta si su patrón de demanda explica al menos el 10% de cómo se mueven mes a mes sus resultados reales de TV — los leads solo sirven para COMPROBAR el factor, nunca para armarlo.')+'</li>'+
+    '</ol></div>';
+
+  /* ---------- 8. referencia ---------- */
+  var refBox = '<div class="tbd-explain"><div class="tbd-explain-h">'+esc(tbdL('Why "normal month" = the average, and not the lowest month','Por que "mês normal" = a média, e não o mês mais baixo','Por qué "mes normal" = el promedio, y no el mes más bajo'))+'</div>'+
+    '<div style="font-size:12.5px;line-height:1.6;color:var(--ink-soft);">'+tbdL(
+      'Choosing another reference (for example the lowest month) would move EVERY adjusted number by the same percentage: the ranking of creatives stays exactly the same. The average keeps adjusted numbers on the same scale as the real ones: high months come down to normal and low months go up to normal.',
+      'Escolher outra referência (por exemplo o mês mais baixo) moveria TODOS os ajustados na mesma porcentagem: o ranking de criativos fica exatamente igual. A média mantém os ajustados na mesma escala que os reais: meses altos descem ao normal e baixos sobem ao normal.',
+      'Elegir otra referencia (por ejemplo el mes más bajo) movería TODOS los ajustados en el mismo porcentaje: el ranking de creativos queda exactamente igual. El promedio deja los ajustados en la misma escala que los reales: los meses altos bajan al nivel normal y los bajos suben al nivel normal.')+'</div></div>';
+
+  /* ---------- 9. mercado (contexto) ---------- */
+  var mkt = '';
+  var mk = tbdMarketLevels(terr);
+  if(mk && !t.ahrefsPlantilla){
+    var dir = mk.yoy>2 ? tbdL('grew','cresceram','crecieron') : (mk.yoy<-2 ? tbdL('shrank','caíram','cayeron') : tbdL('stayed flat','ficaram estáveis','se mantuvieron planas'));
+    mkt = '<div class="tbd-explain tbd-explain-alt"><div class="tbd-explain-h">'+esc(tbdL('Separately: the market itself','Separadamente: o próprio mercado','Aparte: el mercado en sí'))+'</div>'+
+      '<div style="font-size:12px;line-height:1.55;">'+tbdL(
+        'Once the month pattern is removed, searches in '+esc(terr)+' (Ahrefs) '+dir+' '+fmtNum(Math.abs(mk.yoy),1)+'% between '+mk.span+' 2025 and '+mk.span+' 2026. <b>Context, not a correction:</b> it never enters the divisor.',
+        'Removido o padrão de mês, as buscas em '+esc(terr)+' (Ahrefs) '+dir+' '+fmtNum(Math.abs(mk.yoy),1)+'% entre '+mk.span+' 2025 e '+mk.span+' 2026. <b>Contexto, não correção:</b> nunca entra no divisor.',
+        'Una vez quitado el patrón de mes, las búsquedas en '+esc(terr)+' (Ahrefs) '+dir+' '+fmtNum(Math.abs(mk.yoy),1)+'% entre '+mk.span+' 2025 y '+mk.span+' 2026. <b>Contexto, no una corrección:</b> nunca entra al divisor.')+'</div></div>';
+  }
+
+  /* ---------- 10. limites ---------- */
+  var warn = '<div class="tbd-alertbox tbd-alertbox-neutral">'+
+    '<div class="tbd-alertbox-h">⚠ '+esc(tbdL('Limits worth knowing','Limites que vale saber','Límites que conviene saber'))+'</div><ul class="tbd-alertbox-list">'+
+    '<li>'+tbdL('<b>Part of the interest is caused by us.</b> Brand searches and brand visits go up when our own TV is on air, so in heavy-TV months the "interest" is partly ours and the adjustment is a bit strict with those months.',
+      '<b>Parte do interesse é causada por nós.</b> Buscas e visitas de marca sobem quando a nossa TV está no ar; em meses de TV pesada, parte do "interesse" é nossa e o ajuste fica um pouco rígido com esses meses.',
+      '<b>Parte del interés lo causamos nosotros.</b> Las búsquedas y visitas de marca suben cuando nuestra propia TV está al aire; en meses de mucha TV parte del "interés" es nuestro y el ajuste es un poco estricto con esos meses.')+'</li>'+
+    '<li>'+tbdL('<b>Ahrefs revises its latest months.</b> The series is downloaded whole every month, not just the new month.',
+      '<b>O Ahrefs revisa os últimos meses.</b> A série é baixada inteira todo mês, não só o mês novo.',
+      '<b>Ahrefs revisa sus últimos meses.</b> La serie se baja completa cada mes, no solo el mes nuevo.')+'</li>'+
+    '<li>'+tbdL('<b>It is a calendar correction, not a spend correction.</b> A creative that aired on lighter-spend days keeps that advantage in its L/$1k; compare creatives with similar spend when that matters.',
+      '<b>É uma correção de calendário, não de investimento.</b> Um criativo que rodou em dias de gasto mais leve mantém essa vantagem no L/$1k; compare criativos com gasto parecido quando importar.',
+      '<b>Es una corrección de calendario, no de inversión.</b> Un creativo que salió en días de gasto más liviano conserva esa ventaja en su L/$1k; compara creativos con gasto parecido cuando importe.')+'</li>'+
+    '</ul></div>';
+
+  return '<h2 class="tbd-section-title">'+esc(tbdS('title_seasonality'))+' - '+esc(terr)+'</h2>'+
+    tbdHowToFold('seasonality')+
+    idea+ noAdj+ factorTable+ gateCard+ example+ novBox+ steps+ refBox+ mkt+ warn+
+    tbdTakeawayBox(tbdSeasonalityTakeaway(terr));
+}
+function tbdSeasonalityTakeaway(territory){
+  var t = tbdSeaOf(territory);
+  if(!t || !t.factorsIndex) return tbdS('no_data');
+  var org = tbdOrgName();
+  if(!tbdSeasonApplied(territory)){
+    return tbdL('<b>Takeaway:</b> in '+esc(territory)+' ('+esc(org)+') no seasonal adjustment is applied — the demand pattern (Ahrefs/GA4) could not be shown to move its TV results, so adj. numbers equal raw ones here. Compare creatives that aired in similar months.',
+      '<b>Takeaway:</b> em '+esc(territory)+' ('+esc(org)+') não se aplica ajuste sazonal — não foi possível mostrar que o padrão de demanda (Ahrefs/GA4) move os resultados da TV, então os números adj. são iguais aos brutos aqui. Compare criativos que foram ao ar em meses parecidos.',
+      '<b>Takeaway:</b> en '+esc(territory)+' ('+esc(org)+') no se aplica ajuste estacional — no se pudo demostrar que el patrón de demanda (Ahrefs/GA4) mueva los resultados de su TV, así que acá los números adj. son iguales a los crudos. Compara creativos que salieron en meses parecidos.');
+  }
+  var hi = [], lo = [], same = [];
+  t.factorsIndex.forEach(function(v, i){
+    var lb = mesLabel(TBD_MM[i]);
+    if(v>100) hi.push(lb+' x'+fmtNum(v/100,2)); else if(v<100) lo.push(lb+' x'+fmtNum(v/100,2)); else same.push(lb);
+  });
+  var none = tbdL('none','nenhuma','ninguna');
+  var txt = tbdL('<b>Takeaway:</b> in '+esc(territory)+' ('+esc(org)+') the proven high season is '+(hi.join(', ')||none)+' and the proven low season '+(lo.join(', ')||none)+'.'+(same.length?' '+same.join(', ')+' cannot be told apart from a normal month and are not adjusted.':'')+' Two creatives that aired in different seasons are only comparable on the adj. columns.',
+    '<b>Takeaway:</b> em '+esc(territory)+' ('+esc(org)+') a alta temporada comprovada é '+(hi.join(', ')||none)+' e a baixa '+(lo.join(', ')||none)+'.'+(same.length?' '+same.join(', ')+' não se distinguem de um mês normal e não são ajustados.':'')+' Dois criativos que rodaram em temporadas diferentes só são comparáveis nas colunas adj.',
+    '<b>Takeaway:</b> en '+esc(territory)+' ('+esc(org)+') la temporada alta demostrada es '+(hi.join(', ')||none)+' y la baja '+(lo.join(', ')||none)+'.'+(same.length?' '+same.join(', ')+' no se distinguen de un mes normal y no se ajustan.':'')+' Dos creativos que salieron en temporadas distintas solo son comparables en las columnas adj.');
+  return txt;
+}
 
 /* ============================ takeaways / insights / tests (texto generado desde datos reales) ============================ */
 function tbdPortfolioTakeaway(data){
@@ -1955,28 +2085,6 @@ function tbdPortfolioTakeaway(data){
     : LANG==='pt'
     ? '<b>Takeaway:</b> '+qualityTxt+'. A diferença de leads totais entre os anos ('+fmtNum(deltaLeads,1)+'%) se explica principalmente pela mudança de investimento ('+fmtNum(deltaSpend,1)+'% de gasto) e pela sazonalidade de demanda, não apenas pelo desempenho dos criativos.'
     : '<b>Takeaway:</b> '+qualityTxt+'. La diferencia de leads totales entre años ('+fmtNum(deltaLeads,1)+'%) se explica principalmente por el cambio de inversión ('+fmtNum(deltaSpend,1)+'% de gasto) y por estacionalidad de demanda, no solo por el desempeño de los creativos.';
-}
-function tbdSeasonalityTakeaway(territory){
-  var s = TBD_SEASONALITY[territory];
-  if(!s || !s.factorsIndex) return tbdS('no_data');
-  var f = s.factorsIndex, MM=['01','02','03','04','05','06','07','08','09','10','11','12'];
-  var months = MM.map(mesLabel);
-  var hi=f.indexOf(Math.max.apply(null,f)), lo=f.indexOf(Math.min.apply(null,f));
-  var swing=(f[hi]-f[lo])/f[lo]*100;
-  var yoy = s.market_yoy;
-  var L=LANG;
-  var part1 = L==='en'
-    ? '<b>Takeaway:</b> in '+esc(territory)+' the calendar alone moves demand '+fmtNum(swing,0)+'% between the strongest month ('+esc(months[hi])+', x'+fmtNum(f[hi]/100,2)+') and the weakest ('+esc(months[lo])+', x'+fmtNum(f[lo]/100,2)+'). Any two creatives that aired in different months are not comparable on their raw numbers.'
-    : L==='pt'
-    ? '<b>Takeaway:</b> em '+esc(territory)+' só o calendário move a demanda '+fmtNum(swing,0)+'% entre o mês mais forte ('+esc(months[hi])+', x'+fmtNum(f[hi]/100,2)+') e o mais fraco ('+esc(months[lo])+', x'+fmtNum(f[lo]/100,2)+'). Dois criativos que foram ao ar em meses diferentes não são comparáveis pelos números brutos.'
-    : '<b>Takeaway:</b> en '+esc(territory)+' solo el calendario mueve la demanda '+fmtNum(swing,0)+'% entre el mes más fuerte ('+esc(months[hi])+', x'+fmtNum(f[hi]/100,2)+') y el más débil ('+esc(months[lo])+', x'+fmtNum(f[lo]/100,2)+'). Dos creativos que salieron en meses distintos no son comparables por sus números crudos.';
-  if(yoy==null) return part1;
-  var part2 = L==='en'
-    ? ' Separately, the market itself '+(yoy>2?'grew':yoy<-2?'fell':'held flat')+' '+fmtNum(Math.abs(yoy),1)+'% between Jan–Jul 2025 and Jan–Jul 2026 — that is the headwind or tailwind behind the year-over-year numbers, and it is deliberately not divided out.'
-    : L==='pt'
-    ? ' Separadamente, o próprio mercado '+(yoy>2?'cresceu':yoy<-2?'caiu':'ficou estável')+' '+fmtNum(Math.abs(yoy),1)+'% entre Jan–Jul 2025 e Jan–Jul 2026 — esse é o vento por trás dos números ano a ano, e de propósito não é dividido.'
-    : ' Aparte, el mercado en sí '+(yoy>2?'creció':yoy<-2?'cayó':'se mantuvo plano')+' '+fmtNum(Math.abs(yoy),1)+'% entre Ene–Jul 2025 y Ene–Jul 2026 — ese es el viento detrás de los números año contra año, y a propósito no se divide.';
-  return part1+part2;
 }
 /* ---------- insights nuevos por pestana (promo/generic/jrhalo/launch/wearout/adjkpi/insights-meta/tests) ----------
    Mismo criterio que los detectores de mas abajo: cruzan al menos dos senales
@@ -2086,20 +2194,21 @@ function tbdWearoutInsight(data){
     : 'Entre '+list.length+' creativos con suficientes días para medir, el L/$1k ajustado por demanda se mueve '+fmtNum(avg,1)+'% en promedio de su primera mitad al aire a su segunda mitad, y '+flagged.length+' ('+fmtNum(flagged.length/list.length*100,0)+'%) muestran una caída real de desgaste (>20%). '+(flagged.length ? 'Prioriza renovar: '+flagged.slice(0,3).map(function(x){return '"'+x.row.nombre+'"';}).join(', ')+'.' : 'Ningún creativo muestra una señal real de desgaste este período — los flights actuales pueden seguir corriendo tal cual.');
 }
 function tbdAdjKpiInsight(data){
-  var s = TBD_SEASONALITY[data.territory];
-  if(!s) return null;
-  var arr = s.jan_jul_2026;
+  if(!tbdSeasonApplied(data.territory)) return null;
+  var rf = tbdReportFactors(data.territory, '2026');
+  var arr = rf.map(function(x){ return x.f; });
+  if(!arr.length) return null;
   var max = Math.max.apply(null, arr), min = Math.min.apply(null, arr);
   if(min<=0) return null;
   var swing = (max-min)/min*100;
   if(swing<10) return null;
-  var months = ['01','02','03','04','05','06','07'].map(mesLabel);
+  var months = rf.map(function(x){ return x.label; });
   var maxM = months[arr.indexOf(max)], minM = months[arr.indexOf(min)];
   return LANG==='en'
-    ? 'In '+esc(data.territory)+', the 2026 demand index swings '+fmtNum(swing,0)+'% between its lowest ('+minM+', index '+fmtNum(min,0)+') and highest ('+maxM+', index '+fmtNum(max,0)+') month. That is how much raw L/$1k can be distorted by timing alone here — a real reason to always check the "adj." column before comparing two creatives that aired in different months.'
+    ? 'In '+esc(data.territory)+', the seasonal factor of the period swings '+fmtNum(swing,0)+'% between its lowest ('+minM+', index '+fmtNum(min,0)+') and highest ('+maxM+', index '+fmtNum(max,0)+') month. That is how much raw L/$1k can be distorted by timing alone here — a real reason to always check the "adj." column before comparing two creatives that aired in different months.'
     : LANG==='pt'
-    ? 'Em '+esc(data.territory)+', o índice de demanda de 2026 varia '+fmtNum(swing,0)+'% entre seu mês mais baixo ('+minM+', índice '+fmtNum(min,0)+') e mais alto ('+maxM+', índice '+fmtNum(max,0)+'). É o quanto o L/$1k bruto pode ser distorcido só pelo timing aqui — uma razão real para sempre checar a coluna "adj." antes de comparar dois criativos que foram ao ar em meses diferentes.'
-    : 'En '+esc(data.territory)+', el índice de demanda de 2026 varía '+fmtNum(swing,0)+'% entre su mes más bajo ('+minM+', índice '+fmtNum(min,0)+') y más alto ('+maxM+', índice '+fmtNum(max,0)+'). Eso es cuánto se puede distorsionar el L/$1k crudo solo por timing acá — una razón real para siempre revisar la columna "adj." antes de comparar dos creativos que salieron al aire en meses distintos.';
+    ? 'Em '+esc(data.territory)+', o fator sazonal do período varia '+fmtNum(swing,0)+'% entre seu mês mais baixo ('+minM+', índice '+fmtNum(min,0)+') e mais alto ('+maxM+', índice '+fmtNum(max,0)+'). É o quanto o L/$1k bruto pode ser distorcido só pelo timing aqui — uma razão real para sempre checar a coluna "adj." antes de comparar dois criativos que foram ao ar em meses diferentes.'
+    : 'En '+esc(data.territory)+', el factor estacional del período varía '+fmtNum(swing,0)+'% entre su mes más bajo ('+minM+', índice '+fmtNum(min,0)+') y más alto ('+maxM+', índice '+fmtNum(max,0)+'). Eso es cuánto se puede distorsionar el L/$1k crudo solo por timing acá — una razón real para siempre revisar la columna "adj." antes de comparar dos creativos que salieron al aire en meses distintos.';
 }
 function tbdInsightsMetaInsight(data){
   var found = tbdDeepInsights(data);
@@ -2136,11 +2245,15 @@ function tbdMonthlySpendByMonth(items){
 }
 function tbdDetectSpendVsDemandTiming(data, year){
   var items = year==='2025' ? data.y25 : data.y26;
-  var s = TBD_SEASONALITY[data.territory];
+  var s = tbdSeaOf(data.territory);
   if(!s || !items.length) return null;
   var spendByMonth = tbdMonthlySpendByMonth(items);
-  var idxArr = year==='2025' ? s.jan_jul_2025 : s.jan_jul_2026;
-  var months = ['01','02','03','04','05','06','07'].map(function(m){ return year+'-'+m; });
+  if(!tbdSeasonApplied(data.territory)) return null;
+  var per = TBD_PERIODS[year];
+  if(!per) return null;
+  var rfT = tbdReportFactors(data.territory, year);
+  var idxArr = rfT.map(function(x){ return x.f; });
+  var months = rfT.map(function(x){ return per.year+'-'+TBD_MM[x.m-1]; });
   var totalSpend = 0; months.forEach(function(m){ totalSpend += spendByMonth[m]||0; });
   if(totalSpend<=0) return null;
   // correlacion simple: peso de gasto de cada mes vs su indice de demanda (ambos normalizados a %)
@@ -2151,11 +2264,11 @@ function tbdDetectSpendVsDemandTiming(data, year){
   if(Math.abs(gap)<6) return null;
   var bestIdx = idxArr.indexOf(Math.max.apply(null, idxArr));
   var worstIdx = idxArr.indexOf(Math.min.apply(null, idxArr));
-  var monthNames = ['01','02','03','04','05','06','07'].map(mesLabel);
+  var monthNames = rfT.map(function(x){ return x.label; });
   return {
     strength: Math.abs(gap),
     icon: gap<0 ? '⚠' : '✓',
-    title: (LANG==='en'?'Spend timing vs. natural demand — ':LANG==='pt'?'Timing de gasto vs. demanda natural — ':'Timing de gasto vs. demanda natural — ')+year,
+    title: (LANG==='en'?'Spend timing vs. natural demand — ':LANG==='pt'?'Timing de gasto vs. demanda natural — ':'Timing de gasto vs. demanda natural — ')+tbdSlotLabel(year),
     body: gap<0
       ? (LANG==='en'?'Spend is concentrated in months with BELOW-average natural demand (weighted demand index '+fmtNum(weightedDemand,0)+' vs. period average '+fmtNum(flatDemand,0)+'). The portfolio is fighting the tide: shifting budget toward '+monthNames[bestIdx]+' (the highest-demand month) instead of '+monthNames[worstIdx]+' would likely raise raw leads without spending more.'
         :LANG==='pt'?'O gasto está concentrado em meses com demanda natural ABAIXO da média (índice de demanda ponderado '+fmtNum(weightedDemand,0)+' vs. média do período '+fmtNum(flatDemand,0)+'). O portfólio está remando contra a maré: mover orçamento para '+monthNames[bestIdx]+' (o mês de maior demanda) em vez de '+monthNames[worstIdx]+' provavelmente aumentaria os leads brutos sem gastar mais.'
@@ -2672,10 +2785,10 @@ function tbdSeasonalityCardFor(data, dimKey){
   if(audit) parts.push('<b>'+esc(audit.title)+':</b> '+esc(audit.body));
 
   if(!parts.length){
-    var s = TBD_SEASONALITY[data.territory];
     var swing = null;
-    if(s && s.jan_jul_2026 && s.jan_jul_2026.length){
-      var mx=Math.max.apply(null,s.jan_jul_2026), mn=Math.min.apply(null,s.jan_jul_2026);
+    if(tbdSeasonApplied(data.territory)){
+      var _rf = tbdReportFactors(data.territory, '2026').map(function(x){ return x.f; });
+      var mx=Math.max.apply(null,_rf), mn=Math.min.apply(null,_rf);
       if(mn>0) swing=(mx-mn)/mn*100;
     }
     parts.push(L==='en'
@@ -3187,7 +3300,7 @@ function tbdNLeads(delta, phi){
    marco como no significativos: recomendar una ventana sobre un mes gris seria
    recomendar sobre ruido. */
 function tbdMonthsAhead(territory){
-  var t = TBD_SEASONALITY[territory] || {};
+  var t = tbdSeaOf(territory) || {};
   var f = t.factorsIndex || [], grey = t.grey || [];
   var MM = ['01','02','03','04','05','06','07','08','09','10','11','12'];
   var hoyMes = (new Date()).getMonth(); // 0-11
@@ -3208,7 +3321,7 @@ function tbdMonthsAhead(territory){
            todosGrises: todosGrises, unico: cand.length===1 };
 }
 function tbdGreySpendShare(items, territory){
-  var t = TBD_SEASONALITY[territory] || {}, grey = t.grey || [];
+  var t = tbdSeaOf(territory) || {}, grey = t.grey || [];
   var tot = 0, gris = 0, meses = {};
   var MM = ['01','02','03','04','05','06','07','08','09','10','11','12'];
   items.forEach(function(r){ (r._dailyItems||[]).forEach(function(d){
@@ -3220,12 +3333,11 @@ function tbdGreySpendShare(items, territory){
 }
 /* Deriva real del mercado dentro del período, leida del nivel desestacionalizado. */
 function tbdMarketDrift(territory){
-  var t = TBD_SEASONALITY[territory] || {};
-  return t.market_yoy==null ? null : t.market_yoy;
+  var mk = tbdMarketLevels(territory);
+  return mk ? mk.yoy : null;
 }
 function tbdRangoFactor(territory){
-  var t = TBD_SEASONALITY[territory] || {};
-  var f = (t.factorsIndex||[]).slice(0,7);
+  var f = tbdReportFactors(territory, '2026').map(function(x){ return x.f; });
   if(!f.length) return null;
   return Math.max.apply(null,f) - Math.min.apply(null,f);
 }
@@ -3278,16 +3390,17 @@ function tbdCtx(data){
   var pais = data.territory, marca = tbdOrgName(), esJr = marca==='Open English Junior';
   var gate = tbdSeasonGate(pais) || {};
   var err = tbdSeasonErrPct(pais);
-  var sea = TBD_SEASONALITY[pais] || {};
+  var sea = tbdSeaOf(pais) || {};
+  var mkt = tbdMarketLevels(pais);
   var y26f = data.y26.filter(function(r){ return r.n >= 3; });
   var gastoPeriodo = data.p26.s || 0;
-  var gastoMes = gastoPeriodo / 7;   // el período son 7 meses (Ene-Jul)
+  var gastoMes = gastoPeriodo / tbdPeriodMonthsCount();   // meses que cubre el periodo actual del reporte
   var ph = tbdPhi(data.y26);
   var nMedibles = data.y26.filter(function(r){ return tbdDaysUnique(r) >= 12; }).length;
   var ctx = {
     pais: pais, marca: marca, esJr: esJr,
     err: err, errOk: err!=null, gate: gate.label||null, skill: gate.skill,
-    yoy: tbdMarketDrift(pais), market25: sea.market_25, market26: sea.market_26,
+    yoy: tbdMarketDrift(pais), market25: mkt?mkt.m25:null, market26: mkt?mkt.m26:null, marketSpan: mkt?mkt.span:'',
     factores: sea.factorsIndex || [], grey: sea.grey || [],
     meses: tbdMonthsAhead(pais), rangoFactor: tbdRangoFactor(pais),
     greySpend: tbdGreySpendShare(data.y26, pais),
@@ -3462,7 +3575,7 @@ TBD_RULES.push({ id:'S-ZOMBIE', dest:'STOP', prio:10,
     });
     if(!peor) return null;
     if(!tbdLedgerClaimPiece(led, peor.w.nombre, 'S-ZOMBIE')) return null;
-    var sp = tbdLedgerSpend(led, peor.w.s/7, 'S-ZOMBIE');
+    var sp = tbdLedgerSpend(led, peor.w.s/tbdPeriodMonthsCount(), 'S-ZOMBIE');
     var t = tbdTier(peor.nPiezas, peor.w.n, peor.gap, ctx.err);
     return { tier:t.tier, usd:sp.monto, delta:peor.gap/100, conf:0.8,
       claims:{piezas:[peor.w.nombre],dims:[]},
@@ -3520,7 +3633,7 @@ TBD_RULES.push({ id:'S-WEAR', dest:'STOP', prio:30,
     var pick = null;
     for(var i=0;i<cands.length;i++){ if(tbdLedgerClaimPiece(led, cands[i].r.nombre, 'S-WEAR')){ pick = cands[i]; break; } }
     if(!pick) return null;
-    var sp = tbdLedgerSpend(led, pick.r.s/7*0.5, 'S-WEAR');
+    var sp = tbdLedgerSpend(led, pick.r.s/tbdPeriodMonthsCount()*0.5, 'S-WEAR');
     var driftTxt = ctx.yoy==null ? null : tbdNP1(ctx.yoy);
     return { tier:'REGLA', usd:sp.monto, delta:Math.abs(pick.w.pct)/100, conf:0.75,
       claims:{piezas:[pick.r.nombre],dims:[]},
@@ -3573,7 +3686,7 @@ TBD_RULES.push({ id:'S-VOLMARGIN', dest:'STOP', prio:50,
     });
     if(!best) return null;
     if(!tbdLedgerClaimDim(led, best.dimKey, 'S-VOLMARGIN')) return null;
-    var mover = best.porLeads.s/7*0.3;
+    var mover = best.porLeads.s/tbdPeriodMonthsCount()*0.3;
     var sp = tbdLedgerSpend(led, mover, 'S-VOLMARGIN');
     return { tier:'APUESTA', usd:sp.monto, delta:best.gapPts/100, conf:0.6,
       claims:{piezas:[],dims:[best.dimKey]},
@@ -3630,7 +3743,7 @@ TBD_RULES.push({ id:'K-HIDDEN', dest:'KEEP', prio:10,
     if(!best) return null;
     if(!tbdLedgerClaimPiece(led, best.m.nombre, 'K-HIDDEN')) return null;
     var objetivo = Math.min(best.campS*0.40, best.campS*0.40) - best.m.s;
-    var sp = tbdLedgerSpend(led, Math.max(0, objetivo/7), 'K-HIDDEN');
+    var sp = tbdLedgerSpend(led, Math.max(0, objetivo/tbdPeriodMonthsCount()), 'K-HIDDEN');
     var t = tbdTier(best.nCre, best.m.n, best.gap, ctx.err);
     return { tier:t.tier, usd:sp.monto, delta:best.gap/100, conf:0.7,
       claims:{piezas:[best.m.nombre],dims:[]},
@@ -3759,14 +3872,32 @@ TBD_RULES.push({ id:'U-THIN', dest:'UPSIDE', prio:30,
 /* ---------------- GUIDE ---------------- */
 TBD_RULES.push({ id:'G-GOV', dest:'GUIDE', prio:10,
   run: function(ctx, data, led){
+    if(!tbdSeasonApplied(ctx.pais)){
+      return { tier:'REGLA', usd:0, delta:0, conf:1, claims:{piezas:[],dims:[]},
+        texto: tbdCard({
+          verbo: tbdL('read','leia','lee'),
+          hallazgo: tbdL('In '+ctx.pais+' no seasonal adjustment is applied for '+ctx.marca+': its demand pattern (Ahrefs/GA4) could not be shown to move its TV results, so every adj. number here equals the raw one.',
+            'Em '+ctx.pais+' não se aplica ajuste sazonal para '+ctx.marca+': não foi possível mostrar que o padrão de demanda (Ahrefs/GA4) move os resultados da TV, então todo número adj. aqui é igual ao bruto.',
+            'En '+ctx.pais+' no se aplica ajuste estacional para '+ctx.marca+': no se pudo demostrar que su patrón de demanda (Ahrefs/GA4) mueva los resultados de su TV, así que todo número adj. acá es igual al crudo.'),
+          hipotesis: tbdL('Applying factors that the data cannot back would be inventing a correction.',
+            'Aplicar fatores que os dados não sustentam seria inventar uma correção.',
+            'Aplicar factores que los datos no sostienen sería inventar una corrección.'),
+          comprobacion: null,
+          accion: tbdL('Compare creatives that aired in similar months; do not rank a January creative above an October one on these numbers alone.',
+            'Compare criativos que rodaram em meses parecidos; não coloque um criativo de janeiro acima de um de outubro só com estes números.',
+            'Compara creativos que salieron en meses parecidos; no pongas a un creativo de enero por encima de uno de octubre solo con estos números.'),
+          exito: null
+        })
+      };
+    }
     var gName = LANG==='en' ? (ctx.gate==='VERDE'?'GREEN':ctx.gate==='AMBAR'?'AMBER':ctx.gate) : ctx.gate;
     var grande = (ctx.err||0) >= 10;
     return { tier:'REGLA', usd:0, delta:0, conf:1, claims:{piezas:[],dims:[]},
       texto: tbdCard({
         verbo: tbdL('read','leia','lee'),
-        hallazgo: tbdL('The demand adjustment in '+ctx.pais+' is rated '+gName+' (it beat "every month is the same" by '+tbdNP(ctx.skill)+' on months the model never saw) and carries '+tbdNP1(ctx.err)+' of error. The seasonal factors of Jan-Jul here span '+tbdNK(ctx.rangoFactor)+' points, and '+tbdNP(ctx.greySpend.pct)+' of the '+tbdUSD(ctx.gastoPeriodo)+' spent ran in months whose factor is not statistically distinguishable from a normal month'+(ctx.greySpend.nGrises?' ('+ctx.greySpend.meses.join(', ')+')':'')+'.',
-          'O ajuste de demanda em '+ctx.pais+' esta como '+gName+' (superou "todo mês e igual" em '+tbdNP(ctx.skill)+' em meses que o modelo nunca viu) e carrega '+tbdNP1(ctx.err)+' de erro. Os fatores sazonais de Jan-Jul aqui variam '+tbdNK(ctx.rangoFactor)+' pontos, e '+tbdNP(ctx.greySpend.pct)+' dos '+tbdUSD(ctx.gastoPeriodo)+' gastos rodaram em meses cujo fator não se distingue de um mês normal'+(ctx.greySpend.nGrises?' ('+ctx.greySpend.meses.join(', ')+')':'')+'.',
-          'El ajuste por demanda de '+ctx.pais+' esta calificado como '+gName+' (le ganó a "todos los meses son iguales" por '+tbdNP(ctx.skill)+' en meses que el modelo nunca vio) y carga '+tbdNP1(ctx.err)+' de error. Los factores estacionales de Ene-Jul acá abarcan '+tbdNK(ctx.rangoFactor)+' puntos, y '+tbdNP(ctx.greySpend.pct)+' de los '+tbdUSD(ctx.gastoPeriodo)+' gastados corrieron en meses cuyo factor no se distingue de un mes normal'+(ctx.greySpend.nGrises?' ('+ctx.greySpend.meses.join(', ')+')':'')+'.'),
+        hallazgo: tbdL('The demand adjustment in '+ctx.pais+' is rated '+gName+' (its demand pattern explains '+tbdNP(ctx.skill)+' of how its TV results move month to month) and carries '+tbdNP1(ctx.err)+' of error. The seasonal factors of '+tbdSlotLabel('2026')+' here span '+tbdNK(ctx.rangoFactor)+' points, and '+tbdNP(ctx.greySpend.pct)+' of the '+tbdUSD(ctx.gastoPeriodo)+' spent ran in months whose factor is not statistically distinguishable from a normal month'+(ctx.greySpend.nGrises?' ('+ctx.greySpend.meses.join(', ')+')':'')+'.',
+          'O ajuste de demanda em '+ctx.pais+' esta como '+gName+' (seu padrão de demanda explica '+tbdNP(ctx.skill)+' de como os resultados da TV se movem mês a mês) e carrega '+tbdNP1(ctx.err)+' de erro. Os fatores sazonais de '+tbdSlotLabel('2026')+' aqui variam '+tbdNK(ctx.rangoFactor)+' pontos, e '+tbdNP(ctx.greySpend.pct)+' dos '+tbdUSD(ctx.gastoPeriodo)+' gastos rodaram em meses cujo fator não se distingue de um mês normal'+(ctx.greySpend.nGrises?' ('+ctx.greySpend.meses.join(', ')+')':'')+'.',
+          'El ajuste por demanda de '+ctx.pais+' esta calificado como '+gName+' (su patrón de demanda explica el '+tbdNP(ctx.skill)+' de cómo se mueven mes a mes los resultados de su TV) y carga '+tbdNP1(ctx.err)+' de error. Los factores estacionales de '+tbdSlotLabel('2026')+' acá abarcan '+tbdNK(ctx.rangoFactor)+' puntos, y '+tbdNP(ctx.greySpend.pct)+' de los '+tbdUSD(ctx.gastoPeriodo)+' gastados corrieron en meses cuyo factor no se distingue de un mes normal'+(ctx.greySpend.nGrises?' ('+ctx.greySpend.meses.join(', ')+')':'')+'.'),
         hipotesis: tbdL('An error margin is not a formality: it is the width below which two creatives are the same creative as far as this report can tell.',
           'Uma margem de erro não e formalidade: e a largura abaixo da qual dois criativos são o mesmo criativo para este relatorio.',
           'Un margen de error no es una formalidad: es el ancho por debajo del cual dos creativos son el mismo creativo para lo que este reporte puede distinguir.'),
@@ -3791,9 +3922,9 @@ TBD_RULES.push({ id:'G-MARKET', dest:'GUIDE', prio:20,
     return { tier:'REGLA', usd:0, delta:Math.abs(ctx.yoy)/100, conf:0.9, claims:{piezas:[],dims:[]},
       texto: tbdCard({
         verbo: tbdL('discount','desconte','descuenta'),
-        hallazgo: tbdL('Beyond seasonality, the market itself in '+ctx.pais+' '+(sube?'grew':'shrank')+' '+tbdNP1(Math.abs(ctx.yoy))+' between Jan-Jul 2025 and Jan-Jul 2026 (level '+tbdNK(ctx.market25)+' to '+tbdNK(ctx.market26)+'). The '+ctx.marca+' portfolio went from '+tbdNK(ctx.l1kPort25)+' to '+tbdNK(ctx.l1kPort26)+' L/$1k adj. over the same window, on '+tbdUSD(ctx.gastoPeriodo)+' across '+ctx.nCre26+' creatives.',
-          'Alem da sazonalidade, o próprio mercado em '+ctx.pais+' '+(sube?'cresceu':'encolheu')+' '+tbdNP1(Math.abs(ctx.yoy))+' entre Jan-Jul 2025 e Jan-Jul 2026 (nível '+tbdNK(ctx.market25)+' para '+tbdNK(ctx.market26)+'). O portfolio '+ctx.marca+' foi de '+tbdNK(ctx.l1kPort25)+' para '+tbdNK(ctx.l1kPort26)+' L/$1k adj. na mesma janela, com '+tbdUSD(ctx.gastoPeriodo)+' em '+ctx.nCre26+' criativos.',
-          'Mas alla de la estacionalidad, el mercado mismo de '+ctx.pais+' '+(sube?'crecio':'se encogio')+' '+tbdNP1(Math.abs(ctx.yoy))+' entre Ene-Jul 2025 y Ene-Jul 2026 (nivel '+tbdNK(ctx.market25)+' a '+tbdNK(ctx.market26)+'). El portafolio de '+ctx.marca+' pasó de '+tbdNK(ctx.l1kPort25)+' a '+tbdNK(ctx.l1kPort26)+' L/$1k adj. en la misma ventana, sobre '+tbdUSD(ctx.gastoPeriodo)+' y '+ctx.nCre26+' creativos.'),
+        hallazgo: tbdL('Beyond seasonality, the market itself in '+ctx.pais+' (people searching for English courses, Ahrefs, seasonality removed) '+(sube?'grew':'shrank')+' '+tbdNP1(Math.abs(ctx.yoy))+' between '+ctx.marketSpan+' 2025 and '+ctx.marketSpan+' 2026 (level '+tbdNK(ctx.market25)+' to '+tbdNK(ctx.market26)+'). The '+ctx.marca+' portfolio went from '+tbdNK(ctx.l1kPort25)+' to '+tbdNK(ctx.l1kPort26)+' L/$1k adj. over the same window, on '+tbdUSD(ctx.gastoPeriodo)+' across '+ctx.nCre26+' creatives.',
+          'Alem da sazonalidade, o próprio mercado em '+ctx.pais+' (pessoas buscando cursos de inglês, Ahrefs, sem sazonalidade) '+(sube?'cresceu':'encolheu')+' '+tbdNP1(Math.abs(ctx.yoy))+' entre '+ctx.marketSpan+' 2025 e '+ctx.marketSpan+' 2026 (nível '+tbdNK(ctx.market25)+' para '+tbdNK(ctx.market26)+'). O portfolio '+ctx.marca+' foi de '+tbdNK(ctx.l1kPort25)+' para '+tbdNK(ctx.l1kPort26)+' L/$1k adj. na mesma janela, com '+tbdUSD(ctx.gastoPeriodo)+' em '+ctx.nCre26+' criativos.',
+          'Mas alla de la estacionalidad, el mercado mismo de '+ctx.pais+' (gente buscando cursos de inglés, Ahrefs, sin estacionalidad) '+(sube?'crecio':'se encogio')+' '+tbdNP1(Math.abs(ctx.yoy))+' entre '+ctx.marketSpan+' 2025 y '+ctx.marketSpan+' 2026 (nivel '+tbdNK(ctx.market25)+' a '+tbdNK(ctx.market26)+'). El portafolio de '+ctx.marca+' pasó de '+tbdNK(ctx.l1kPort25)+' a '+tbdNK(ctx.l1kPort26)+' L/$1k adj. en la misma ventana, sobre '+tbdUSD(ctx.gastoPeriodo)+' y '+ctx.nCre26+' creativos.'),
         hipotesis: sube
           ? tbdL('A rising market lifts every creative, so part of any year-on-year improvement here was not earned by the work.',
               'Um mercado em alta levanta todo criativo, então parte de qualquer melhora ano a ano aqui não foi merito do trabalho.',
@@ -4101,9 +4232,9 @@ TBD_RULES.push({ id:'T-REACTIVAR', dest:'TEST', prio:40,
     return { tier:'APUESTA', usd:0, delta:lift/100, conf:0.55, claims:{piezas:[c.nombre],dims:[]},
       texto: tbdCard({
         verbo: tbdL('reactivate','reative','reactiva'),
-        hallazgo: tbdL(tbdQ(c.nombre)+' (campaign '+tbdQ(c.campaign_name)+', tone '+tbdQ(c.tone_category)+') ran in '+ctx.pais+' during Jan-Jul 2025 for '+c.n+' days on '+tbdUSD(c.s)+' and delivered '+tbdNK(c.l1k_adj)+' L/$1k adj. — '+tbdNP(lift)+' above the '+tbdNK(ctx.l1kPort26)+' the '+ctx.marca+' portfolio is doing here in 2026 — and it is not in the 2026 rotation at all.',
-          tbdQ(c.nombre)+' (campanha '+tbdQ(c.campaign_name)+', tom '+tbdQ(c.tone_category)+') rodou em '+ctx.pais+' durante Jan-Jul 2025 por '+c.n+' dias com '+tbdUSD(c.s)+' e entregou '+tbdNK(c.l1k_adj)+' L/$1k adj. — '+tbdNP(lift)+' acima dos '+tbdNK(ctx.l1kPort26)+' que o portfolio '+ctx.marca+' faz aqui em 2026 — e não esta na rotação de 2026.',
-          tbdQ(c.nombre)+' (campaña '+tbdQ(c.campaign_name)+', tono '+tbdQ(c.tone_category)+') corrió en '+ctx.pais+' durante Ene-Jul 2025 por '+c.n+' días con '+tbdUSD(c.s)+' y entrego '+tbdNK(c.l1k_adj)+' L/$1k adj. — '+tbdNP(lift)+' por encima de los '+tbdNK(ctx.l1kPort26)+' que hace el portafolio de '+ctx.marca+' acá en 2026 — y no esta en la rotación de 2026.'),
+        hallazgo: tbdL(tbdQ(c.nombre)+' (campaign '+tbdQ(c.campaign_name)+', tone '+tbdQ(c.tone_category)+') ran in '+ctx.pais+' during '+tbdSlotLabel('2025')+' for '+c.n+' days on '+tbdUSD(c.s)+' and delivered '+tbdNK(c.l1k_adj)+' L/$1k adj. — '+tbdNP(lift)+' above the '+tbdNK(ctx.l1kPort26)+' the '+ctx.marca+' portfolio is doing here in 2026 — and it is not in the 2026 rotation at all.',
+          tbdQ(c.nombre)+' (campanha '+tbdQ(c.campaign_name)+', tom '+tbdQ(c.tone_category)+') rodou em '+ctx.pais+' durante '+tbdSlotLabel('2025')+' por '+c.n+' dias com '+tbdUSD(c.s)+' e entregou '+tbdNK(c.l1k_adj)+' L/$1k adj. — '+tbdNP(lift)+' acima dos '+tbdNK(ctx.l1kPort26)+' que o portfolio '+ctx.marca+' faz aqui em 2026 — e não esta na rotação de 2026.',
+          tbdQ(c.nombre)+' (campaña '+tbdQ(c.campaign_name)+', tono '+tbdQ(c.tone_category)+') corrió en '+ctx.pais+' durante '+tbdSlotLabel('2025')+' por '+c.n+' días con '+tbdUSD(c.s)+' y entrego '+tbdNK(c.l1k_adj)+' L/$1k adj. — '+tbdNP(lift)+' por encima de los '+tbdNK(ctx.l1kPort26)+' que hace el portafolio de '+ctx.marca+' acá en 2026 — y no esta en la rotación de 2026.'),
         hipotesis: tbdL('Rotations get rebuilt each year around what is new, and a piece that worked can fall off the list for calendar reasons rather than performance ones. What this report cannot tell: whether it was pulled for a legal or offer reason.',
           'As rotacoes são refeitas a cada ano em torno do que e novo, e uma peca que funcionava pode sair da lista por calendario e não por desempenho. O que este relatorio não diz: se foi retirada por questao legal ou de oferta.',
           'Las rotaciones se rearman cada año alrededor de lo nuevo, y una pieza que funcionaba puede caerse de la lista por calendario y no por desempenio. Lo que este reporte no puede decir: si se retiro por un tema legal o de oferta.'),
@@ -4208,7 +4339,7 @@ TBD_RULES.push({ id:'S-CONC', dest:'STOP', prio:20,
     var resto = data.y26.filter(function(r){ return r!==top; });
     var rs = resto.reduce(function(a,r){return a+r.s;},0), rl = resto.reduce(function(a,r){return a+r.l;},0), rdw = resto.reduce(function(a,r){return a+r.dem*r.s;},0);
     var restoAdj = rs>0 ? rl/rs*1000/((rdw/rs)/100) : null;
-    var mover = (top.s - ctx.gastoPeriodo*0.35)/7;
+    var mover = (top.s - ctx.gastoPeriodo*0.35)/tbdPeriodMonthsCount();
     var sp = tbdLedgerSpend(led, Math.max(0, mover), 'S-CONC');
     return { tier:'REGLA', usd:sp.monto, delta:share/100, conf:0.85, claims:{piezas:[top.nombre],dims:[]},
       texto: tbdCard({
@@ -4258,7 +4389,7 @@ TBD_RULES.push({ id:'K-EXTEND', dest:'KEEP', prio:20,
     if(gap < Math.max(ctx.err||8, 10)) return null;
     var yaTomada = !tbdLedgerClaimPiece(led, cand.nombre, 'K-EXTEND');
     var w = tbdWearout2(cand);
-    var sp = yaTomada ? { monto:0 } : tbdLedgerSpend(led, cand.s/7*0.25, 'K-EXTEND');
+    var sp = yaTomada ? { monto:0 } : tbdLedgerSpend(led, cand.s/tbdPeriodMonthsCount()*0.25, 'K-EXTEND');
     var t = tbdTier(ctx.nCre26, cand.n, gap, ctx.err);
     var segundo = otros.slice().sort(function(a,b){ return b.l1k_adj-a.l1k_adj; })[0];
     return { tier:t.tier, usd:sp.monto, delta:gap/100, conf:0.7, claims:{piezas:[cand.nombre],dims:[]},
@@ -4325,7 +4456,7 @@ TBD_RULES.push({ id:'U-SCALE', dest:'UPSIDE', prio:10,
     if(!best) return null;
     if(!tbdLedgerClaimDim(led, best.dimKey, 'U-SCALE')) return null;
     var objetivo = ctx.gastoPeriodo*0.20 - best.lider.s;
-    var sp = tbdLedgerSpend(led, Math.max(0, objetivo/7), 'U-SCALE');
+    var sp = tbdLedgerSpend(led, Math.max(0, objetivo/tbdPeriodMonthsCount()), 'U-SCALE');
     var t = tbdTier(best.lider.nCre, best.lider.diasMin, best.lift, ctx.err);
     return { tier:t.tier, usd:sp.monto, delta:best.lift/100, conf:Math.min(1,best.lider.nCre/3), claims:{piezas:[],dims:[best.dimKey]},
       texto: tbdCard({
@@ -4774,88 +4905,76 @@ function tbdWireCarousels(){
   });
 }
 function tbdAdjKpiHTML(data){
-  var L = LANG;
-  var s = TBD_SEASONALITY[data.territory];
-  // ejemplo trabajado con los meses reales mas alto y mas bajo del territorio
-  var hiM='-', loM='-', hiMult=1.2, loMult=0.9;
-  if(s && s.jan_jul_2026 && s.jan_jul_2026.length){
-    var months=['01','02','03','04','05','06','07'].map(mesLabel);
-    var arr=s.jan_jul_2026;
-    var hi=arr.indexOf(Math.max.apply(null,arr)), lo=arr.indexOf(Math.min.apply(null,arr));
-    hiM=months[hi]; loM=months[lo];
-    hiMult=Math.round(arr[hi])/100; loMult=Math.round(arr[lo])/100;
-  }
+  var terr = data.territory;
+  var t = tbdSeaOf(terr);
+  var applied = tbdSeasonApplied(terr);
+  var months = TBD_MM.map(mesLabel);
+  var f = (t && t.factorsIndex) || [];
+  var hiI = -1, loI = -1;
+  f.forEach(function(v,i){ if(v>100 && (hiI<0 || v>f[hiI])) hiI = i; if(v<100 && (loI<0 || v<f[loI])) loI = i; });
+  var hiM = hiI>=0 ? months[hiI] : null, loM = loI>=0 ? months[loI] : null;
+  var hiMult = hiI>=0 ? f[hiI]/100 : null, loMult = loI>=0 ? f[loI]/100 : null;
   var rawEx = 60;
-  var hiAdj = rawEx/hiMult, loAdj = rawEx/loMult;
 
-  var head = L==='en'?'Why we adjust, in one sentence':L==='pt'?'Por que ajustamos, em uma frase':'Por que ajustamos, en una frase';
-  var oneLiner = L==='en'
-    ? 'Two creatives can get the same result and one of them still be much better \u2014 because the market was not equally receptive in the months each of them aired. The adjustment puts them on the same footing.'
-    : L==='pt'
-    ? 'Dois criativos podem dar o mesmo resultado e um deles ainda ser muito melhor \u2014 porque o mercado nao estava igualmente receptivo nos meses em que cada um foi ao ar. O ajuste os coloca em pe de igualdade.'
-    : 'Dos creativos pueden dar el mismo resultado y uno de los dos ser mucho mejor \u2014 porque el mercado no estaba igual de receptivo en los meses en que salio cada uno. El ajuste los pone en igualdad de condiciones.';
+  var head = tbdL('Why we adjust, in one sentence','Por que ajustamos, em uma frase','Por qué ajustamos, en una frase');
+  var oneLiner = tbdL(
+    'Some months bring leads on their own. Two creatives with the same L/$1k are not equally good if one aired in a month when leads pour in by themselves and the other in a month when they do not. The adjustment puts both "in a normal month" so they can be compared apples with apples.',
+    'Alguns meses trazem leads sozinhos. Dois criativos com o mesmo L/$1k não são igualmente bons se um foi ao ar num mês em que os leads chegam sozinhos e o outro num mês em que não. O ajuste coloca os dois "num mês normal" para compará-los maçã com maçã.',
+    'Hay meses que traen leads solos. Dos creativos con el mismo L/$1k no son igual de buenos si uno salió en un mes en que los leads llegan solos y el otro en uno en que no. El ajuste pone a los dos "en un mes normal" para compararlos peras con peras.');
 
-  var stepsHead = L==='en'?'How the adjustment works, step by step':L==='pt'?'Como o ajuste funciona, passo a passo':'Como funciona el ajuste, paso a paso';
-  var steps = L==='en'
-    ? '<ol class="tbd-explain-list">'+
-      '<li><b>Start with the raw number.</b> L/$1k = leads divided by spend, times 1,000. If a creative brought '+fmtNum(rawEx,0)+' leads per $1,000, its raw L/$1k is '+fmtNum(rawEx,0)+'.</li>'+
-      '<li><b>Look up how good its months were.</b> Each month has a demand multiplier: above 1.00 means the market was hotter than usual, below 1.00 means colder. A creative that aired across several months gets the average of those multipliers, weighted by how much was spent each day.</li>'+
-      '<li><b>Divide by that multiplier.</b> That is the whole adjustment: <b>L/$1k adj. = raw L/$1k \u00f7 multiplier</b>.</li>'+
-      '<li><b>Read the direction.</b> Aired in a hot month (multiplier above 1.00) \u2192 the adjusted number goes <b>DOWN</b>, because part of the result was the market, not the ad. Aired in a cold month (below 1.00) \u2192 it goes <b>UP</b>, because the ad achieved that against the tide.</li>'+
-      '</ol>'
-    : L==='pt'
-    ? '<ol class="tbd-explain-list">'+
-      '<li><b>Comece pelo numero bruto.</b> L/$1k = leads divididos pelo gasto, vezes 1.000. Se um criativo trouxe '+fmtNum(rawEx,0)+' leads por $1.000, seu L/$1k bruto e '+fmtNum(rawEx,0)+'.</li>'+
-      '<li><b>Veja quao bons foram seus meses.</b> Cada mes tem um multiplicador de demanda: acima de 1,00 significa mercado mais quente que o normal, abaixo de 1,00 mais frio. Um criativo que passou por varios meses recebe a media desses multiplicadores, ponderada pelo gasto de cada dia.</li>'+
-      '<li><b>Divida por esse multiplicador.</b> Esse e todo o ajuste: <b>L/$1k adj. = L/$1k bruto \u00f7 multiplicador</b>.</li>'+
-      '<li><b>Leia a direcao.</b> Foi ao ar num mes quente (multiplicador acima de 1,00) \u2192 o numero ajustado <b>DESCE</b>, porque parte do resultado foi o mercado, nao o anuncio. Num mes frio (abaixo de 1,00) \u2192 <b>SOBE</b>, porque o anuncio conseguiu aquilo remando contra a mare.</li>'+
-      '</ol>'
-    : '<ol class="tbd-explain-list">'+
-      '<li><b>Arranca del numero crudo.</b> L/$1k = leads dividido entre el gasto, por 1.000. Si un creativo trajo '+fmtNum(rawEx,0)+' leads por cada $1.000, su L/$1k crudo es '+fmtNum(rawEx,0)+'.</li>'+
-      '<li><b>Mira que tan buenos fueron sus meses.</b> Cada mes tiene un multiplicador de demanda: arriba de 1,00 significa que el mercado estaba mas caliente de lo normal, abajo de 1,00 mas frio. Un creativo que estuvo al aire varios meses recibe el promedio de esos multiplicadores, ponderado por cuanto se gasto cada dia.</li>'+
-      '<li><b>Divide entre ese multiplicador.</b> Ese es todo el ajuste: <b>L/$1k adj. = L/$1k crudo \u00f7 multiplicador</b>.</li>'+
-      '<li><b>Lee la direccion.</b> Salio en un mes caliente (multiplicador arriba de 1,00) \u2192 el numero ajustado <b>BAJA</b>, porque parte del resultado fue el mercado y no el anuncio. Salio en un mes frio (abajo de 1,00) \u2192 <b>SUBE</b>, porque el anuncio logro eso remando contra la corriente.</li>'+
-      '</ol>';
+  var stepsHead = tbdL('How the adjustment works, step by step','Como o ajuste funciona, passo a passo','Cómo funciona el ajuste, paso a paso');
+  var steps = '<ol class="tbd-explain-list">'+
+    '<li>'+tbdL('<b>Start with the raw number.</b> L/$1k = leads ÷ spend × 1,000. If a creative brought '+rawEx+' leads per $1,000, its raw L/$1k is '+rawEx+'.',
+      '<b>Comece pelo número bruto.</b> L/$1k = leads ÷ gasto × 1.000. Se um criativo trouxe '+rawEx+' leads por $1.000, seu L/$1k bruto é '+rawEx+'.',
+      '<b>Arranca del número crudo.</b> L/$1k = leads ÷ gasto × 1.000. Si un creativo trajo '+rawEx+' leads por cada $1.000, su L/$1k crudo es '+rawEx+'.')+'</li>'+
+    '<li>'+tbdL('<b>Look up the factor of its months.</b> Each month has a factor measured with outside demand — Google searches (Ahrefs) and brand visits to the site (GA4: SEM-Brand + SEO + Direct) — versus a normal month (100). Only months proven to differ from normal carry a factor different from 100. A creative that aired several months gets the blend, weighted by the spend of each day.',
+      '<b>Veja o fator dos seus meses.</b> Cada mês tem um fator medido com a demanda externa — buscas no Google (Ahrefs) e visitas de marca ao site (GA4: SEM-Brand + SEO + Direct) — frente a um mês normal (100). Só meses comprovadamente diferentes do normal têm fator diferente de 100. Um criativo que passou por vários meses recebe a mistura, ponderada pelo gasto de cada dia.',
+      '<b>Mira el factor de sus meses.</b> Cada mes tiene un factor medido con la demanda externa — búsquedas en Google (Ahrefs) y visitas de marca al sitio (GA4: SEM-Brand + SEO + Direct) — frente a un mes normal (100). Solo los meses demostrados distintos de lo normal tienen un factor distinto de 100. Un creativo que estuvo varios meses recibe la mezcla, ponderada por el gasto de cada día.')+'</li>'+
+    '<li>'+tbdL('<b>Divide by it.</b> That is the whole adjustment: <b>L/$1k adj. = raw L/$1k ÷ (factor/100)</b>.',
+      '<b>Divida por ele.</b> Esse é todo o ajuste: <b>L/$1k adj. = L/$1k bruto ÷ (fator/100)</b>.',
+      '<b>Divide entre él.</b> Ese es todo el ajuste: <b>L/$1k adj. = L/$1k crudo ÷ (factor/100)</b>.')+'</li>'+
+    '<li>'+tbdL('<b>Read the direction — it is always the same.</b> High season (factor above 100) → the adjusted number goes <b>DOWN</b>: part of those leads came with the month. Low season (below 100) → it goes <b>UP</b>: the ad got there against the month. Normal month (100) → <b>unchanged</b>.',
+      '<b>Leia a direção — é sempre a mesma.</b> Alta temporada (fator acima de 100) → o ajustado <b>DESCE</b>: parte desses leads veio com o mês. Baixa temporada (abaixo de 100) → <b>SOBE</b>: o anúncio chegou lá contra o mês. Mês normal (100) → <b>não muda</b>.',
+      '<b>Lee la dirección — siempre es la misma.</b> Temporada alta (factor arriba de 100) → el ajustado <b>BAJA</b>: parte de esos leads vino con el mes. Temporada baja (abajo de 100) → <b>SUBE</b>: el anuncio llegó ahí contra el mes. Mes normal (100) → <b>no cambia</b>.')+'</li>'+
+    '</ol>';
 
-  var exHead = L==='en'?'The same number, two different months \u2014 with real data from '+data.territory:L==='pt'?'O mesmo numero, dois meses diferentes \u2014 com dados reais de '+data.territory:'El mismo numero, dos meses distintos \u2014 con datos reales de '+data.territory;
-  var example = '<table class="tbd-table" style="margin-top:8px;"><thead><tr>'+
-    '<th>'+esc(L==='en'?'Aired in':L==='pt'?'Foi ao ar em':'Salio al aire en')+'</th>'+
-    '<th style="text-align:right;">'+esc(L==='en'?'Multiplier':'Multiplicador')+'</th>'+
-    '<th style="text-align:right;">'+esc(L==='en'?'Raw L/$1k':L==='pt'?'L/$1k bruto':'L/$1k crudo')+'</th>'+
-    '<th style="text-align:right;">'+esc(L==='en'?'Adjusted':L==='pt'?'Ajustado':'Ajustado')+'</th>'+
-    '<th>'+esc(L==='en'?'Reading':L==='pt'?'Leitura':'Lectura')+'</th></tr></thead><tbody>'+
-    '<tr><td><b>'+esc(hiM)+'</b> '+esc(L==='en'?'(hot month)':L==='pt'?'(mes quente)':'(mes caliente)')+'</td>'+
-      '<td style="text-align:right;">x'+fmtNum(hiMult,2)+'</td><td style="text-align:right;">'+fmtNum(rawEx,0)+'</td>'+
-      '<td style="text-align:right;" class="tbd-adj"><b>'+fmtNum(hiAdj,0)+'</b></td>'+
-      '<td>'+esc(L==='en'?'Worth less than it looks: the market helped.':L==='pt'?'Vale menos do que parece: o mercado ajudou.':'Vale menos de lo que parece: el mercado ayudo.')+'</td></tr>'+
-    '<tr><td><b>'+esc(loM)+'</b> '+esc(L==='en'?'(cold month)':L==='pt'?'(mes frio)':'(mes frio)')+'</td>'+
-      '<td style="text-align:right;">x'+fmtNum(loMult,2)+'</td><td style="text-align:right;">'+fmtNum(rawEx,0)+'</td>'+
-      '<td style="text-align:right;" class="tbd-adj"><b>'+fmtNum(loAdj,0)+'</b></td>'+
-      '<td>'+esc(L==='en'?'Worth more than it looks: it swam upstream.':L==='pt'?'Vale mais do que parece: remou contra a mare.':'Vale mas de lo que parece: remo contra la corriente.')+'</td></tr>'+
-    '</tbody></table>'+
-    '<p style="font-size:12px;color:var(--ink-soft);margin-top:8px;">'+
-    esc(L==='en'?'Both creatives brought exactly the same '+fmtNum(rawEx,0)+' leads per $1,000. After adjusting, the one from '+loM+' is the better creative \u2014 and that is the comparison the whole report is built on.'
-      :L==='pt'?'Os dois criativos trouxeram exatamente os mesmos '+fmtNum(rawEx,0)+' leads por $1.000. Depois de ajustar, o de '+loM+' e o melhor criativo \u2014 e e nessa comparacao que todo o relatorio se apoia.'
-      :'Los dos creativos trajeron exactamente los mismos '+fmtNum(rawEx,0)+' leads por cada $1.000. Despues de ajustar, el de '+loM+' es el mejor creativo \u2014 y esa es la comparacion sobre la que se apoya todo el reporte.')+'</p>';
+  var exHead = tbdL('The same number, different months — with the real factors of '+terr,'O mesmo número, meses diferentes — com os fatores reais de '+terr,'El mismo número, meses distintos — con los factores reales de '+terr);
+  var example;
+  if(!applied){
+    example = '<p style="font-size:12.5px;line-height:1.6;color:var(--ink-soft);">'+tbdL(
+      'In '+esc(terr)+' ('+esc(tbdOrgName())+') no seasonal adjustment is applied: its demand pattern (Ahrefs/GA4) could not be shown to move its TV results, so <b>adj. = raw</b> here. See the Seasonality tab for the reason.',
+      'Em '+esc(terr)+' ('+esc(tbdOrgName())+') não se aplica ajuste sazonal: não se mostrou que o padrão de demanda (Ahrefs/GA4) move os resultados da TV, então <b>adj. = bruto</b> aqui. Veja a aba de Sazonalidade para o motivo.',
+      'En '+esc(terr)+' ('+esc(tbdOrgName())+') no se aplica ajuste estacional: no se pudo demostrar que su patrón de demanda (Ahrefs/GA4) mueva los resultados de su TV, así que acá <b>adj. = crudo</b>. El motivo está en la pestaña de Estacionalidad.')+'</p>';
+  } else {
+    var exRows = [];
+    if(hiM) exRows.push('<tr><td><b>'+esc(hiM)+'</b> '+esc(tbdL('(high season)','(alta temporada)','(temporada alta)'))+'</td><td style="text-align:right;">x'+fmtNum(hiMult,2)+'</td><td style="text-align:right;">'+rawEx+'</td><td style="text-align:right;" class="tbd-adj"><b>'+fmtNum(rawEx/hiMult,0)+'</b></td><td>'+esc(tbdL('Worth less than it looks: the month helped.','Vale menos do que parece: o mês ajudou.','Vale menos de lo que parece: el mes ayudó.'))+'</td></tr>');
+    exRows.push('<tr><td><b>'+esc(tbdL('A normal month','Um mês normal','Un mes normal'))+'</b> (100)</td><td style="text-align:right;">x1.00</td><td style="text-align:right;">'+rawEx+'</td><td style="text-align:right;" class="tbd-adj"><b>'+rawEx+'</b></td><td>'+esc(tbdL('Unchanged.','Não muda.','No cambia.'))+'</td></tr>');
+    if(loM) exRows.push('<tr><td><b>'+esc(loM)+'</b> '+esc(tbdL('(low season)','(baixa temporada)','(temporada baja)'))+'</td><td style="text-align:right;">x'+fmtNum(loMult,2)+'</td><td style="text-align:right;">'+rawEx+'</td><td style="text-align:right;" class="tbd-adj"><b>'+fmtNum(rawEx/loMult,0)+'</b></td><td>'+esc(tbdL('Worth more than it looks: it swam upstream.','Vale mais do que parece: remou contra a maré.','Vale más de lo que parece: remó contra la corriente.'))+'</td></tr>');
+    example = '<table class="tbd-table" style="margin-top:8px;"><thead><tr>'+
+      '<th>'+esc(tbdL('Aired in','Foi ao ar em','Salió al aire en'))+'</th>'+
+      '<th style="text-align:right;">'+esc(tbdL('Multiplier','Multiplicador','Multiplicador'))+'</th>'+
+      '<th style="text-align:right;">'+esc(tbdL('Raw L/$1k','L/$1k bruto','L/$1k crudo'))+'</th>'+
+      '<th style="text-align:right;">'+esc(tbdL('Adjusted','Ajustado','Ajustado'))+'</th>'+
+      '<th>'+esc(tbdL('Reading','Leitura','Lectura'))+'</th></tr></thead><tbody>'+exRows.join('')+'</tbody></table>'+
+      '<p style="font-size:12px;color:var(--ink-soft);margin-top:8px;">'+esc(tbdL(
+        'All of them brought exactly '+rawEx+' leads per $1,000. After adjusting, the one from the low season is the strongest creative — and that is the comparison the whole report is built on.',
+        'Todos trouxeram exatamente '+rawEx+' leads por $1.000. Depois de ajustar, o da baixa temporada é o criativo mais forte — e é nessa comparação que todo o relatório se apoia.',
+        'Todos trajeron exactamente '+rawEx+' leads por cada $1.000. Después de ajustar, el de temporada baja es el creativo más fuerte — y esa es la comparación sobre la que se apoya todo el reporte.'))+'</p>';
+  }
 
-  var cplHead = L==='en'?'And the adjusted CPL?':L==='pt'?'E o CPL ajustado?':'\u00bfY el CPL ajustado?';
-  var cplTxt = L==='en'?'Exactly the same logic, but the other way around, because a cost is better when it is lower: <b>CPL adj. = raw CPL \u00d7 multiplier</b>. A cheap lead bought in a hot month is not as cheap as it looks.'
-    :L==='pt'?'Exatamente a mesma logica, mas ao contrario, porque um custo e melhor quanto menor: <b>CPL adj. = CPL bruto \u00d7 multiplicador</b>. Um lead barato comprado num mes quente nao e tao barato quanto parece.'
-    :'Exactamente la misma logica pero al reves, porque un costo es mejor mientras mas bajo: <b>CPL adj. = CPL crudo \u00d7 multiplicador</b>. Un lead barato comprado en un mes caliente no es tan barato como parece.';
+  var cplHead = tbdL('And the adjusted CPL?','E o CPL ajustado?','¿Y el CPL ajustado?');
+  var cplTxt = tbdL('Exactly the same logic, but the other way around, because a cost is better when it is lower: <b>CPL adj. = raw CPL × (factor/100)</b>. A cheap lead bought in high season is not as cheap as it looks.',
+    'Exatamente a mesma lógica, mas ao contrário, porque um custo é melhor quanto menor: <b>CPL adj. = CPL bruto × (fator/100)</b>. Um lead barato comprado na alta temporada não é tão barato quanto parece.',
+    'Exactamente la misma lógica pero al revés, porque un costo es mejor mientras más bajo: <b>CPL adj. = CPL crudo × (factor/100)</b>. Un lead barato comprado en temporada alta no es tan barato como parece.');
 
-  var useHead = L==='en'?'When to use which number':L==='pt'?'Quando usar cada numero':'Cuando usar cada numero';
-  var useTxt = L==='en'
-    ? '<ul class="tbd-explain-list"><li><b>Use the adjusted number</b> to decide which creative is better, to detect real wear-out, and for go/no-go calls.</li>'+
-      '<li><b>Use the raw number</b> to plan actual lead volume and budget for a specific window \u2014 reality does not get adjusted, you really will get fewer leads in a cold month.</li></ul>'
-    : L==='pt'
-    ? '<ul class="tbd-explain-list"><li><b>Use o numero ajustado</b> para decidir qual criativo e melhor, detectar desgaste real e decisoes de go/no-go.</li>'+
-      '<li><b>Use o numero bruto</b> para planejar volume real de leads e orcamento de uma janela especifica \u2014 a realidade nao se ajusta: voce realmente tera menos leads num mes frio.</li></ul>'
-    : '<ul class="tbd-explain-list"><li><b>Usa el numero ajustado</b> para decidir que creativo es mejor, para detectar desgaste real y para decisiones de go/no-go.</li>'+
-      '<li><b>Usa el numero crudo</b> para planear volumen real de leads y presupuesto de una ventana especifica \u2014 la realidad no se ajusta: en un mes frio de verdad vas a traer menos leads.</li></ul>';
+  var useHead = tbdL('When to use which number','Quando usar cada número','Cuándo usar cada número');
+  var useTxt = '<ul class="tbd-explain-list"><li>'+tbdL('<b>Use the adjusted number</b> to decide which creative is better, to detect real wear-out, and for go/no-go calls.',
+      '<b>Use o número ajustado</b> para decidir qual criativo é melhor, detectar desgaste real e decisões de go/no-go.',
+      '<b>Usa el número ajustado</b> para decidir qué creativo es mejor, para detectar desgaste real y para decisiones de go/no-go.')+'</li>'+
+    '<li>'+tbdL('<b>Use the raw number</b> to plan actual lead volume and budget for a specific window — reality does not get adjusted: you really will get fewer leads in a low-season month.',
+      '<b>Use o número bruto</b> para planejar volume real de leads e orçamento de uma janela específica — a realidade não se ajusta: você realmente terá menos leads num mês de baixa temporada.',
+      '<b>Usa el número crudo</b> para planear volumen real de leads y presupuesto de una ventana específica — la realidad no se ajusta: en un mes de temporada baja de verdad vas a traer menos leads.')+'</li></ul>';
 
-  /* Los 5 bloques ya no se apilan: son los pasos del carrusel. El orden es el
-     de lectura -- primero por que, luego como, luego el ejemplo, luego el
-     espejo con CPL y al final cuando usar cada numero. */
   var pasos = [
     { titulo: head,      html: '<p style="font-size:12.5px;line-height:1.6;color:var(--ink-soft);">'+esc(oneLiner)+'</p>' },
     { titulo: stepsHead, html: steps },
@@ -4883,24 +5002,32 @@ var TBD_METHODOLOGY_ITEMS = [
         : 'Ahora mismo est\u00e1s viendo <b>'+from+'</b>. El interruptor de arriba a la izquierda cambia de qu\u00e9 marca ves creativos, KPIs, insights y PPT; la matem\u00e1tica es id\u00e9ntica para ambas marcas, solo cambia la porci\u00f3n de datos. Todo lo de esta p\u00e1gina \u2014 incluido el halo entre marcas \u2014 est\u00e1 escrito desde el punto de vista de la marca seleccionada aqu\u00ed.';
     } },
   { label:{en:'Period',es:'Período',pt:'Período'},
-    text:{en:'Always January 1 – July 31, comparing 2025 vs 2026, filtered by region/country.', es:'Siempre Enero 1 – Julio 31, comparando 2025 vs 2026, filtrado por región/país.', pt:'Sempre 1 de janeiro – 31 de julho, comparando 2025 vs 2026, filtrado por região/país.'} },
+    dynamic:function(){
+      return tbdL('The one of the report you opened: <b>'+esc(tbdS('period_label'))+'</b>, filtered by region/country. Switch reports from the badge next to the PPT button.',
+        'O do relatório que você abriu: <b>'+esc(tbdS('period_label'))+'</b>, filtrado por região/país. Troque de relatório pelo selo ao lado do botão PPT.',
+        'El del reporte que abriste: <b>'+esc(tbdS('period_label'))+'</b>, filtrado por región/país. Cambia de reporte desde la etiqueta al lado del botón PPT.');
+    } },
   { label:{en:'SEM-Brand',es:'SEM-Brand',pt:'SEM-Brand'},
     text:{en:'Always excluded from spend (permanent rule, not a toggle here).', es:'Siempre excluido del gasto (regla permanente, no es un interruptor aquí).', pt:'Sempre excluído do gasto (regra permanente, não é um alternador aqui).'} },
-  { label:{en:'Demand adjustment (adj.)',es:'Ajuste por demanda (adj.)',pt:'Ajuste por demanda (adj.)'},
+  { label:{en:'Seasonality adjustment (adj.)',es:'Ajuste por estacionalidad (adj.)',pt:'Ajuste por sazonalidade (adj.)'},
     dynamic: function(){
-      var L=LANG, terr=TBD_STATE.territory, t=TBD_SEASONALITY[terr]||{};
-      var gate=t.gate||'-', skill=t.skill, err=tbdSeasonErrPct(terr);
-      var gName = L==='en' ? (gate==='VERDE'?'GREEN':gate==='AMBAR'?'AMBER':gate==='ROJO'?'RED':gate) : gate;
-      var greyN = (t.grey||[]).filter(Boolean).length;
-      var tail_en = ' The year-over-year movement of the market is deliberately NOT divided out \u2014 it is reported separately in the Seasonality tab.';
-      var tail_pt = ' O movimento ano a ano do mercado deliberadamente N\u00c3O \u00e9 dividido \u2014 \u00e9 reportado \u00e0 parte na aba de Sazonalidade.';
-      var tail_es = ' El movimiento a\u00f1o contra a\u00f1o del mercado a prop\u00f3sito NO se divide \u2014 se reporta aparte en la pesta\u00f1a de Estacionalidad.';
-      var gate_en = ' In '+esc(terr)+' the out-of-sample gate is <b>'+esc(gName)+'</b>'+(skill!=null?' (it beats "every month is the same" by '+fmtNum(skill,0)+'% on months the model never saw)':'')+(err!=null?', the adjustment carries \u00b1'+fmtNum(err,1)+'% of error, and '+greyN+' of the 12 months are not statistically distinguishable from a normal month':'')+'.';
-      var gate_pt = ' Em '+esc(terr)+' o sem\u00e1foro fora de amostra \u00e9 <b>'+esc(gName)+'</b>'+(skill!=null?' (supera "todo m\u00eas \u00e9 igual" em '+fmtNum(skill,0)+'% em meses que o modelo nunca viu)':'')+(err!=null?', o ajuste carrega \u00b1'+fmtNum(err,1)+'% de erro, e '+greyN+' dos 12 meses n\u00e3o s\u00e3o estatisticamente distingu\u00edveis de um m\u00eas normal':'')+'.';
-      var gate_es = ' En '+esc(terr)+' el sem\u00e1foro fuera de muestra es <b>'+esc(gName)+'</b>'+(skill!=null?' (le gana a "todos los meses son iguales" por '+fmtNum(skill,0)+'% en meses que el modelo nunca vio)':'')+(err!=null?', el ajuste carga \u00b1'+fmtNum(err,1)+'% de error, y '+greyN+' de los 12 meses no se distinguen estad\u00edsticamente de un mes normal':'')+'.';
-      if(L==='en') return 'L/$1k adj. = raw L/$1k \u00f7 (month factor/100). <b>Model v2026:</b> the factor is no longer that month\u2019s search volume \u2014 it is the month effect estimated by a log-additive regression over 44 months of Ahrefs volume (2023-01 to 2026-08) for "open english" + "cursos de ingles", with a piecewise-linear trend so the market\u2019s own rise or fall does not leak into the month, and James-Stein shrinkage so thin months are pulled toward normal instead of inventing a spike. The 12 factors average exactly 100 and are <b>fixed</b>: the same January applies to 2025 and to 2026, so a published number stays reproducible.'+gate_en+tail_en;
-      if(L==='pt') return 'L/$1k adj. = L/$1k bruto \u00f7 (fator do m\u00eas/100). <b>Modelo v2026:</b> o fator j\u00e1 n\u00e3o \u00e9 o volume de busca daquele m\u00eas \u2014 \u00e9 o efeito de m\u00eas estimado por uma regress\u00e3o log-aditiva sobre 44 meses de volume Ahrefs (2023-01 a 2026-08) para "open english" + "cursos de ingles", com tend\u00eancia linear por trechos para que a alta ou queda do pr\u00f3prio mercado n\u00e3o vaze para o m\u00eas, e encolhimento James-Stein para que meses fracos sejam puxados para o normal em vez de inventar um pico. Os 12 fatores t\u00eam m\u00e9dia exatamente 100 e s\u00e3o <b>fixos</b>: o mesmo janeiro vale para 2025 e para 2026, ent\u00e3o um n\u00famero publicado continua reproduz\u00edvel.'+gate_pt+tail_pt;
-      return 'L/$1k adj. = L/$1k crudo \u00f7 (factor del mes/100). <b>Modelo v2026:</b> el factor ya no es el volumen de b\u00fasqueda de ese mes \u2014 es el efecto de mes estimado por una regresi\u00f3n log-aditiva sobre 44 meses de volumen de Ahrefs (2023-01 a 2026-08) para "open english" + "cursos de ingles", con tendencia lineal por tramos para que la subida o ca\u00edda propia del mercado no se filtre dentro del mes, y encogimiento James-Stein para que los meses con poca se\u00f1al se jalen hacia lo normal en vez de inventar un pico. Los 12 factores promedian exactamente 100 y son <b>fijos</b>: el mismo enero aplica a 2025 y a 2026, as\u00ed que un n\u00famero publicado sigue siendo reproducible.'+gate_es+tail_es;
+      var terr=TBD_STATE.territory, org=tbdOrgName(), t=tbdSeaOf(terr)||{};
+      var err=tbdSeasonErrPct(terr), applied=tbdSeasonApplied(terr);
+      var nAdj=(t.factorsIndex||[]).filter(function(v){ return v!==100; }).length;
+      var gName = LANG==='en' ? (t.gate==='VERDE'?'GREEN':t.gate==='AMBAR'?'AMBER':'RED') : (LANG==='pt'&&t.gate==='ROJO'?'VERMELHO':(t.gate||'-'));
+      var dTo = TBD_SEASON_DATA.data_through||'';
+      var src = tbdSeaSourceTxt(t, terr, org);
+      var here = applied
+        ? tbdL(' In '+esc(terr)+' ('+esc(org)+') '+nAdj+' of the 12 months are adjusted, source: '+src+'; the gate is <b>'+esc(gName)+'</b> (the pattern explains '+fmtNum(t.skill,0)+'% of how its TV results move month to month) and the adjustment carries ±'+fmtNum(err,1)+'% of error.',
+            ' Em '+esc(terr)+' ('+esc(org)+') '+nAdj+' dos 12 meses são ajustados, fonte: '+src+'; o semáforo é <b>'+esc(gName)+'</b> (o padrão explica '+fmtNum(t.skill,0)+'% de como os resultados da TV se movem mês a mês) e o ajuste carrega ±'+fmtNum(err,1)+'% de erro.',
+            ' En '+esc(terr)+' ('+esc(org)+') se ajustan '+nAdj+' de los 12 meses, fuente: '+src+'; el semáforo es <b>'+esc(gName)+'</b> (el patrón explica el '+fmtNum(t.skill,0)+'% de cómo se mueven mes a mes los resultados de su TV) y el ajuste carga ±'+fmtNum(err,1)+'% de error.')
+        : tbdL(' In '+esc(terr)+' ('+esc(org)+') no adjustment is applied (the demand pattern could not be shown to move its TV results), so adj. = raw.',
+            ' Em '+esc(terr)+' ('+esc(org)+') nenhum ajuste é aplicado (não se mostrou que o padrão de demanda move os resultados da TV), então adj. = bruto.',
+            ' En '+esc(terr)+' ('+esc(org)+') no se aplica ajuste (no se pudo demostrar que el patrón de demanda mueva los resultados de su TV), así que adj. = crudo.');
+      return tbdL(
+        'L/$1k adj. = raw L/$1k ÷ (month factor/100), spend-weighted across the days each creative aired. <b>Model v4 (outside demand):</b> the factor of a month is how much interest there is that month versus the average of the 12 (=100), from two sources, January 2023 to '+dTo+': <b>Ahrefs</b> (Google searches for "open english" + "cursos de ingles"; "curso de ingles" in Brazil) and <b>GA4</b> (brand visits to the site: SEM-Brand + SEO + Direct, per brand). Each month is compared with the centred 12-month moving average (removes the trend), the years are averaged and both sources are combined; where Ahrefs repeats a fixed template (it does not measure), only GA4 is used. <b>Truth filters:</b> a month is adjusted only if its 95% range excludes 100, and a country only if the pattern explains at least 10% of how its real TV results move month to month (leads only check the factor, they never build it). Factors are <b>fixed</b> (the same January for 2025 and 2026). Script: <code>Scripts/build_seasonality_v4.py</code>; raw data in <code>Raw Data/Ahrefs</code> and <code>Raw Data/GA4</code>.'+here,
+        'L/$1k adj. = L/$1k bruto ÷ (fator do mês/100), ponderado pelo gasto dos dias em que cada criativo rodou. <b>Modelo v4 (demanda externa):</b> o fator de um mês é quanto interesse há naquele mês frente à média dos 12 (=100), de duas fontes, janeiro de 2023 a '+dTo+': <b>Ahrefs</b> (buscas no Google por "open english" + "cursos de ingles"; "curso de ingles" no Brasil) e <b>GA4</b> (visitas de marca ao site: SEM-Brand + SEO + Direct, por marca). Cada mês é comparado com a média móvel centrada de 12 meses (tira a tendência), os anos são promediados e as duas fontes são combinadas; onde o Ahrefs repete um molde fixo (não mede), usa-se só o GA4. <b>Filtros de verdade:</b> um mês só é ajustado se sua faixa de 95% exclui 100, e um país só se o padrão explica pelo menos 10% de como seus resultados reais de TV se movem mês a mês (os leads só checam o fator, nunca o constroem). Os fatores são <b>fixos</b> (o mesmo janeiro para 2025 e 2026). Script: <code>Scripts/build_seasonality_v4.py</code>; dados brutos em <code>Raw Data/Ahrefs</code> e <code>Raw Data/GA4</code>.'+here,
+        'L/$1k adj. = L/$1k crudo ÷ (factor del mes/100), ponderado por el gasto de los días en que salió cada creativo. <b>Modelo v4 (demanda externa):</b> el factor de un mes es cuánto interés hay en ese mes frente al promedio de los 12 (=100), con dos fuentes, enero 2023 a '+dTo+': <b>Ahrefs</b> (búsquedas en Google de "open english" + "cursos de ingles"; "curso de ingles" en Brasil) y <b>GA4</b> (visitas de marca al sitio: SEM-Brand + SEO + Direct, por marca). Cada mes se compara con la media móvil centrada de 12 meses (quita la tendencia), se promedian los años y se combinan las dos fuentes; donde Ahrefs repite una plantilla fija (no mide), se usa solo GA4. <b>Filtros de verdad:</b> un mes solo se ajusta si su rango de 95% excluye el 100, y un país solo si el patrón explica al menos el 10% de cómo se mueven mes a mes sus resultados reales de TV (los leads solo comprueban el factor, nunca lo arman). Los factores son <b>fijos</b> (el mismo enero para 2025 y 2026). Script: <code>Scripts/build_seasonality_v4.py</code>; datos crudos en <code>Raw Data/Ahrefs</code> y <code>Raw Data/GA4</code>.'+here);
     } },
   { label:{en:'MNCC%',es:'MNCC%',pt:'MNCC%'},
     text:{en:'(New Cash Core − TV spend) ÷ New Cash Core. Not demand-adjusted — margin is not meaningfully driven by seasonal demand. Only shown on the individual creative ranking tables (Promo/Generic), not on dimension roll-ups.',
@@ -5053,7 +5180,7 @@ function tbdPptKpiSlide(pres, pal, brand, territory, data, footerText){
    dimensiones a la derecha -- espejo del layout del PPTX de referencia. */
 function tbdPptCreativeTableSlide(pres, pal, brand, territory, data, footerText){
   var s = pres.addSlide();
-  tbdPptMasthead(s, pres, pal, 'Creative Performance — Jan–Jul 2025 & 2026 Combined', territory+' · '+brand);
+  tbdPptMasthead(s, pres, pal, tbdPptL('Creative Performance — ','Performance Criativa — ','Desempeno Creativo — ')+tbdS('period_label'), territory+' · '+brand);
   var combined = data.y25.map(function(r){ return Object.assign({year:'2025'},r); }).concat(data.y26.map(function(r){ return Object.assign({year:'2026'},r); }));
   combined.sort(function(a,b){ return b.l1k_adj-a.l1k_adj; });
   var top = combined.slice(0,12);
@@ -5183,7 +5310,7 @@ function tbdPptDimTable(s, pres, pal, x, y, w, title, rows, colLabel){
    de 5 dimensiones en un panel lateral -- esto es la tabla completa). */
 function tbdPptDimensionsSlide(pres, pal, brand, territory, data, footerText){
   var s = pres.addSlide();
-  tbdPptMasthead(s, pres, pal, tbdPptL('Performance by Creative Dimension — Jan–Jul 2026','Performance por Dimensao Criativa — Jan–Jul 2026','Desempeno por Dimension Creativa — Ene–Jul 2026'), territory+' · '+brand);
+  tbdPptMasthead(s, pres, pal, tbdPptL('Performance by Creative Dimension — ','Performance por Dimensao Criativa — ','Desempeno por Dimension Creativa — ')+tbdSlotLabel('2026'), territory+' · '+brand);
   s.addText(tbdPptL('Green = best group, red = worst. An n in amber means fewer than 3 creatives carry that value: read it as a hint, not a verdict.',
     'Verde = melhor grupo, vermelho = pior. Um n em ambar significa menos de 3 criativos com esse valor: leia como pista, nao veredicto.',
     'Verde = mejor grupo, rojo = peor. Un n en ambar significa menos de 3 creativos con ese valor: leelo como pista, no como veredicto.'),
@@ -5303,62 +5430,52 @@ function tbdPptHaloSlide(pres, pal, brand, territory, data, footerText){
   s.addTable([head].concat(body), { x:0.35,y:2.95,w:12.6, colW:[5.20,1.70,1.90,1.90,1.90], border:{type:'solid',color:TBD_PPT_SEM.borderGray,pt:0.5}, autoPage:false, fontFace:'Calibri' });
   tbdPptFooter(s, footerText);
 }
-/* Slide: estacionalidad v2026 -- los 12 factores fijos, el semaforo del pais
-   y el nivel de mercado (que a proposito NO entra al divisor). */
+/* Slide: estacionalidad v4 -- factor aplicado, combinado con su rango, cada fuente
+   por separado (Ahrefs / GA4) y el semaforo del pais. */
 function tbdPptSeasonalitySlide(pres, pal, brand, territory, data, footerText){
-  var sea = TBD_SEASONALITY[territory];
+  var sea = tbdSeaOf(territory);
   if(!sea || !sea.factorsIndex) return;
+  var applied = tbdSeasonApplied(territory);
   var s = pres.addSlide();
-  tbdPptMasthead(s, pres, pal, tbdPptL('Seasonality Factors — model v2026','Fatores de Sazonalidade — modelo v2026','Factores de Estacionalidad — modelo v2026'), territory+' · '+tbdPptL('the divisor behind every ★ adj. number in this deck','o divisor por tras de cada numero ★ adj. deste deck','el divisor detras de cada numero ★ adj. de este deck'));
-  var MM=['01','02','03','04','05','06','07','08','09','10','11','12'];
-  var months = MM.map(mesLabel);
-  var f = sea.factorsIndex, grey = sea.grey||[];
+  tbdPptMasthead(s, pres, pal, tbdPptL('Seasonality Factors — model v4 (Ahrefs + GA4)','Fatores de Sazonalidade — modelo v4 (Ahrefs + GA4)','Factores de Estacionalidad — modelo v4 (Ahrefs + GA4)'), territory+' · '+brand+' · '+tbdPptL('the divisor behind every ★ adj. number in this deck','o divisor por tras de cada numero ★ adj. deste deck','el divisor detras de cada numero ★ adj. de este deck'));
+  var months = TBD_MM.map(mesLabel);
+  var f = sea.factorsIndex, est = sea.estIndex || f, ci = sea.ci95 || [], fa = sea.ahrefsIndex || [], fg = sea.ga4Index || [];
   var errPct = tbdSeasonErrPct(territory);
-  s.addText(tbdPptL('100 = a normal month. These 12 are FIXED: the same January applies to 2025 and to 2026, so any number here stays reproducible. Rows in grey are months whose factor cannot be told apart from a normal month at 95% confidence.',
-    '100 = mes normal. Estes 12 sao FIXOS: o mesmo janeiro vale para 2025 e 2026, entao qualquer numero aqui continua reproduzivel. Linhas cinzas sao meses cujo fator nao se distingue de um mes normal com 95% de confianca.',
-    '100 = un mes normal. Estos 12 son FIJOS: el mismo enero aplica a 2025 y a 2026, asi que cualquier numero de aca sigue siendo reproducible. Las filas en gris son meses cuyo factor no se distingue de un mes normal con 95% de confianza.'),
+  s.addText(tbdPptL('Factor = interest in that month vs the average of the 12 (=100), from Google searches (Ahrefs) and brand visits to the site (GA4: SEM-Brand + SEO + Direct), 2023-2026. Only months whose 95% range excludes 100 are adjusted. L/$1k adj. = L/$1k ÷ (factor/100).',
+    'Fator = interesse naquele mes frente a media dos 12 (=100), de buscas no Google (Ahrefs) e visitas de marca ao site (GA4: SEM-Brand + SEO + Direct), 2023-2026. So se ajustam os meses cuja faixa de 95% exclui 100. L/$1k adj. = L/$1k ÷ (fator/100).',
+    'Factor = interes en ese mes frente al promedio de los 12 (=100), de busquedas en Google (Ahrefs) y visitas de marca al sitio (GA4: SEM-Brand + SEO + Direct), 2023-2026. Solo se ajustan los meses cuyo rango de 95% excluye el 100. L/$1k adj. = L/$1k ÷ (factor/100).'),
     { x:0.35,y:1.12,w:12.6,h:0.55, fontSize:9, italic:true, color:'888888', fontFace:'Calibri', valign:'top' });
-  var head = [tbdPptL('Month','Mes','Mes'), tbdPptL('Factor','Fator','Factor'), tbdPptL('Multiplier','Multiplicador','Multiplicador'), tbdPptL('Margin','Margem','Margen'), tbdPptL('Reliable?','Confiavel?','Confiable?')]
+  var head = [tbdPptL('Month','Mes','Mes'), tbdPptL('Applied','Aplicado','Aplicado'), tbdPptL('Combined [95%]','Combinado [95%]','Combinado [95%]'), 'Ahrefs', 'GA4']
     .map(function(h,i){ return { text:h, options:{ fontSize:8.5, bold:true, color:'FFFFFF', fill:{color:pal.bg}, align:i===0?'left':'center' } }; });
   var body = f.map(function(v,i){
-    var g = !!grey[i];
-    var z = g ? 'F0F0F0' : (i%2 ? TBD_PPT_SEM.tintZebra : 'FFFFFF');
-    var col = g ? TBD_PPT_SEM.footerGray : (v>=105 ? TBD_PPT_SEM.green : (v<=95 ? TBD_PPT_SEM.red : TBD_PPT_SEM.bodyGray));
+    var isAdj = applied && v!==100;
+    var z = !isAdj ? 'F0F0F0' : (i%2 ? TBD_PPT_SEM.tintZebra : 'FFFFFF');
+    var col = !isAdj ? TBD_PPT_SEM.footerGray : (v>100 ? TBD_PPT_SEM.green : TBD_PPT_SEM.red);
+    var c = ci[i] || [];
     return [
       { text:months[i], options:{ fontSize:8.5, bold:true, color:col, fill:{color:z} } },
       { text:fmtNum(v,0), options:{ fontSize:9, align:'right', bold:true, color:col, fill:{color:z} } },
-      { text:'x'+fmtNum(v/100,2), options:{ fontSize:8.5, align:'right', color:TBD_PPT_SEM.bodyGray, fill:{color:z} } },
-      { text:errPct!=null?('±'+fmtNum(errPct,1)+'%'):'—', options:{ fontSize:8, align:'right', color:TBD_PPT_SEM.footerGray, fill:{color:z} } },
-      { text:g?tbdPptL('not significant','nao significativo','no significativo'):tbdPptL('yes','sim','si'), options:{ fontSize:8, align:'center', color:g?TBD_PPT_SEM.amber:TBD_PPT_SEM.green, fill:{color:z} } },
+      { text:fmtNum(est[i],0)+(c.length?' ['+fmtNum(c[0],0)+'–'+fmtNum(c[1],0)+']':''), options:{ fontSize:8, align:'right', color:TBD_PPT_SEM.bodyGray, fill:{color:z} } },
+      { text:sea.ahrefsPlantilla?'—':(fa[i]!=null?fmtNum(fa[i],0):'—'), options:{ fontSize:8, align:'right', color:TBD_PPT_SEM.bodyGray, fill:{color:z} } },
+      { text:fg[i]!=null?fmtNum(fg[i],0):'—', options:{ fontSize:8, align:'right', color:TBD_PPT_SEM.bodyGray, fill:{color:z} } },
     ];
   });
-  s.addTable([head].concat(body), { x:0.35,y:1.78,w:6.1, colW:[1.30,0.95,1.25,1.05,1.55], border:{type:'solid',color:TBD_PPT_SEM.borderGray,pt:0.5}, autoPage:false, fontFace:'Calibri' });
-
-  var gate = tbdSeasonGate(territory) || {};
-  var gLbl = gate.label||'-';
+  s.addTable([head].concat(body), { x:0.35,y:1.78,w:6.1, colW:[1.0,0.95,1.95,1.1,1.1], border:{type:'solid',color:TBD_PPT_SEM.borderGray,pt:0.5}, autoPage:false, fontFace:'Calibri' });
+  var gLbl = sea.gate||'ROJO';
   var gColor = gLbl==='VERDE' ? TBD_PPT_SEM.green : (gLbl==='AMBAR' ? TBD_PPT_SEM.amber : TBD_PPT_SEM.red);
   var gName = LANG==='en' ? (gLbl==='VERDE'?'GREEN':gLbl==='AMBAR'?'AMBER':'RED') : gLbl;
-  s.addShape(pres.ShapeType.rect, { x:6.75,y:1.78,w:6.2,h:1.65, fill:{color:'FFFFFF'}, line:{color:gColor, width:1} });
+  s.addShape(pres.ShapeType.rect, { x:6.75,y:1.78,w:6.2,h:1.75, fill:{color:'FFFFFF'}, line:{color:gColor, width:1} });
   s.addShape(pres.ShapeType.rect, { x:6.75,y:1.78,w:6.2,h:0.36, fill:{color:gColor}, line:{color:gColor} });
   s.addText(gName+' · '+tbdPptL('confidence of the adjustment here','confianca do ajuste aqui','confianza del ajuste aca'), { x:6.90,y:1.78,w:5.9,h:0.36, fontSize:10, bold:true, color:'FFFFFF', valign:'middle', fontFace:'Calibri' });
-  s.addText(tbdPptL('Tested on months the model had never seen, this pattern predicted '+fmtNum(gate.skill,0)+'% better than assuming every month is the same. Practical rule: do not rank two creatives apart on an adjusted difference smaller than '+(errPct!=null?fmtNum(errPct,1):'?')+'% — that is the error of the adjustment itself.',
-    'Testado em meses que o modelo nunca tinha visto, este padrao acertou '+fmtNum(gate.skill,0)+'% melhor do que supor que todo mes e igual. Regra pratica: nao separe dois criativos por uma diferenca ajustada menor que '+(errPct!=null?fmtNum(errPct,1):'?')+'% — esse e o erro do proprio ajuste.',
-    'Probado contra meses que el modelo nunca habia visto, este patron acerto '+fmtNum(gate.skill,0)+'% mejor que suponer que todos los meses son iguales. Regla practica: no separes a dos creativos por una diferencia ajustada menor a '+(errPct!=null?fmtNum(errPct,1):'?')+'% — ese es el error del ajuste mismo.'),
-    { x:6.90,y:2.24,w:5.9,h:1.10, fontSize:9, color:TBD_PPT_SEM.bodyGray, valign:'top', fontFace:'Calibri' });
-
-  if(sea.market_25!=null && sea.market_26!=null){
-    var yoy = sea.market_yoy;
-    var dir = yoy>2 ? tbdPptL('grew','cresceu','crecio') : (yoy<-2 ? tbdPptL('fell','caiu','cayo') : tbdPptL('held flat','ficou estavel','se mantuvo plano'));
-    s.addShape(pres.ShapeType.rect, { x:6.75,y:3.60,w:6.2,h:1.85, fill:{color:TBD_PPT_SEM.tintDim}, line:{color:pal.bg, width:0.75} });
-    s.addText(tbdPptL('Separately: the market itself','Separadamente: o proprio mercado','Aparte: el mercado en si'), { x:6.90,y:3.68,w:5.9,h:0.3, fontSize:10, bold:true, color:pal.bg, fontFace:'Calibri' });
-    s.addText(tbdPptL('Once the repeating month pattern is removed, demand in '+territory+' '+dir+' '+fmtNum(Math.abs(yoy),1)+'% between Jan–Jul 2025 and Jan–Jul 2026 (level '+fmtNum(sea.market_25,1)+' → '+fmtNum(sea.market_26,1)+'). This is CONTEXT, not a correction: it is deliberately kept out of the divisor, because dividing by it would make a creative look better precisely because its market collapsed.',
-      'Removido o padrao de mes que se repete, a demanda em '+territory+' '+dir+' '+fmtNum(Math.abs(yoy),1)+'% entre Jan–Jul 2025 e Jan–Jul 2026 (nivel '+fmtNum(sea.market_25,1)+' → '+fmtNum(sea.market_26,1)+'). Isto e CONTEXTO, nao correcao: fica de proposito fora do divisor, porque dividir por ele faria um criativo parecer melhor justamente porque seu mercado caiu.',
-      'Una vez removido el patron de mes que se repite, la demanda en '+territory+' '+dir+' '+fmtNum(Math.abs(yoy),1)+'% entre Ene–Jul 2025 y Ene–Jul 2026 (nivel '+fmtNum(sea.market_25,1)+' → '+fmtNum(sea.market_26,1)+'). Esto es CONTEXTO, no una correccion: se deja a proposito fuera del divisor, porque dividir por el haria que un creativo se vea mejor justamente porque su mercado se derrumbo.'),
-      { x:6.90,y:3.98,w:5.9,h:1.40, fontSize:9, color:TBD_PPT_SEM.bodyGray, valign:'top', fontFace:'Calibri' });
-  }
-  s.addText(tbdPptL('Spend-weighted factor this portfolio actually ran against: '+fmtNum(data.p26.dem/100,3)+' in 2026 vs '+fmtNum(data.p25.dem/100,3)+' in 2025.',
-    'Fator ponderado pelo gasto que este portfolio de fato enfrentou: '+fmtNum(data.p26.dem/100,3)+' em 2026 vs '+fmtNum(data.p25.dem/100,3)+' em 2025.',
-    'Factor ponderado por gasto que este portafolio efectivamente enfrento: '+fmtNum(data.p26.dem/100,3)+' en 2026 vs '+fmtNum(data.p25.dem/100,3)+' en 2025.'),
+  var gTxt = applied
+    ? tbdPptL('The demand pattern explains '+fmtNum(sea.skill,0)+'% of how the TV results of '+territory+' move month to month. Source: '+tbdSeaSourceTxt(sea, territory, brand)+'. Do not rank two creatives apart on an adjusted difference smaller than '+(errPct!=null?fmtNum(errPct,1):'?')+'%.',
+      'O padrao de demanda explica '+fmtNum(sea.skill,0)+'% de como os resultados da TV de '+territory+' se movem mes a mes. Fonte: '+tbdSeaSourceTxt(sea, territory, brand)+'. Nao separe dois criativos por uma diferenca ajustada menor que '+(errPct!=null?fmtNum(errPct,1):'?')+'%.',
+      'El patron de demanda explica el '+fmtNum(sea.skill,0)+'% de como se mueven mes a mes los resultados de la TV de '+territory+'. Fuente: '+tbdSeaSourceTxt(sea, territory, brand)+'. No separes a dos creativos por una diferencia ajustada menor a '+(errPct!=null?fmtNum(errPct,1):'?')+'%.')
+    : tbdSeaNoAdjustReason(sea, territory, brand);
+  s.addText(gTxt, { x:6.90,y:2.24,w:5.9,h:1.25, fontSize:9, color:TBD_PPT_SEM.bodyGray, valign:'top', fontFace:'Calibri' });
+  s.addText(tbdPptL('Spend-weighted factor this portfolio actually ran against: '+fmtNum(data.p26.dem/100,3)+' in '+tbdSlotLabel('2026')+' vs '+fmtNum(data.p25.dem/100,3)+' in '+tbdSlotLabel('2025')+'.',
+    'Fator ponderado pelo gasto que este portfolio de fato enfrentou: '+fmtNum(data.p26.dem/100,3)+' em '+tbdSlotLabel('2026')+' vs '+fmtNum(data.p25.dem/100,3)+' em '+tbdSlotLabel('2025')+'.',
+    'Factor ponderado por gasto que este portafolio efectivamente enfrento: '+fmtNum(data.p26.dem/100,3)+' en '+tbdSlotLabel('2026')+' vs '+fmtNum(data.p25.dem/100,3)+' en '+tbdSlotLabel('2025')+'.'),
     { x:0.35,y:5.62,w:12.6,h:0.3, fontSize:9, italic:true, color:TBD_PPT_SEM.bodyGray, fontFace:'Calibri' });
   tbdPptFooter(s, footerText);
 }
@@ -5445,11 +5562,11 @@ function tbdPptCoverSlide(pres, brand, territories){
   var pal = TBD_PPT_PALETTE[brand] || TBD_PPT_PALETTE['Open English'];
   var s = pres.addSlide();
   s.background = { color:pal.bg };
-  s.addText('TBD Dolo', { x:0,y:2.1,w:13.3,h:1.0, fontSize:40, bold:true, color:'FFFFFF', align:'center', fontFace:'Calibri' });
+  s.addText('New TV Ads Performance', { x:0,y:2.1,w:13.3,h:1.0, fontSize:40, bold:true, color:'FFFFFF', align:'center', fontFace:'Calibri' });
   s.addText(brand+' · TV Creatives Performance Analysis', { x:0,y:3.05,w:13.3,h:0.5, fontSize:16, color:pal.boxLabel, align:'center', fontFace:'Calibri' });
   s.addText(tbdS('period_label')+' · Brand TV Channels · Demand-adjusted KPIs (★ adj.)', { x:0,y:3.6,w:13.3,h:0.4, fontSize:12, italic:true, color:pal.boxLabel, align:'center', fontFace:'Calibri' });
   s.addText(territories.join(' · '), { x:1,y:4.6,w:11.3,h:1.6, fontSize:10, color:'FFFFFF', align:'center', valign:'top', fontFace:'Calibri' });
-  s.addText('TBD Dolo — TV Ads Performance', { x:0.35,y:7.15,w:12.6,h:0.3, fontSize:8, color:pal.boxLabel, fontFace:'Calibri' });
+  s.addText('New TV Ads Performance — Open English', { x:0.35,y:7.15,w:12.6,h:0.3, fontSize:8, color:pal.boxLabel, fontFace:'Calibri' });
 }
 /* Construye y descarga un solo .pptx en el idioma actualmente puesto en LANG
    (el caller es responsable de fijar/restaurar LANG antes/despues). */
@@ -5458,7 +5575,12 @@ function tbdBuildOnePpt(brand, byTerritory, territories, langSuffix){
   var pres = new PptxGenJS();
   pres.defineLayout({ name:'WIDE', width:13.3, height:7.5 });
   pres.layout = 'WIDE';
-  var footerText = 'TBD Dolo · '+brand+' · Jan–Jul 2025 vs 2026';
+  var footerText = 'New TV Ads Performance · '+brand+' · '+tbdS('period_label');
+  /* Los factores de estacionalidad son por marca: mientras se arma el deck,
+     la marca activa tiene que ser la del deck, no la que esta en pantalla. */
+  var savedOrgPpt = TBD_STATE.org;
+  TBD_STATE.org = brand;
+  try {
   tbdPptCoverSlide(pres, brand, territories);
   tbdPptHowToSlide(pres, pal, brand, footerText);
   /* Orden por territorio: primero QUE paso (KPI, creativos, dimensiones),
@@ -5482,8 +5604,9 @@ function tbdBuildOnePpt(brand, byTerritory, territories, langSuffix){
     tbdPptTestsSlide(pres, pal, brand, t, tests.testsB, false, footerText);
   });
   tbdPptMethodologySlide(pres, pal, brand, footerText);
+  } finally { TBD_STATE.org = savedOrgPpt; }
   var brandSuffix = brand==='Open English Junior' ? 'OEJunior' : 'OE';
-  return pres.writeFile({ fileName: 'TBD_Dolo_'+brandSuffix+'_'+langSuffix+'_'+territories.length+'territories_2025_vs_2026.pptx' });
+  return pres.writeFile({ fileName: 'New_TV_Ads_Performance_'+brandSuffix+'_'+langSuffix+'_'+territories.length+'territories_'+TBD_STATE.report+'.pptx' });
 }
 /* Genera 3 .pptx separados (ES, EN, PT) para la marca elegida -- uno por
    idioma, no un solo archivo mezclado. Se generan en secuencia (no en
@@ -5598,7 +5721,7 @@ function tbdWireModalCleanup(){
    oscuro, selector de dashboard) y como leer los insights. ============================================================ */
 var TBD_TOUR_IDX = 0;
 var TBD_TOUR_STEPS = [
-  { title:{en:'Welcome to TBD Dolo',es:'Bienvenido a TBD Dolo',pt:'Bem-vindo ao TBD Dolo'},
+  { title:{en:'Welcome to New TV Ads Performance',es:'Bienvenido a New TV Ads Performance',pt:'Bem-vindo ao New TV Ads Performance'},
     body:{en:'An executive report for {PERIODO}, demand-adjusted, by country. This tour covers every tab and control. Replay it anytime from the 🎓 icon.',
       es:'Un reporte ejecutivo de {PERIODO}, ajustado por demanda, por país. Este recorrido cubre cada pestaña y control. Repítelo cuando quieras desde el ícono 🎓.',
       pt:'Um relatório executivo de {PERIODO}, ajustado por demanda, por país. Este tour cobre cada aba e controle. Repita quando quiser pelo ícone 🎓.'} },
@@ -5607,9 +5730,9 @@ var TBD_TOUR_STEPS = [
       es:'Cada pestaña, KPI, insight y la descarga de PPT siguen este interruptor — elige Open English u Open English Junior para ver los creativos de esa marca. El tema de color (azul vs. naranja) y la pestaña "Cruce de marca · JR Halo" también cambian con él (JR Halo solo aplica con Open English seleccionado).',
       pt:'Cada aba, KPI, insight e o PPT seguem este alternador — escolha Open English ou Open English Junior para ver os criativos dessa marca. O tema de cor (azul vs. laranja) e a aba "Cruzamento de marca · JR Halo" também mudam com ele (JR Halo só se aplica com Open English selecionado).'} },
   { selector:'#tbd-sel-territory', tab:'portfolio', title:{en:'Region / Country filter',es:'Filtro de Región / País',pt:'Filtro de Região / País'},
-    body:{en:'Pick Brazil or any LATAM country. The comparison window (Jan–Jul 2025 vs 2026) is always fixed.',
-      es:'Elige Brasil o cualquier país de LATAM. La ventana de comparación (Ene–Jul 2025 vs 2026) siempre queda fija.',
-      pt:'Escolha Brasil ou qualquer país da LATAM. A janela de comparação (Jan–Jul 2025 vs 2026) fica sempre fixa.'} },
+    body:{en:'Pick Brazil or any LATAM country. The comparison window is the one of the report you opened (see the badge next to the PPT button).',
+      es:'Elige Brasil o cualquier país de LATAM. La ventana de comparación es la del reporte que abriste (mira la etiqueta al lado del botón PPT).',
+      pt:'Escolha Brasil ou qualquer país da LATAM. A janela de comparação é a do relatório que você abriu (veja o selo ao lado do botão PPT).'} },
   { selector:'.tbd-nav-link[data-tab="adjkpi"]', tab:'adjkpi', title:{en:'★ Adj. KPI',es:'★ KPI Ajustado',pt:'★ KPI Ajustado'},
     body:{en:'Read this first: explains why "adjusted" (adj.) metrics remove seasonal demand swings so you compare creatives fairly across months.',
       es:'Lee esto primero: explica por qué las métricas "ajustadas" (adj.) quitan los vaivenes de demanda estacional para comparar creativos de forma justa entre meses.',
@@ -5657,7 +5780,7 @@ var TBD_TOUR_STEPS = [
   { selector:'.tbd-nav-link[data-tab="wearout"]', tab:'wearout', title:{en:'Wear-Out',es:'Desgaste',pt:'Desgaste'},
     body:{en:'First half vs second half of each flight — a real drop (already demand-adjusted) means fatigue, not just a slow month.', es:'Primera mitad vs segunda mitad de cada flight — una caída real (ya ajustada por demanda) significa desgaste, no solo un mes flojo.', pt:'Primeira metade vs segunda metade de cada flight — uma queda real (já ajustada por demanda) significa desgaste, não só um mês fraco.'} },
   { selector:'.tbd-nav-link[data-tab="seasonality"]', tab:'seasonality', title:{en:'Seasonality Index',es:'Índice de Estacionalidad',pt:'Índice de Estacionalidade'},
-    body:{en:'The 12 fixed month factors behind every "adj." number in this report, how much you can trust them in this country, and what the market did on its own between the two years.', es:'Los 12 factores de mes fijos detrás de cada número "adj." de este reporte, cuánto puedes confiar en ellos en este país, y qué hizo el mercado por su cuenta entre los dos años.', pt:'Os 12 fatores de mês fixos por trás de cada número "adj." deste relatório, o quanto você pode confiar neles neste país, e o que o mercado fez sozinho entre os dois anos.'} },
+    body:{en:'The 12 month factors behind every "adj." number, measured with outside demand — Google searches (Ahrefs) and brand visits to the site (GA4: SEM-Brand + SEO + Direct) — which months are proven to differ from a normal month, and how much you can trust them in this country.', es:'Los 12 factores de mes detrás de cada número "adj.", medidos con demanda externa — búsquedas en Google (Ahrefs) y visitas de marca al sitio (GA4: SEM-Brand + SEO + Direct) —, qué meses está demostrado que son distintos de un mes normal, y cuánto puedes confiar en ellos en este país.', pt:'Os 12 fatores de mês por trás de cada número "adj.", medidos com demanda externa — buscas no Google (Ahrefs) e visitas de marca ao site (GA4: SEM-Brand + SEO + Direct) —, quais meses comprovadamente diferem de um mês normal, e o quanto você pode confiar neles neste país.'} },
   { selector:'.tbd-nav-link[data-tab="insights"]', tab:'insights', title:{en:'Insights',es:'Insights',pt:'Insights'},
     body:{en:'Each card here crosses at least two signals (never a single "best of") and only shows up when the effect is big enough to act on — read the body text, it explains exactly what to do about each finding.', es:'Cada tarjeta aquí cruza al menos dos señales (nunca un solo "el mejor de") y solo aparece cuando el efecto es lo bastante grande para actuar — lee el texto, explica exactamente qué hacer con cada hallazgo.', pt:'Cada cartão aqui cruza pelo menos dois sinais (nunca um único "melhor de") e só aparece quando o efeito é grande o suficiente para agir — leia o texto, ele explica exatamente o que fazer com cada achado.'} },
   { selector:'.tbd-nav-link[data-tab="direction"]', tab:'direction', title:{en:'Direction + Brief',es:'Dirección + Brief',pt:'Direção + Brief'},
@@ -5665,7 +5788,7 @@ var TBD_TOUR_STEPS = [
   { selector:'.tbd-nav-link[data-tab="tests"]', tab:'tests', title:{en:'Recommended Tests',es:'Tests Recomendados',pt:'Testes Recomendados'},
     body:{en:'Concrete next steps: column A needs zero production (reactivate/reuse), column B needs new creative.', es:'Próximos pasos concretos: la columna A no necesita producción (reactivar/reusar), la columna B necesita creativo nuevo.', pt:'Próximos passos concretos: a coluna A não precisa de produção (reativar/reusar), a coluna B precisa de criativo novo.'} },
   { selector:'.tbd-nav-link[data-tab="methodology"]', tab:'methodology', title:{en:'How it was built',es:'Cómo se construyó',pt:'Como foi construído'},
-    body:{en:'The full data sources and formulas behind every number in TBD Dolo.', es:'Todas las fuentes de datos y fórmulas detrás de cada número de TBD Dolo.', pt:'Todas as fontes de dados e fórmulas por trás de cada número do TBD Dolo.'} },
+    body:{en:'The full data sources and formulas behind every number in New TV Ads Performance.', es:'Todas las fuentes de datos y fórmulas detrás de cada número de New TV Ads Performance.', pt:'Todas as fontes de dados e fórmulas por trás de cada número do New TV Ads Performance.'} },
   { selector:'#tbd-filters-toggle', tab:'portfolio', title:{en:'Collapse the filters',es:'Colapsar los filtros',pt:'Recolher os filtros'},
     body:{en:'Hides the brand and country selectors to free up screen space. When collapsed it still shows which brand and country are active, and one click brings the full controls back.', es:'Oculta los selectores de marca y país para ganar espacio en pantalla. Cuando está colapsado sigue mostrando qué marca y país están activos, y con un clic vuelven los controles completos.', pt:'Oculta os seletores de marca e país para ganhar espaço na tela. Quando recolhido ainda mostra qual marca e país estão ativos, e com um clique os controles voltam por completo.'} },
   { selector:'.tbd-nav-sbgroup .sb-group-head', tab:'portfolio', title:{en:'Collapse nav groups',es:'Colapsar grupos del menú',pt:'Recolher grupos do menu'},

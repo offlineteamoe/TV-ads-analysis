@@ -131,11 +131,25 @@ function buildRawCreativeDays(rotation, liveTotals) {
   var byCreative = new Map(); // creativo -> {organization, region, diasByKey: Map((fecha,tc)->accum)}
   var stats = { inversionAtribuida: 0, tagsNoReconocidos: 0, combosSinDato: 0, diasSinMediaSpend: 0 };
 
+  /* Regla de negocio: si ESA MARCA tiene rotacion exclusiva de un pais
+     (Rotacion Mexico/Colombia/Argentina) ese dia, el pais usa esa; si no, usa
+     la de LATAM. CORREGIDO 2026-10-06: antes las etiquetas activas se leian de
+     tags_por_fecha (feed|fecha), que mezcla las dos marcas -- si solo Junior
+     tenia "Rotacion Mexico", Open English Mexico quedaba fuera de su rotacion
+     LATAM y su gasto/leads no se asignaban a ningun creativo (ej. OE Mexico
+     ago-sep 2025). Ahora las etiquetas se leen por feed|fecha|Organization. */
+  var tagsPorMarca = {};
+  Object.keys(rotation.pesos).forEach(function (key) {
+    var p = key.split('|');
+    var k = p[0] + '|' + p[1] + '|' + p[3];
+    (tagsPorMarca[k] = tagsPorMarca[k] || []).push(p[2]);
+  });
+
   Object.keys(rotation.pesos).forEach(function (key) {
     var parts = key.split('|');
     var feed = parts[0], dateIso = parts[1], tag = parts[2], organization = parts[3];
     if (organization !== 'Open English' && organization !== 'Open English Junior') return;
-    var tagsActivos = rotation.tags_por_fecha[feed + '|' + dateIso] || [];
+    var tagsActivos = tagsPorMarca[feed + '|' + dateIso + '|' + organization] || [];
     var countryKeys = resolveCountryKeys(feed, tag, tagsActivos, allCountriesArr);
     var entries = rotation.pesos[key];
     if (!countryKeys.length) { stats.tagsNoReconocidos += entries.length; return; }
